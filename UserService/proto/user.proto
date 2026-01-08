@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package user.v1;
+
+service UserService {
+  rpc GetUserContext (GetUserContextRequest) returns (GetUserContextResponse);
+  rpc AssignRole (AssignRoleRequest) returns (AssignRoleResponse);
+  rpc RevokeRole (RevokeRoleRequest) returns (RevokeRoleResponse);
+  rpc ListRoles (ListRolesRequest) returns (ListRolesResponse);
+  rpc EnsureCustomerProfile (EnsureCustomerProfileRequest) returns (EnsureCustomerProfileResponse);
+  rpc RegisterGuest (RegisterGuestRequest) returns (RegisterGuestResponse);
+}
+
+message Permission {
+  string id = 1;
+  string resource = 2;
+  string action = 3;
+  string description = 4;
+}
+
+message Role {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  repeated Permission permissions = 4;
+}
+
+message UserRoleAssignment {
+  string assignment_id = 1;
+  string user_id = 2;
+  Role role = 3;
+  string scope = 4;
+  string granted_by = 5;
+  bool active = 6;
+}
+
+message GetUserContextRequest {
+  string user_id = 1;
+}
+
+message GetUserContextResponse {
+  string user_id = 1;
+  repeated Role roles = 2;
+  repeated Permission permissions = 3;
+  repeated UserRoleAssignment assignments = 4;
+}
+
+message AssignRoleRequest {
+  string user_id = 1;
+  string role_id = 2;
+  string scope = 3;
+  string granted_by = 4;
+}
+
+message AssignRoleResponse {
+  bool success = 1;
+  UserRoleAssignment assignment = 2;
+}
+
+message RevokeRoleRequest {
+  string assignment_id = 1;
+  string revoked_by = 2;
+}
+
+message RevokeRoleResponse {
+  bool success = 1;
+}
+
+message ListRolesRequest {}
+
+message ListRolesResponse {
+  repeated Role roles = 1;
+}
+
+enum GuestProfileStatus {
+  GUEST_PROFILE_STATUS_UNSPECIFIED = 0;
+  GUEST_PROFILE_STATUS_ACTIVE = 1;
+  GUEST_PROFILE_STATUS_MIGRATED = 2;
+}
+
+message EnsureCustomerProfileRequest {
+  string firebase_uid = 1;
+  string phone_number = 2;
+  string device_id = 3;
+  string guest_id = 4;
+}
+
+message EnsureCustomerProfileResponse {
+  string customer_id = 1;
+  string device_identity_id = 2;
+  bool guest_migrated = 3;
+  string guest_profile_id = 4;
+}
+
+message RegisterGuestRequest {
+  string guest_id = 1;
+  string device_id = 2;
+}
+
+message RegisterGuestResponse {
+  string guest_profile_id = 1;
+  string device_identity_id = 2;
+  GuestProfileStatus status = 3;
+  string customer_id = 4;
+}

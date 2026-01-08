@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  gateway:
+    build: .
+    depends_on:
+      - redis
+    environment:
+      NODE_ENV: production
+      SERVER_PORT: 3000
+      REDIS_URL: redis://redis:6379
+      STREAMING_SERVICE_URL: http://mock-streaming:3000
+      CONTENT_SERVICE_URL: http://mock-content:3000
+      AUTH_SERVICE_URL: http://mock-auth:3000
+      USER_SERVICE_URL: http://mock-user:3000
+      UPLOAD_SERVICE_URL: http://mock-upload:3000
+      ENGAGEMENT_SERVICE_URL: http://mock-engagement:3000
+      SEARCH_SERVICE_URL: http://mock-search:3000
+      AUTH_JWKS_URL: https://auth.pocketlol.dev/.well-known/jwks.json
+      AUTH_AUDIENCE: pocketlol-api
+      AUTH_ISSUER: https://auth.pocketlol.dev/
+    ports:
+      - "3000:3000"

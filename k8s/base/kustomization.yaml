@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - all.yaml
+  - ingress.yaml
+
+images:
+  - name: apigw
+    newName: apigw
+    newTag: latest
+  - name: auth-service
+    newName: auth-service
+    newTag: latest
+  - name: user-service
+    newName: user-service
+    newTag: latest
+  - name: content-service
+    newName: content-service
+    newTag: latest
+  - name: engagement-service
+    newName: engagement-service
+    newTag: latest
+  - name: search-service
+    newName: search-service
+    newTag: latest
+  - name: streaming-service
+    newName: streaming-service
+    newTag: latest
+  - name: upload-service
+    newName: upload-service
+    newTag: latest
+  - name: subscription-service
+    newName: subscription-service
+    newTag: latest

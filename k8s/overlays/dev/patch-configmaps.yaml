@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apigw-config
+data:
+  REDIS_URL: "redis://10.117.209.35:6379"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: content-service-config
+data:
+  CDN_BASE_URL: "https://cdn.dev.pocketlol.example"
+  REDIS_URL: "redis://10.117.209.35:6379"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: engagement-service-config
+data:
+  REDIS_URL: "redis://10.117.209.35:6379"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-service-config
+data:
+  FIREBASE_PROJECT_ID: "pocketlol-68ca6"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: upload-service-config
+data:
+  REDIS_URL: "redis://10.117.209.35:6379"
+  GCP_PROJECT_ID: "pocketlol-68ca6"
+  PUBSUB_PROJECT_ID: "pocketlol-68ca6"
+  UPLOAD_BUCKET: "pocketlol-68ca6-uploads"
+  CDN_UPLOAD_BASE_URL: "https://upload.cdn.pocketlol"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: streaming-service-config
+data:
+  CDN_BASE_URL: "https://cdn.dev.pocketlol.example"
+  GCS_MANIFEST_BUCKET: "pocketlol-68ca6-streaming-manifests"
+  PUBSUB_UPLOAD_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/uploaded-media-sub"
+  AUDIT_LOG_TOPIC: "projects/pocketlol-68ca6/topics/streaming-audit"
+  AUTH_SERVICE_BASE_URL: "http://auth-service:4000"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: subscription-service-config
+data:
+  REDIS_URL: "redis://10.117.209.35:6379"
+  RAZORPAY_KEY_ID: "dev"
+  RAZORPAY_KEY_SECRET: "dev"

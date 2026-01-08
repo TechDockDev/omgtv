@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package streaming.v1;
+
+service StreamingService {
+  rpc GetPlaybackUrl(GetPlaybackUrlRequest) returns (GetPlaybackUrlResponse);
+}
+
+message GetPlaybackUrlRequest {
+  string video_id = 1;
+  string quality = 2;
+  string device = 3;
+}
+
+message GetPlaybackUrlResponse {
+  string playback_url = 1;
+  string expires_at = 2;
+  string cdn = 3;
+}

@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package search.v1;
+
+service SearchService {
+  rpc SearchCatalog(SearchCatalogRequest) returns (SearchCatalogResponse);
+}
+
+message SearchCatalogRequest {
+  string query = 1;
+  uint32 limit = 2;
+  string cursor = 3;
+}
+
+message SearchResult {
+  string id = 1;
+  string title = 2;
+  string snippet = 3;
+  string type = 4;
+}
+
+message SearchCatalogResponse {
+  repeated SearchResult items = 1;
+  string next_cursor = 2;
+}

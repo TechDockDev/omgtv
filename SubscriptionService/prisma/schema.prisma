@@ -1,0 +1,100 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELED
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+model SubscriptionPlan {
+  id               String   @id @default(uuid())
+  name             String
+  description      String?
+  pricePaise       Int
+  currency         String   @default("INR")
+  durationDays     Int
+  reelsLimit       Int?
+  episodesLimit    Int?
+  seriesLimit      Int?
+  accessLevel      String?  // e.g., HD, UHD
+  isUnlimitedReels Boolean  @default(false)
+  isUnlimitedEpisodes Boolean @default(false)
+  isUnlimitedSeries Boolean @default(false)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  subscriptions UserSubscription[]
+  transactions  Transaction[]
+}
+
+model FreePlanConfig {
+  id            Int      @id @default(1)
+  maxFreeReels  Int      @default(5)
+  maxFreeEpisodes Int    @default(3)
+  maxFreeSeries Int      @default(1)
+  updatedByAdminId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([id])
+}
+
+model UserSubscription {
+  id                String              @id @default(uuid())
+  userId            String
+  planId            String?
+  status            SubscriptionStatus  @default(PENDING)
+  startsAt          DateTime
+  endsAt            DateTime
+  razorpayOrderId   String?
+  transactionId     String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  plan        SubscriptionPlan? @relation(fields: [planId], references: [id])
+  transaction Transaction?      @relation("TransactionUserSubscriptions", fields: [transactionId], references: [id])
+
+  @@index([userId, status])
+  @@index([planId])
+  @@index([transactionId])
+}
+
+model Transaction {
+  id                 String             @id @default(uuid())
+  userId             String
+  planId             String?
+  amountPaise        Int
+  currency           String             @default("INR")
+  status             TransactionStatus  @default(PENDING)
+  razorpayOrderId    String?
+  razorpayPaymentId  String?
+  razorpaySignature  String?
+  failureReason      String?
+  metadata           Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  plan           SubscriptionPlan? @relation(fields: [planId], references: [id])
+  subscriptions UserSubscription[] @relation("TransactionUserSubscriptions")
+
+  @@index([userId, status])
+  @@index([razorpayOrderId])
+  @@index([razorpayPaymentId])
+}

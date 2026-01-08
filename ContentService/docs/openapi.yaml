@@ -1,0 +1,736 @@
+openapi: 3.0.3
+info:
+  title: PocketLOL Content Service API
+  version: 1.0.0
+  description: >-
+    HTTP contract for viewer- and admin-facing catalog endpoints exposed through API Gateway.
+servers:
+  - url: https://api.pocketlol/v1
+    description: Production gateway
+  - url: https://staging.api.pocketlol/v1
+    description: Staging gateway
+paths:
+  /catalog/feed:
+    get:
+      operationId: listCatalogFeed
+      summary: Retrieve the personalized catalog feed for a viewer.
+      tags:
+        - Viewer Catalog
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return; defaults to server-side setting.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+        - name: cursor
+          in: query
+          description: Opaque cursor returned by a previous page.
+          schema:
+            type: string
+        - name: viewerId
+          in: query
+          description: Optional viewer UUID to enable personalization hooks.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Feed page containing catalog items.
+          headers:
+            Cache-Control:
+              description: Downstream cache hint.
+              schema:
+                type: string
+            X-Cache:
+              description: Indicates whether the response originated from Redis edge cache.
+              schema:
+                type: string
+                enum: [hit, miss]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogFeedResponse'
+  /catalog/series/{slug}:
+    get:
+      operationId: getSeriesDetail
+      summary: Fetch full detail for a series, including localized metadata and availability.
+      tags:
+        - Viewer Catalog
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Series slug used in viewer experiences.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Series detail and related episode collections.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            X-Cache:
+              schema:
+                type: string
+                enum: [hit, miss]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeriesDetailResponse'
+        '404':
+          description: Series not found.
+  /catalog/categories:
+    get:
+      operationId: listViewerCategories
+      summary: List viewer-facing catalog categories.
+      tags:
+        - Viewer Catalog
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Category page.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryListResponse'
+  /admin/catalog/categories:
+    get:
+      operationId: listAdminCategories
+      summary: Enumerate categories for admin tooling.
+      tags:
+        - Admin Catalog
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paginated category list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminCategoryList'
+    post:
+      operationId: createCategory
+      summary: Create a new catalog category with localized labels.
+      tags:
+        - Admin Catalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminCategoryInput'
+      responses:
+        '201':
+          description: Category created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '409':
+          description: Duplicate slug detected.
+  /admin/catalog/series:
+    post:
+      operationId: createSeries
+      summary: Create a series with hierarchical metadata and scheduling controls.
+      tags:
+        - Admin Catalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSeriesInput'
+      responses:
+        '201':
+          description: Series created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Series'
+        '409':
+          description: Duplicate slug detected.
+  /admin/catalog/episodes:
+    post:
+      operationId: createEpisode
+      summary: Register an episode with localization, scheduling, and asset placeholders.
+      tags:
+        - Admin Catalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminEpisodeInput'
+      responses:
+        '201':
+          description: Episode created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Episode'
+        '404':
+          description: Referenced series/season not found.
+        '412':
+          description: Preconditions for hierarchy or scheduling failed.
+  /admin/catalog/episodes/{episodeId}/status:
+    post:
+      operationId: transitionEpisodeStatus
+      summary: Transition an episode through the draft → review → published lifecycle.
+      tags:
+        - Admin Catalog
+      parameters:
+        - name: episodeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EpisodeStatusTransition'
+      responses:
+        '200':
+          description: Episode status updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Episode'
+        '404':
+          description: Episode not found.
+        '409':
+          description: Invalid state transition.
+        '500':
+          description: Catalog data quality guard failed (missing assets/thumbnails).
+components:
+  schemas:
+    Pagination:
+      type: object
+      properties:
+        nextCursor:
+          type: string
+          nullable: true
+          description: Cursor pointing to the next page, null when exhausted.
+    CatalogFeedResponse:
+      allOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/CatalogFeedItem'
+          required: [items, nextCursor]
+    CatalogFeedItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        title:
+          type: string
+        synopsis:
+          type: string
+          nullable: true
+        heroImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        defaultThumbnailUrl:
+          type: string
+          format: uri
+          nullable: true
+        durationSeconds:
+          type: integer
+          minimum: 0
+        publishedAt:
+          type: string
+          format: date-time
+        availability:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+              nullable: true
+            end:
+              type: string
+              format: date-time
+              nullable: true
+          required: [start, end]
+        season:
+          $ref: '#/components/schemas/CatalogSeasonSummary'
+        series:
+          $ref: '#/components/schemas/CatalogSeriesSummary'
+        playback:
+          $ref: '#/components/schemas/CatalogPlayback'
+        localization:
+          $ref: '#/components/schemas/CatalogLocalization'
+        personalization:
+          $ref: '#/components/schemas/CatalogPersonalization'
+        ratings:
+          type: object
+          properties:
+            average:
+              type: number
+              nullable: true
+          required: [average]
+      required:
+        - id
+        - slug
+        - title
+        - durationSeconds
+        - publishedAt
+        - availability
+        - series
+        - playback
+        - localization
+        - personalization
+        - ratings
+    CatalogSeasonSummary:
+      type: object
+      nullable: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequenceNumber:
+          type: integer
+        title:
+          type: string
+          nullable: true
+      required: [id, sequenceNumber, title]
+    CatalogSeriesSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        title:
+          type: string
+        synopsis:
+          type: string
+          nullable: true
+        heroImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        bannerImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        category:
+          $ref: '#/components/schemas/CategorySummary'
+      required: [id, slug, title]
+    CatalogPlayback:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, READY, FAILED]
+        manifestUrl:
+          type: string
+          format: uri
+          nullable: true
+        defaultThumbnailUrl:
+          type: string
+          format: uri
+          nullable: true
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaybackVariant'
+      required: [status, variants]
+    PlaybackVariant:
+      type: object
+      properties:
+        label:
+          type: string
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        bitrateKbps:
+          type: integer
+          nullable: true
+        codec:
+          type: string
+          nullable: true
+        frameRate:
+          type: number
+          nullable: true
+      required: [label]
+    CatalogLocalization:
+      type: object
+      properties:
+        captions:
+          type: array
+          items:
+            type: object
+            properties:
+              language:
+                type: string
+              label:
+                type: string
+                nullable: true
+              url:
+                type: string
+                format: uri
+                nullable: true
+            required: [language]
+        availableLanguages:
+          type: array
+          items:
+            type: string
+      required: [captions, availableLanguages]
+    CatalogPersonalization:
+      type: object
+      properties:
+        reason:
+          type: string
+          enum: [trending, recent, viewer_following]
+        score:
+          type: number
+          nullable: true
+      required: [reason]
+    SeriesDetailResponse:
+      type: object
+      properties:
+        series:
+          $ref: '#/components/schemas/Series'
+        seasons:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              sequenceNumber:
+                type: integer
+              title:
+                type: string
+              synopsis:
+                type: string
+                nullable: true
+              releaseDate:
+                type: string
+                format: date-time
+                nullable: true
+              episodes:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CatalogFeedItem'
+            required: [id, sequenceNumber, title, episodes]
+        standaloneEpisodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogFeedItem'
+      required: [series, seasons, standaloneEpisodes]
+    CategoryListResponse:
+      allOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Category'
+          required: [items, nextCursor]
+    CategorySummary:
+      type: object
+      nullable: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+      required: [id, slug, name]
+    Category:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        displayOrder:
+          type: integer
+          nullable: true
+      required: [id, slug, name]
+    AdminCategoryList:
+      allOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Category'
+          required: [items, nextCursor]
+    AdminCategoryInput:
+      type: object
+      required: [slug, name]
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        displayOrder:
+          type: integer
+          nullable: true
+    Series:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        title:
+          type: string
+        synopsis:
+          type: string
+          nullable: true
+        heroImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        bannerImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        status:
+          $ref: '#/components/schemas/PublicationStatus'
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        releaseDate:
+          type: string
+          format: date-time
+          nullable: true
+        categoryId:
+          type: string
+          format: uuid
+          nullable: true
+      required:
+        - id
+        - slug
+        - title
+        - tags
+        - status
+        - visibility
+    AdminSeriesInput:
+      type: object
+      required: [slug, title]
+      properties:
+        slug:
+          type: string
+        title:
+          type: string
+        synopsis:
+          type: string
+          nullable: true
+        heroImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        bannerImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        status:
+          $ref: '#/components/schemas/PublicationStatus'
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        releaseDate:
+          type: string
+          format: date-time
+          nullable: true
+        ownerId:
+          type: string
+          format: uuid
+          nullable: true
+        categoryId:
+          type: string
+          format: uuid
+          nullable: true
+    Episode:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        seriesId:
+          type: string
+          format: uuid
+        seasonId:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+        synopsis:
+          type: string
+          nullable: true
+        durationSeconds:
+          type: integer
+        status:
+          $ref: '#/components/schemas/PublicationStatus'
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        availabilityStart:
+          type: string
+          format: date-time
+          nullable: true
+        availabilityEnd:
+          type: string
+          format: date-time
+          nullable: true
+        heroImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        defaultThumbnailUrl:
+          type: string
+          format: uri
+          nullable: true
+      required:
+        - id
+        - slug
+        - seriesId
+        - title
+        - durationSeconds
+        - status
+        - visibility
+    AdminEpisodeInput:
+      type: object
+      required:
+        - slug
+        - seriesId
+        - title
+        - durationSeconds
+      properties:
+        seriesId:
+          type: string
+          format: uuid
+        seasonId:
+          type: string
+          format: uuid
+          nullable: true
+        slug:
+          type: string
+        title:
+          type: string
+        synopsis:
+          type: string
+          nullable: true
+        durationSeconds:
+          type: integer
+        status:
+          $ref: '#/components/schemas/PublicationStatus'
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        availabilityStart:
+          type: string
+          format: date-time
+          nullable: true
+        availabilityEnd:
+          type: string
+          format: date-time
+          nullable: true
+        heroImageUrl:
+          type: string
+          format: uri
+          nullable: true
+        defaultThumbnailUrl:
+          type: string
+          format: uri
+          nullable: true
+        captions:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              label:
+                type: string
+              url:
+                type: string
+                format: uri
+            additionalProperties: false
+    EpisodeStatusTransition:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/PublicationStatus'
+    PublicationStatus:
+      type: string
+      enum: [DRAFT, REVIEW, PUBLISHED, ARCHIVED]
+    Visibility:
+      type: string
+      enum: [PUBLIC, UNLISTED, PRIVATE]

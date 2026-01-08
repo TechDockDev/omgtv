@@ -1,0 +1,228 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PublicationStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+enum Visibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum MediaAssetStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum MediaAssetType {
+  EPISODE
+  REEL
+}
+
+model Category {
+  id               String   @id @default(uuid())
+  slug             String   @unique
+  name             String
+  description      String?
+  displayOrder     Int?
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  series Series[]
+  reels  Reel[]
+}
+
+model Series {
+  id               String            @id @default(uuid())
+  slug             String            @unique
+  title            String
+  synopsis         String?
+  heroImageUrl     String?
+  bannerImageUrl   String?
+  tags             String[]          @default([])
+  status           PublicationStatus @default(DRAFT)
+  visibility       Visibility        @default(PUBLIC)
+  releaseDate      DateTime?
+  ownerId          String
+  categoryId       String?
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+
+  category Category? @relation(fields: [categoryId], references: [id])
+  seasons  Season[]
+  episodes Episode[]
+  carouselEntries CarouselEntry[]
+
+  @@index([categoryId])
+  @@index([status, visibility])
+}
+
+model Season {
+  id               String            @id @default(uuid())
+  seriesId         String
+  sequenceNumber   Int
+  title            String
+  synopsis         String?
+  status           PublicationStatus @default(DRAFT)
+  releaseDate      DateTime?
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+
+  series   Series   @relation(fields: [seriesId], references: [id])
+  episodes Episode[]
+
+  @@unique([seriesId, sequenceNumber])
+  @@index([seriesId])
+}
+
+model Episode {
+  id                 String            @id @default(uuid())
+  slug               String            @unique
+  seriesId           String
+  seasonId           String?
+  title              String
+  synopsis           String?
+  durationSeconds    Int
+  status             PublicationStatus @default(DRAFT)
+  visibility         Visibility        @default(PUBLIC)
+  publishedAt        DateTime?
+  availabilityStart  DateTime?
+  availabilityEnd    DateTime?
+  heroImageUrl       String?
+  defaultThumbnailUrl String?
+  captions           Json?
+  tags               String[]          @default([])
+  createdByAdminId   String?
+  updatedByAdminId   String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  deletedAt          DateTime?
+
+  series Series @relation(fields: [seriesId], references: [id])
+  season Season? @relation(fields: [seasonId], references: [id])
+
+  mediaAsset MediaAsset?
+  carouselEntries CarouselEntry[]
+
+  @@index([seriesId, status])
+  @@index([seasonId])
+}
+
+model Reel {
+  id               String            @id @default(uuid())
+  slug             String            @unique
+  title            String
+  description      String?
+  durationSeconds  Int
+  status           PublicationStatus @default(DRAFT)
+  visibility       Visibility        @default(PUBLIC)
+  publishedAt      DateTime?
+  availabilityStart DateTime?
+  availabilityEnd  DateTime?
+  tags             String[]          @default([])
+  ownerId          String?
+  categoryId       String?
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+
+  category  Category?  @relation(fields: [categoryId], references: [id])
+  mediaAsset MediaAsset?
+
+  @@index([categoryId])
+  @@index([status, visibility])
+}
+
+model MediaAsset {
+  id              String           @id @default(uuid())
+  type            MediaAssetType
+  sourceUploadId  String?
+  streamingAssetId String?
+  manifestUrl     String?
+  defaultThumbnailUrl String?
+  status          MediaAssetStatus @default(PENDING)
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  deletedAt       DateTime?
+
+  episodeId String? @unique
+  reelId    String? @unique
+
+  episode Episode? @relation(fields: [episodeId], references: [id])
+  reel    Reel?    @relation(fields: [reelId], references: [id])
+
+  variants MediaAssetVariant[]
+}
+
+model MediaAssetVariant {
+  id             String   @id @default(uuid())
+  mediaAssetId   String
+  label          String
+  width          Int?
+  height         Int?
+  bitrateKbps    Int?
+  codec          String?
+  frameRate      Float?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id])
+
+  @@unique([mediaAssetId, label])
+  @@index([mediaAssetId])
+}
+
+model Tag {
+  id               String   @id @default(uuid())
+  slug             String   @unique
+  name             String   @unique
+  description      String?
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+}
+
+model CarouselEntry {
+  id               String   @id @default(uuid())
+  position         Int
+  seriesId         String?
+  episodeId        String?
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  series  Series?  @relation(fields: [seriesId], references: [id])
+  episode Episode? @relation(fields: [episodeId], references: [id])
+
+  @@index([position])
+}

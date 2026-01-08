@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ome-channel-templates
+  namespace: streaming
+  labels:
+    app: ovenmediaengine
+  annotations:
+    pocketlol.com/owner: streaming-service
+    pocketlol.com/environment: shared
+    pocketlol.com/phase: "1"
+data:
+  abr-reels: |
+    720p|1280x720|2500
+    480p|854x480|1500
+    360p|640x360|900
+  abr-series: |
+    1080p|1920x1080|4500
+    720p|1280x720|2500
+    480p|854x480|1500
+  cache-policy.json: |
+    {
+      "cacheKey": ["host", "path", "query:quality", "query:device"],
+      "ttlSeconds": 30,
+      "staleWhileRevalidateSeconds": 30
+    }
+  cdn-headers: |
+    Cache-Control: private, max-age=30
+    CDN-Cache-Control: private, max-age=30
+    Edge-Control: cache-maxage=30

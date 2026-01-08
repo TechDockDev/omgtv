@@ -1,0 +1,342 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_IMAGE_TAG:-16-alpine}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - ${POSTGRES_VOLUME_NAME:-postgres-data}:/var/lib/postgresql/data
+      - ./docker/postgres:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:${REDIS_IMAGE_TAG:-7-alpine}
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_HOST_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  content-service:
+    build:
+      context: ContentService
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${CONTENT_SERVICE_NODE_ENV:-production}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${CONTENT_SERVICE_HTTP_PORT:-4600}
+      LOG_LEVEL: ${CONTENT_SERVICE_LOG_LEVEL:-info}
+      REDIS_URL: ${CONTENT_SERVICE_REDIS_URL:-redis://redis:6379/0}
+      FEED_CACHE_TTL_SECONDS: ${CONTENT_SERVICE_FEED_CACHE_TTL_SECONDS:-60}
+      SERIES_CACHE_TTL_SECONDS: ${CONTENT_SERVICE_SERIES_CACHE_TTL_SECONDS:-120}
+      RELATED_CACHE_TTL_SECONDS: ${CONTENT_SERVICE_RELATED_CACHE_TTL_SECONDS:-180}
+      CATALOG_EVENT_STREAM_KEY: ${CONTENT_SERVICE_EVENT_STREAM_KEY:-catalog:events}
+      TRENDING_SORTED_SET_KEY: ${CONTENT_SERVICE_TRENDING_SET_KEY:-catalog:trending}
+      RATINGS_HASH_KEY: ${CONTENT_SERVICE_RATINGS_HASH_KEY:-catalog:ratings}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      CDN_BASE_URL: ${CONTENT_SERVICE_CDN_BASE_URL:-https://cdn.local.pocketlol}
+      DEFAULT_OWNER_ID: ${CONTENT_SERVICE_DEFAULT_OWNER_ID:-00000000-0000-0000-0000-000000000001}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${CONTENT_SERVICE_DB:-pocketlol_content}?schema=public
+      ENGAGEMENT_SERVICE_URL: http://engagement-service:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}
+      SUBSCRIPTION_SERVICE_URL: http://subscription-service:${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}
+    ports:
+      - "${CONTENT_SERVICE_HTTP_HOST_PORT:-4600}:${CONTENT_SERVICE_HTTP_PORT:-4600}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:${HTTP_PORT:-4600}/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  engagement-service:
+    build:
+      context: EngagementService
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: ${ENGAGEMENT_SERVICE_NODE_ENV:-production}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}
+      LOG_LEVEL: ${ENGAGEMENT_SERVICE_LOG_LEVEL:-info}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+    ports:
+      - "${ENGAGEMENT_SERVICE_HTTP_HOST_PORT:-4700}:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:${HTTP_PORT:-4700}/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  search-service:
+    build:
+      context: SearchService
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: ${SEARCH_SERVICE_NODE_ENV:-production}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${SEARCH_SERVICE_HTTP_PORT:-4800}
+      LOG_LEVEL: ${SEARCH_SERVICE_LOG_LEVEL:-info}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      DEFAULT_PAGE_SIZE: ${SEARCH_SERVICE_DEFAULT_PAGE_SIZE:-20}
+    ports:
+      - "${SEARCH_SERVICE_HTTP_HOST_PORT:-4800}:${SEARCH_SERVICE_HTTP_PORT:-4800}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:${HTTP_PORT:-4800}/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  streaming-service:
+    build:
+      context: StreamingService
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: ${STREAMING_SERVICE_NODE_ENV:-production}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${STREAMING_SERVICE_HTTP_PORT:-4900}
+      LOG_LEVEL: ${STREAMING_SERVICE_LOG_LEVEL:-info}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      CDN_BASE_URL: ${STREAMING_SERVICE_CDN_BASE_URL:-https://stream.cdn.pocketlol}
+      SIGNED_URL_TTL_SECONDS: ${STREAMING_SERVICE_SIGNED_URL_TTL_SECONDS:-300}
+    ports:
+      - "${STREAMING_SERVICE_HTTP_HOST_PORT:-4900}:${STREAMING_SERVICE_HTTP_PORT:-4900}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:${HTTP_PORT:-4900}/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  upload-service:
+    build:
+      context: UploadService
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: ${UPLOAD_SERVICE_NODE_ENV:-production}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${UPLOAD_SERVICE_HTTP_PORT:-5000}
+      LOG_LEVEL: ${UPLOAD_SERVICE_LOG_LEVEL:-info}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${UPLOAD_SERVICE_DB:-pocketlol_uploads}?schema=public
+      REDIS_URL: ${UPLOAD_SERVICE_REDIS_URL:-redis://redis:6379/1}
+      UPLOAD_BUCKET: ${UPLOAD_SERVICE_BUCKET:-pocketlol-uploads}
+      CDN_UPLOAD_BASE_URL: ${UPLOAD_SERVICE_CDN_BASE_URL:-https://upload.cdn.pocketlol}
+      SIGNED_UPLOAD_TTL_SECONDS: ${UPLOAD_SERVICE_SIGNED_UPLOAD_TTL_SECONDS:-600}
+    ports:
+      - "${UPLOAD_SERVICE_HTTP_HOST_PORT:-5000}:${UPLOAD_SERVICE_HTTP_PORT:-5000}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:${HTTP_PORT:-5000}/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  subscription-service:
+    build:
+      context: SubscriptionService
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${SUBSCRIPTION_SERVICE_NODE_ENV:-production}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}
+      GRPC_BIND_ADDRESS: 0.0.0.0:${SUBSCRIPTION_SERVICE_GRPC_PORT:-50071}
+      LOG_LEVEL: ${SUBSCRIPTION_SERVICE_LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${SUBSCRIPTION_SERVICE_DB:-pocketlol_subscriptions}?schema=public
+      REDIS_URL: ${SUBSCRIPTION_SERVICE_REDIS_URL:-redis://redis:6379/2}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      RAZORPAY_KEY_ID: ${SUBSCRIPTION_SERVICE_RAZORPAY_KEY_ID:-rzp_test_key}
+      RAZORPAY_KEY_SECRET: ${SUBSCRIPTION_SERVICE_RAZORPAY_KEY_SECRET:-rzp_test_secret}
+    ports:
+      - "${SUBSCRIPTION_SERVICE_HTTP_HOST_PORT:-5100}:${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}"
+      - "${SUBSCRIPTION_SERVICE_GRPC_HOST_PORT:-50071}:${SUBSCRIPTION_SERVICE_GRPC_PORT:-50071}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:${HTTP_PORT:-5100}/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  user-service:
+    build:
+      context: UserService
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${USER_SERVICE_NODE_ENV:-production}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${USER_SERVICE_HTTP_PORT:-4500}
+      GRPC_BIND_ADDRESS: 0.0.0.0:${USER_SERVICE_GRPC_PORT:-50052}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${USER_SERVICE_DB:-pocketlol_users}?schema=public
+      LOG_LEVEL: ${USER_SERVICE_LOG_LEVEL:-info}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      AUTH_SERVICE_ADDRESS: auth-service:${AUTH_SERVICE_GRPC_PORT:-50051}
+      AUTH_SERVICE_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+    ports:
+      - "${USER_SERVICE_HTTP_HOST_PORT:-4500}:${USER_SERVICE_HTTP_PORT:-4500}"
+      - "${USER_SERVICE_GRPC_HOST_PORT:-50052}:${USER_SERVICE_GRPC_PORT:-50052}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:4500/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  auth-service:
+    build:
+      context: AuthService
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${AUTH_SERVICE_NODE_ENV:-production}
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: ${AUTH_SERVICE_HTTP_PORT:-4000}
+      GRPC_BIND_ADDRESS: 0.0.0.0:${AUTH_SERVICE_GRPC_PORT:-50051}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${AUTH_SERVICE_DB:-pocketlol_auth}?schema=public
+      AUTH_JWT_PRIVATE_KEY: ${AUTH_JWT_PRIVATE_KEY:?AUTH_JWT_PRIVATE_KEY is required}
+      AUTH_JWT_PUBLIC_KEY: ${AUTH_JWT_PUBLIC_KEY:?AUTH_JWT_PUBLIC_KEY is required}
+      AUTH_JWT_KEY_ID: ${AUTH_JWT_KEY_ID:?AUTH_JWT_KEY_ID is required}
+      ACCESS_TOKEN_TTL: ${AUTH_ACCESS_TOKEN_TTL:-900}
+      REFRESH_TOKEN_TTL: ${AUTH_REFRESH_TOKEN_TTL:-604800}
+      REFRESH_TOKEN_ROTATION: ${AUTH_REFRESH_TOKEN_ROTATION:-true}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      USER_SERVICE_ADDRESS: user-service:${USER_SERVICE_GRPC_PORT:-50052}
+      USER_SERVICE_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      LOG_LEVEL: ${AUTH_SERVICE_LOG_LEVEL:-info}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID is required}
+      FIREBASE_CREDENTIALS_B64: ${FIREBASE_CREDENTIALS_B64:-}
+      PRISMA_AUTO_RESET: ${AUTH_SERVICE_PRISMA_AUTO_RESET:-true}
+    ports:
+      - "${AUTH_SERVICE_HTTP_HOST_PORT:-4000}:${AUTH_SERVICE_HTTP_PORT:-4000}"
+      - "${AUTH_SERVICE_GRPC_HOST_PORT:-50051}:${AUTH_SERVICE_GRPC_PORT:-50051}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:4000/health >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  api-gateway:
+    build:
+      context: APIGW
+      dockerfile: Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      content-service:
+        condition: service_healthy
+      engagement-service:
+        condition: service_healthy
+      search-service:
+        condition: service_healthy
+      streaming-service:
+        condition: service_healthy
+      upload-service:
+        condition: service_healthy
+      subscription-service:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${GATEWAY_NODE_ENV:-production}
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: ${GATEWAY_HTTP_PORT:-3000}
+      SERVER_BODY_LIMIT: ${GATEWAY_BODY_LIMIT:-1048576}
+      SERVER_TRUST_PROXY: ${GATEWAY_TRUST_PROXY:-true}
+      LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
+      ENABLE_REQUEST_LOGGING: ${GATEWAY_REQUEST_LOGGING:-true}
+      REDIS_URL: redis://redis:6379
+      RATE_LIMIT_ANON: ${GATEWAY_RATE_LIMIT_ANON:-20}
+      RATE_LIMIT_AUTH: ${GATEWAY_RATE_LIMIT_AUTH:-100}
+      RATE_LIMIT_ADMIN: ${GATEWAY_RATE_LIMIT_ADMIN:-500}
+      AUTH_JWKS_URL: http://auth-service:${AUTH_SERVICE_HTTP_PORT:-4000}/.well-known/jwks.json
+      AUTH_AUDIENCE: ${GATEWAY_AUTH_AUDIENCE:-pocketlol-services}
+      AUTH_ISSUER: ${GATEWAY_AUTH_ISSUER:-auth-service}
+      CONTENT_CACHE_TTL_SECONDS: ${GATEWAY_CONTENT_CACHE_TTL:-120}
+      STREAMING_SERVICE_URL: http://streaming-service:${STREAMING_SERVICE_HTTP_PORT:-4900}
+      CONTENT_SERVICE_URL: http://content-service:${CONTENT_SERVICE_HTTP_PORT:-4600}
+      AUTH_SERVICE_URL: http://auth-service:${AUTH_SERVICE_HTTP_PORT:-4000}
+      USER_SERVICE_URL: http://user-service:${USER_SERVICE_HTTP_PORT:-4500}
+      UPLOAD_SERVICE_URL: http://upload-service:${UPLOAD_SERVICE_HTTP_PORT:-5000}
+      ENGAGEMENT_SERVICE_URL: http://engagement-service:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}
+      SEARCH_SERVICE_URL: http://search-service:${SEARCH_SERVICE_HTTP_PORT:-4800}
+      SUBSCRIPTION_SERVICE_URL: http://subscription-service:${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}
+      SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      ENABLE_TELEMETRY: ${GATEWAY_ENABLE_TELEMETRY:-false}
+      SERVICE_NAME: ${GATEWAY_SERVICE_NAME:-pocketlol-gateway}
+    ports:
+      - "${GATEWAY_HTTP_HOST_PORT:-3000}:${GATEWAY_HTTP_PORT:-3000}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:3000/health/live >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  postgres-data:

@@ -1,0 +1,844 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pocketlol-sa
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apigw-config
+data:
+  NODE_ENV: production
+  SERVER_HOST: 0.0.0.0
+  SERVER_PORT: "3000"
+  SERVER_BODY_LIMIT: "1048576"
+  SERVER_TRUST_PROXY: "true"
+  LOG_LEVEL: info
+  ENABLE_REQUEST_LOGGING: "true"
+  REDIS_URL: ""
+  RATE_LIMIT_ANON: "20"
+  RATE_LIMIT_AUTH: "100"
+  RATE_LIMIT_ADMIN: "500"
+  AUTH_JWKS_URL: http://auth-service:4000/.well-known/jwks.json
+  AUTH_AUDIENCE: pocketlol-services
+  AUTH_ISSUER: auth-service
+  CONTENT_CACHE_TTL_SECONDS: "120"
+  STREAMING_SERVICE_URL: http://streaming-service:4900
+  CONTENT_SERVICE_URL: http://content-service:4600
+  AUTH_SERVICE_URL: http://auth-service:4000
+  USER_SERVICE_URL: http://user-service:4500
+  UPLOAD_SERVICE_URL: http://upload-service:5000
+  ENGAGEMENT_SERVICE_URL: http://engagement-service:4700
+  SEARCH_SERVICE_URL: http://search-service:4800
+  SUBSCRIPTION_SERVICE_URL: http://subscription-service:5100
+  ENABLE_TELEMETRY: "false"
+  SERVICE_NAME: pocketlol-gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apigw
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: apigw
+  template:
+    metadata:
+      labels:
+        app: apigw
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: apigw
+          image: apigw:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: apigw-config
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apigw
+spec:
+  selector:
+    app: apigw
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+  type: NodePort
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "4000"
+  GRPC_BIND_ADDRESS: 0.0.0.0:50051
+  AUTH_JWT_KEY_ID: auth-service-key
+  ACCESS_TOKEN_TTL: "900"
+  REFRESH_TOKEN_TTL: "604800"
+  REFRESH_TOKEN_ROTATION: "true"
+  USER_SERVICE_ADDRESS: user-service:50052
+  LOG_LEVEL: info
+  FIREBASE_PROJECT_ID: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+          command: ["/cloud-sql-proxy"]
+          args:
+            [
+              "--address",
+              "0.0.0.0",
+              "--port",
+              "5432",
+              "$(CLOUD_SQL_CONNECTION_NAME)",
+            ]
+          envFrom:
+            - secretRef:
+                name: cloudsql-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 200m
+              memory: 512Mi
+        - name: auth-service
+          image: auth-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4000
+              name: http
+            - containerPort: 50051
+              name: grpc
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          envFrom:
+            - configMapRef:
+                name: auth-service-config
+            - secretRef:
+                name: auth-service-secrets
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - name: http
+      port: 4000
+      targetPort: http
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "4500"
+  GRPC_BIND_ADDRESS: 0.0.0.0:50052
+  LOG_LEVEL: info
+  AUTH_SERVICE_ADDRESS: auth-service:50051
+---
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+          command: ["/cloud-sql-proxy"]
+          args:
+            [
+              "--address",
+              "0.0.0.0",
+              "--port",
+              "5432",
+              "$(CLOUD_SQL_CONNECTION_NAME)",
+            ]
+          envFrom:
+            - secretRef:
+                name: cloudsql-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 200m
+              memory: 512Mi
+        - name: user-service
+          image: user-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4500
+              name: http
+            - containerPort: 50052
+              name: grpc
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          envFrom:
+            - configMapRef:
+                name: user-service-config
+            - secretRef:
+                name: user-service-secrets
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - name: http
+      port: 4500
+      targetPort: http
+    - name: grpc
+      port: 50052
+      targetPort: grpc
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: content-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "4600"
+  GRPC_BIND_ADDRESS: 0.0.0.0:50061
+  LOG_LEVEL: info
+  CDN_BASE_URL: ""
+  DEFAULT_OWNER_ID: 00000000-0000-0000-0000-000000000001
+  REDIS_URL: ""
+  ENGAGEMENT_SERVICE_URL: http://engagement-service:4700
+  SUBSCRIPTION_SERVICE_URL: http://subscription-service:5100
+  SERVICE_REQUEST_TIMEOUT_MS: "5000"
+  FEED_CACHE_TTL_SECONDS: "60"
+  SERIES_CACHE_TTL_SECONDS: "120"
+  RELATED_CACHE_TTL_SECONDS: "180"
+---
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: content-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: content-service
+  template:
+    metadata:
+      labels:
+        app: content-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+          command: ["/cloud-sql-proxy"]
+          args:
+            [
+              "--address",
+              "0.0.0.0",
+              "--port",
+              "5432",
+              "$(CLOUD_SQL_CONNECTION_NAME)",
+            ]
+          envFrom:
+            - secretRef:
+                name: cloudsql-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 200m
+              memory: 512Mi
+        - name: content-service
+          image: content-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4600
+              name: http
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          envFrom:
+            - configMapRef:
+                name: content-service-config
+            - secretRef:
+                name: content-service-secrets
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: content-service
+spec:
+  selector:
+    app: content-service
+  ports:
+    - name: http
+      port: 4600
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: engagement-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "4700"
+  LOG_LEVEL: info
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: engagement-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: engagement-service
+  template:
+    metadata:
+      labels:
+        app: engagement-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: engagement-service
+          image: engagement-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4700
+              name: http
+          envFrom:
+            - configMapRef:
+                name: engagement-service-config
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: engagement-service
+spec:
+  selector:
+    app: engagement-service
+  ports:
+    - name: http
+      port: 4700
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: search-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "4800"
+  LOG_LEVEL: info
+  DEFAULT_PAGE_SIZE: "20"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: search-service
+  template:
+    metadata:
+      labels:
+        app: search-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: search-service
+          image: search-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4800
+              name: http
+          envFrom:
+            - configMapRef:
+                name: search-service-config
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-service
+spec:
+  selector:
+    app: search-service
+  ports:
+    - name: http
+      port: 4800
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: streaming-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "4900"
+  LOG_LEVEL: info
+  CDN_BASE_URL: ""
+  SIGNED_URL_TTL_SECONDS: "300"
+  GCS_MANIFEST_BUCKET: ""
+  PUBSUB_UPLOAD_SUBSCRIPTION: ""
+  UPLOAD_EVENT_ACK_DEADLINE_SECONDS: "60"
+  AUDIT_LOG_TOPIC: ""
+  AUTH_SERVICE_BASE_URL: http://auth-service:4000
+  AUTH_SERVICE_INTROSPECTION_PATH: /api/v1/auth/introspect
+  AUTH_SERVICE_TIMEOUT_MS: "2000"
+---
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streaming-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: streaming-service
+  template:
+    metadata:
+      labels:
+        app: streaming-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: streaming-service
+          image: streaming-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4900
+              name: http
+          envFrom:
+            - configMapRef:
+                name: streaming-service-config
+            - secretRef:
+                name: streaming-service-secrets
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: streaming-service
+spec:
+  selector:
+    app: streaming-service
+  ports:
+    - name: http
+      port: 4900
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: upload-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "5000"
+  LOG_LEVEL: info
+  REDIS_URL: ""
+  UPLOAD_BUCKET: ""
+  CDN_UPLOAD_BASE_URL: ""
+  SIGNED_UPLOAD_TTL_SECONDS: "600"
+---
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upload-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: upload-service
+  template:
+    metadata:
+      labels:
+        app: upload-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+          command: ["/cloud-sql-proxy"]
+          args:
+            [
+              "--address",
+              "0.0.0.0",
+              "--port",
+              "5432",
+              "$(CLOUD_SQL_CONNECTION_NAME)",
+            ]
+          envFrom:
+            - secretRef:
+                name: cloudsql-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 200m
+              memory: 512Mi
+        - name: upload-service
+          image: upload-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+              name: http
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          envFrom:
+            - configMapRef:
+                name: upload-service-config
+            - secretRef:
+                name: upload-service-secrets
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upload-service
+spec:
+  selector:
+    app: upload-service
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: subscription-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "5100"
+  GRPC_BIND_ADDRESS: 0.0.0.0:50071
+  LOG_LEVEL: info
+  REDIS_URL: ""
+  RAZORPAY_KEY_ID: ""
+  RAZORPAY_KEY_SECRET: ""
+---
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: subscription-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: subscription-service
+  template:
+    metadata:
+      labels:
+        app: subscription-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+          command: ["/cloud-sql-proxy"]
+          args:
+            [
+              "--address",
+              "0.0.0.0",
+              "--port",
+              "5432",
+              "$(CLOUD_SQL_CONNECTION_NAME)",
+            ]
+          envFrom:
+            - secretRef:
+                name: cloudsql-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 200m
+              memory: 512Mi
+        - name: subscription-service
+          image: subscription-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5100
+              name: http
+            - containerPort: 50071
+              name: grpc
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          envFrom:
+            - configMapRef:
+                name: subscription-service-config
+            - secretRef:
+                name: subscription-service-secrets
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: subscription-service
+spec:
+  selector:
+    app: subscription-service
+  ports:
+    - name: http
+      port: 5100
+      targetPort: http
+    - name: grpc
+      port: 50071
+      targetPort: grpc
+  type: ClusterIP

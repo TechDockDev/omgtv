@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ome-headend
+  namespace: streaming
+  labels:
+    app: ovenmediaengine
+spec:
+  serviceName: ome-headend
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ovenmediaengine
+  template:
+    metadata:
+      labels:
+        app: ovenmediaengine
+    spec:
+      serviceAccountName: streaming-ome
+      containers:
+        - name: ome
+          image: ghcr.io/pocketlol/ome:latest
+          ports:
+            - containerPort: 1935
+              name: rtmp
+            - containerPort: 8080
+              name: control
+          env:
+            - name: OME_CONFIG
+              valueFrom:
+                configMapKeyRef:
+                  name: ome-channel-templates
+                  key: cache-policy.json
+          volumeMounts:
+            - name: config
+              mountPath: /opt/ome/config
+            - name: secrets
+              mountPath: /opt/ome/secrets
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: ome-channel-templates
+        - name: secrets
+          secret:
+            secretName: ome-secrets

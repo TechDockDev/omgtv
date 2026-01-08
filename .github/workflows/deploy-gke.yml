@@ -1,0 +1,170 @@
+name: Deploy to GKE
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment overlay
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+concurrency:
+  group: deploy-${{ github.event_name }}-${{ (github.event.workflow_run && github.event.workflow_run.head_sha) || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    env:
+      # Prefer repo variables, then secrets, then known defaults for this repo.
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID || 'pocketlol-68ca6' }}
+      REGION: ${{ vars.GCP_REGION || secrets.GCP_REGION || 'asia-south1' }}
+      CLUSTER_NAME: ${{ vars.GKE_CLUSTER || secrets.GKE_CLUSTER || 'pocketlol' }}
+      AR_REPO: ${{ vars.ARTIFACT_REPO || secrets.ARTIFACT_REPO || 'pocketlol' }}
+      # Prefer secrets for auth, then vars, then known defaults for this repo.
+      GCP_WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER || 'projects/912340818228/locations/global/workloadIdentityPools/github-pool/providers/github-provider' }}
+      GCP_DEPLOY_SA: ${{ secrets.GCP_SERVICE_ACCOUNT || vars.GCP_SERVICE_ACCOUNT || 'github-deployer@pocketlol-68ca6.iam.gserviceaccount.com' }}
+      ENVIRONMENT: dev
+      TAG: sha-${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve target environment
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "ENVIRONMENT=${{ inputs.environment }}" >> "$GITHUB_ENV"
+          else
+            echo "ENVIRONMENT=dev" >> "$GITHUB_ENV"
+          fi
+
+      - name: Validate deploy configuration
+        run: |
+          set -euo pipefail
+
+          missing=0
+
+          if [[ -z "${PROJECT_ID}" ]]; then echo "Missing PROJECT_ID"; missing=1; fi
+          if [[ -z "${REGION}" ]]; then echo "Missing REGION"; missing=1; fi
+          if [[ -z "${CLUSTER_NAME}" ]]; then echo "Missing CLUSTER_NAME"; missing=1; fi
+          if [[ -z "${AR_REPO}" ]]; then echo "Missing AR_REPO"; missing=1; fi
+          if [[ -z "${GCP_WIF_PROVIDER}" ]]; then echo "Missing GCP_WIF_PROVIDER"; missing=1; fi
+          if [[ -z "${GCP_DEPLOY_SA}" ]]; then echo "Missing GCP_DEPLOY_SA"; missing=1; fi
+
+          if [[ "${missing}" -ne 0 ]]; then
+            echo
+            echo "Configure these in GitHub repo Settings -> Secrets and variables -> Actions"
+            echo "Variables: GCP_PROJECT_ID, GCP_REGION, GKE_CLUSTER, ARTIFACT_REPO"
+            echo "Secrets (recommended): GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT"
+            exit 1
+          fi
+
+      - name: Auth to Google Cloud (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SA }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Setup kustomize
+        uses: imranismail/setup-kustomize@v2
+        with:
+          kustomize-version: 5.6.0
+
+      - name: Ensure namespace exists
+        run: |
+          set -euo pipefail
+          kubectl get namespace "${ENVIRONMENT}" >/dev/null 2>&1 || kubectl create namespace "${ENVIRONMENT}"
+
+      - name: Build and push images
+        run: |
+          set -euo pipefail
+
+          registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}"
+
+          build_push() {
+            local name="$1"
+            local dir="$2"
+            local image="${registry}/${name}:${TAG}"
+            echo "Building ${image} from ${dir}"
+            docker buildx build --platform linux/amd64 -t "${image}" "${dir}" --push
+          }
+
+          build_push apigw ./APIGW
+          build_push auth-service ./AuthService
+          build_push user-service ./UserService
+          build_push content-service ./ContentService
+          build_push engagement-service ./EngagementService
+          build_push search-service ./SearchService
+          build_push streaming-service ./StreamingService
+          build_push upload-service ./UploadService
+          build_push subscription-service ./SubscriptionService
+
+      - name: Deploy manifests (kustomize)
+        run: |
+          set -euo pipefail
+
+          registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}"
+          overlay="k8s/overlays/${ENVIRONMENT}"
+
+          cd "${overlay}"
+          kustomize edit set image apigw="${registry}/apigw:${TAG}"
+          kustomize edit set image auth-service="${registry}/auth-service:${TAG}"
+          kustomize edit set image user-service="${registry}/user-service:${TAG}"
+          kustomize edit set image content-service="${registry}/content-service:${TAG}"
+          kustomize edit set image engagement-service="${registry}/engagement-service:${TAG}"
+          kustomize edit set image search-service="${registry}/search-service:${TAG}"
+          kustomize edit set image streaming-service="${registry}/streaming-service:${TAG}"
+          kustomize edit set image upload-service="${registry}/upload-service:${TAG}"
+          kustomize edit set image subscription-service="${registry}/subscription-service:${TAG}"
+
+          kubectl apply -k .
+
+      - name: Wait for rollouts
+        run: |
+          set -euo pipefail
+          ns="${ENVIRONMENT}"
+          kubectl -n "${ns}" rollout status deployment/apigw --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/auth-service --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/user-service --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/content-service --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/engagement-service --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/search-service --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/streaming-service --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/upload-service --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/subscription-service --timeout=10m

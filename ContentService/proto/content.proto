@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package content.v1;
+
+service ContentService {
+  rpc GetVideoMetadata(GetVideoMetadataRequest) returns (GetVideoMetadataResponse);
+}
+
+message GetVideoMetadataRequest {
+  string video_id = 1;
+}
+
+message Thumbnail {
+  string url = 1;
+  int32 width = 2;
+  int32 height = 3;
+}
+
+message VideoStats {
+  uint64 views = 1;
+  uint64 likes = 2;
+  uint64 comments = 3;
+}
+
+message GetVideoMetadataResponse {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  uint32 duration_seconds = 4;
+  string owner_id = 5;
+  string published_at = 6;
+  string visibility = 7;
+  repeated string tags = 8;
+  repeated Thumbnail thumbnails = 9;
+  VideoStats stats = 10;
+}

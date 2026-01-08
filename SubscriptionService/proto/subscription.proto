@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package subscription;
+
+service EntitlementService {
+  rpc ValidateReelAccess(ValidateAccessRequest) returns (ValidateAccessResponse);
+  rpc ValidateEpisodeAccess(ValidateAccessRequest) returns (ValidateAccessResponse);
+  rpc GetUserSubscription(GetUserSubscriptionRequest) returns (GetUserSubscriptionResponse);
+}
+
+message ValidateAccessRequest {
+  string user_id = 1;
+  string content_id = 2;
+  string content_type = 3; // REEL or EPISODE
+}
+
+message ValidateAccessResponse {
+  bool allowed = 1;
+  string reason = 2;
+  string subscription_status = 3;
+  string plan_id = 4;
+}
+
+message GetUserSubscriptionRequest {
+  string user_id = 1;
+}
+
+message GetUserSubscriptionResponse {
+  string plan_id = 1;
+  string plan_name = 2;
+  string status = 3;
+  int64 ends_at_unix_ms = 4;
+}

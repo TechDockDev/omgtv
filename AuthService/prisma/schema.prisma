@@ -1,0 +1,82 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AuthSubjectType {
+  ADMIN
+  CUSTOMER
+  GUEST
+}
+
+enum GuestLifecycleStatus {
+  ACTIVE
+  MIGRATED
+}
+
+model AuthSubject {
+  id              String          @id @default(uuid())
+  type            AuthSubjectType
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  admin           AdminCredential?
+  customer        CustomerIdentity?
+  guest           GuestIdentity?
+  migratedGuests  GuestIdentity[] @relation("GuestMigratedSubject")
+  sessions        Session[]
+}
+
+model AdminCredential {
+  subject            AuthSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subjectId          String       @id
+  email              String       @unique
+  passwordHash       String
+  isActive           Boolean      @default(true)
+  passwordUpdatedAt  DateTime     @updatedAt
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+}
+
+model CustomerIdentity {
+  subject      AuthSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subjectId    String       @id
+  firebaseUid  String       @unique
+  customerId   String       @unique
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  lastLoginAt  DateTime?
+}
+
+model GuestIdentity {
+  subject             AuthSubject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subjectId           String             @id
+  guestId             String
+  deviceId            String
+  guestProfileId      String             @unique
+  status              GuestLifecycleStatus @default(ACTIVE)
+  migratedToSubject   AuthSubject?       @relation("GuestMigratedSubject", fields: [migratedToSubjectId], references: [id])
+  migratedToSubjectId String?
+  migratedAt          DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@unique([guestId, deviceId])
+}
+
+model Session {
+  id               String      @id @default(uuid())
+  subject          AuthSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subjectId        String
+  refreshTokenHash String      @unique
+  deviceId         String?
+  userAgent        String?
+  createdAt        DateTime    @default(now())
+  expiresAt        DateTime
+
+  @@index([subjectId])
+}
