@@ -96,6 +96,10 @@ export const seriesDetailParamsSchema = z.object({
   slug: z.string(),
 });
 
+export const seriesDetailByIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
 export const seriesDetailResponseSchema = z.object({
   series: z.object({
     id: z.string().uuid(),

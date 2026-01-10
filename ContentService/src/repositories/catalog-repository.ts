@@ -938,6 +938,127 @@ export class CatalogRepository {
       seasons: normalizedSeasons,
       standaloneEpisodes,
     };
+    return {
+      ...(rest as Series & { category: Category | null }),
+      seasons: normalizedSeasons,
+      standaloneEpisodes,
+    };
+  }
+
+  async findSeriesForViewerById(params: {
+    id: string;
+    now?: Date;
+  }): Promise<SeriesWithRelations | null> {
+    const now = params.now ?? new Date();
+    const availabilityFilter: Prisma.EpisodeWhereInput = {
+      OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }],
+      AND: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }],
+    };
+
+    const series = await this.prisma.series.findFirst({
+      where: {
+        id: params.id,
+        deletedAt: null,
+        status: PublicationStatus.PUBLISHED,
+        visibility: Visibility.PUBLIC,
+        OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
+      },
+      include: {
+        category: true,
+        seasons: {
+          where: { deletedAt: null },
+          orderBy: { sequenceNumber: "asc" },
+          include: {
+            episodes: {
+              where: {
+                deletedAt: null,
+                status: PublicationStatus.PUBLISHED,
+                visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
+                publishedAt: { lte: now },
+                ...availabilityFilter,
+                mediaAsset: {
+                  is: {
+                    status: MediaAssetStatus.READY,
+                    deletedAt: null,
+                  },
+                },
+              },
+              include: {
+                mediaAsset: {
+                  include: {
+                    variants: true,
+                  },
+                },
+                series: {
+                  include: {
+                    category: true,
+                  },
+                },
+                season: true,
+                series: {
+                  include: {
+                    category: true,
+                  },
+                },
+              },
+              orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+            },
+          },
+        },
+        episodes: {
+          where: {
+            deletedAt: null,
+            seasonId: null,
+            status: PublicationStatus.PUBLISHED,
+            visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
+            publishedAt: { lte: now },
+            ...availabilityFilter,
+            mediaAsset: {
+              is: {
+                status: MediaAssetStatus.READY,
+                deletedAt: null,
+              },
+            },
+          },
+          include: {
+            mediaAsset: {
+              include: {
+                variants: true,
+              },
+            },
+            series: {
+              include: {
+                category: true,
+              },
+            },
+            season: true,
+            series: {
+              include: {
+                category: true,
+              },
+            },
+          },
+          orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+        },
+      },
+    });
+
+    if (!series) {
+      return null;
+    }
+
+    const { episodes = [], seasons, ...rest } = series;
+    const standaloneEpisodes = episodes as EpisodeWithRelations[];
+    const normalizedSeasons = seasons.map((season) => ({
+      ...season,
+      episodes: (season.episodes ?? []) as EpisodeWithRelations[],
+    }));
+
+    return {
+      ...(rest as Series & { category: Category | null }),
+      seasons: normalizedSeasons,
+      standaloneEpisodes,
+    };
   }
 
   async listRelatedSeries(params: {

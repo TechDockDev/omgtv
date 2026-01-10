@@ -13,6 +13,7 @@ import {
   DataQualityMonitor,
   type DataQualityContext,
 } from "./data-quality-monitor";
+import type { EngagementClient } from "../clients/engagement-client";
 
 export type ViewerFeedItem = {
   id: string;
@@ -132,6 +133,7 @@ export type ViewerCatalogServiceOptions = {
   seriesCacheTtlSeconds: number;
   relatedCacheTtlSeconds: number;
   qualityMonitor?: DataQualityMonitor;
+  engagement?: EngagementClient;
 };
 
 const FEED_CACHE_PREFIX = "catalog:feed";
@@ -228,10 +230,10 @@ export function buildFeedItem(
     },
     season: episode.season
       ? {
-          id: episode.season.id,
-          sequenceNumber: episode.season.sequenceNumber,
-          title: episode.season.title ?? null,
-        }
+        id: episode.season.id,
+        sequenceNumber: episode.season.sequenceNumber,
+        title: episode.season.title ?? null,
+      }
       : null,
     series: {
       id: episode.series.id,
@@ -242,10 +244,10 @@ export function buildFeedItem(
       bannerImageUrl: episode.series.bannerImageUrl ?? null,
       category: episode.series.category
         ? {
-            id: episode.series.category.id,
-            slug: episode.series.category.slug,
-            name: episode.series.category.name,
-          }
+          id: episode.series.category.id,
+          slug: episode.series.category.slug,
+          name: episode.series.category.name,
+        }
         : null,
     },
     playback: {
@@ -281,6 +283,7 @@ export class ViewerCatalogService {
   private readonly seriesTtl: number;
   private readonly relatedTtl: number;
   private readonly qualityMonitor?: DataQualityMonitor;
+  private readonly engagement?: EngagementClient;
 
   constructor(options: ViewerCatalogServiceOptions) {
     this.repo = options.repository ?? new CatalogRepository();
@@ -290,6 +293,7 @@ export class ViewerCatalogService {
     this.seriesTtl = options.seriesCacheTtlSeconds;
     this.relatedTtl = options.relatedCacheTtlSeconds;
     this.qualityMonitor = options.qualityMonitor;
+    this.engagement = options.engagement;
   }
 
   async getFeed(params: {
@@ -445,10 +449,10 @@ export class ViewerCatalogService {
             releaseDate: series.releaseDate?.toISOString() ?? null,
             category: series.category
               ? {
-                  id: series.category.id,
-                  slug: series.category.slug,
-                  name: series.category.name,
-                }
+                id: series.category.id,
+                slug: series.category.slug,
+                name: series.category.name,
+              }
               : null,
           },
           seasons: seasonItems,
@@ -515,10 +519,10 @@ export class ViewerCatalogService {
             bannerImageUrl: entry.bannerImageUrl ?? null,
             category: entry.category
               ? {
-                  id: entry.category.id,
-                  slug: entry.category.slug,
-                  name: entry.category.name,
-                }
+                id: entry.category.id,
+                slug: entry.category.slug,
+                name: entry.category.name,
+              }
               : null,
           })),
         };
@@ -529,6 +533,119 @@ export class ViewerCatalogService {
         }
 
         return { ...response, fromCache: false };
+      }
+    );
+  }
+
+  async getSeriesById(params: {
+    id: string;
+  }): Promise<any> {
+    return withSpan(
+      "ViewerCatalogService.getSeriesById",
+      { id: params.id },
+      async (span) => {
+        const series = await this.repo.findSeriesForViewerById({ id: params.id });
+        if (!series) {
+          return null;
+        }
+
+        let reviews = {
+          summary: { average_rating: 0, total_reviews: 0 },
+          user_reviews: [] as any[],
+        };
+
+        if (this.engagement) {
+          try {
+            const reviewData = await this.engagement.getReviews({
+              seriesId: series.id,
+              limit: 5,
+            });
+            reviews = {
+              summary: reviewData.summary,
+              user_reviews: reviewData.user_reviews,
+            };
+          } catch (error) {
+            console.error("Failed to fetch reviews", error);
+          }
+        }
+
+        const allEpisodes: ViewerFeedItem[] = [];
+
+        series.seasons.forEach((season) => {
+          season.episodes.forEach((episode) => {
+            this.ensureEpisodeQuality(episode as unknown as EpisodeWithRelations, { source: "viewer.series_detail" });
+            allEpisodes.push(buildFeedItem(episode as unknown as EpisodeWithRelations, { reason: "viewer_following" }, null));
+          });
+        });
+
+        series.standaloneEpisodes.forEach((episode) => {
+          this.ensureEpisodeQuality(episode, { source: "viewer.series_detail" });
+          allEpisodes.push(buildFeedItem(episode, { reason: "viewer_following" }, null));
+        });
+
+        const response = {
+          success: true,
+          statusCode: 0,
+          userMessage: "Series fetched successfully",
+          developerMessage: "Success",
+          data: {
+            series_id: series.id,
+            series_title: series.title,
+            synopsis: series.synopsis ?? "",
+            thumbnail: series.heroImageUrl ?? "",
+            banner: series.bannerImageUrl ?? "",
+            tags: series.tags,
+            category: series.category?.name ?? "Uncategorized",
+            trailer: {
+              thumbnail: series.heroImageUrl ?? "",
+              duration_seconds: 0,
+              streaming: {
+                can_watch: true,
+                plan_purchased: true,
+                type: "hls",
+                master_playlist: "",
+                qualities: []
+              }
+            },
+            episodes: allEpisodes.map(ep => ({
+              series_id: series.id,
+              episode_id: ep.id,
+              episode: ep.season?.sequenceNumber ?? 0,
+              season: ep.season?.sequenceNumber ?? 0,
+              title: ep.title,
+              description: ep.synopsis ?? "",
+              thumbnail: ep.defaultThumbnailUrl ?? "",
+              duration_seconds: ep.durationSeconds,
+              release_date: ep.publishedAt,
+              is_download_allowed: true,
+              rating: ep.ratings.average ?? 0,
+              views: 0,
+              streaming: {
+                can_watch: true,
+                plan_purchased: true,
+                type: "hls",
+                master_playlist: ep.playback.manifestUrl ?? "",
+                qualities: ep.playback.variants.map(v => ({
+                  quality: v.label,
+                  bitrate: v.bitrateKbps?.toString() ?? "0",
+                  resolution: `${v.width}x${v.height}`,
+                  size_mb: 0,
+                  url: ""
+                }))
+              },
+              progress: {
+                watched_duration: 0,
+                total_duration: ep.durationSeconds,
+                percentage: 0,
+                last_watched_at: new Date().toISOString(),
+                is_completed: false
+              }
+            })),
+            reviews: reviews
+          }
+        };
+
+        return response;
       }
     );
   }

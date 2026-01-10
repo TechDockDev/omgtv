@@ -17,6 +17,11 @@ import {
   type EngagementEventMetrics,
 } from "../schemas/engagement";
 import {
+  addReviewBodySchema,
+  getReviewsQuerySchema,
+  reviewsResponseSchema,
+} from "../schemas/review";
+import {
   applyEngagementEvent,
   getProgressEntries,
   upsertProgress,
@@ -31,6 +36,8 @@ import {
   saveEntity,
   unlikeEntity,
   unsaveEntity,
+  addReview,
+  getReviews,
 } from "../services/collection-engagement";
 
 function requireUserId(headers: Record<string, unknown>) {
@@ -404,6 +411,59 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
         })),
       };
       return continueWatchResponseSchema.parse(payload);
+    },
+  });
+  fastify.post("/series/:seriesId/reviews", {
+    schema: {
+      params: seriesIdParamsSchema,
+      body: addReviewBodySchema,
+    },
+    handler: async (request) => {
+      const { seriesId } = seriesIdParamsSchema.parse(request.params);
+      const body = addReviewBodySchema.parse(request.body);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+
+      const result = await addReview({
+        redis,
+        entityType: "series",
+        entityId: seriesId,
+        userId,
+        userName: body.user_name,
+        rating: body.rating,
+        title: body.title,
+        comment: body.comment,
+      });
+
+      return { review_id: result.reviewId };
+    },
+  });
+
+  fastify.get("/series/:seriesId/reviews", {
+    schema: {
+      params: seriesIdParamsSchema,
+      querystring: getReviewsQuerySchema,
+      response: { 200: reviewsResponseSchema },
+    },
+    handler: async (request) => {
+      const { seriesId } = seriesIdParamsSchema.parse(request.params);
+      const query = getReviewsQuerySchema.parse(request.query);
+
+      const result = await getReviews({
+        redis,
+        entityType: "series",
+        entityId: seriesId,
+        limit: query.limit,
+        cursor: query.cursor,
+      });
+
+      return {
+        summary: {
+          average_rating: result.averageRating,
+          total_reviews: result.totalReviews,
+        },
+        user_reviews: result.reviews as any[], // Casting because schemas might differ slightly in property names (camel vs snake) - checked below
+        next_cursor: result.nextCursor,
+      };
     },
   });
 });

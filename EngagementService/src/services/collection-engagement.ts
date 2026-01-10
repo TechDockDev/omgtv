@@ -12,6 +12,15 @@ type InMemoryState = {
   views: Map<string, number>;
   userLiked: Map<string, Set<string>>;
   userSaved: Map<string, Set<string>>;
+  reviews: Map<string, Array<{
+    id: string;
+    userId: string;
+    userName: string;
+    rating: number;
+    title: string;
+    comment: string;
+    createdAt: string;
+  }>>;
 };
 
 const memory: Record<EntityType, InMemoryState> = {
@@ -20,12 +29,14 @@ const memory: Record<EntityType, InMemoryState> = {
     views: new Map(),
     userLiked: new Map(),
     userSaved: new Map(),
+    reviews: new Map(),
   },
   series: {
     likes: new Map(),
     views: new Map(),
     userLiked: new Map(),
     userSaved: new Map(),
+    reviews: new Map(),
   },
 };
 
@@ -47,6 +58,18 @@ function redisUserLikedKey(entityType: EntityType, userId: string) {
 
 function redisUserSavedKey(entityType: EntityType, userId: string) {
   return `eng:user:${userId}:${entityType}:saved`;
+}
+
+function redisReviewListKey(entityType: EntityType, entityId: string) {
+  return `eng:${entityType}:${entityId}:reviews:list`;
+}
+
+function redisReviewStatsKey(entityType: EntityType, entityId: string) {
+  return `eng:${entityType}:${entityId}:reviews:stats`;
+}
+
+function redisUserReviewKey(entityType: EntityType, userId: string) {
+  return `eng:user:${userId}:${entityType}:reviews`;
 }
 
 function clampNonNegative(value: number) {
@@ -287,4 +310,138 @@ export async function getStatsBatch(params: {
   }
 
   return result;
+}
+
+export async function addReview(params: {
+  redis: Redis | null;
+  entityType: EntityType;
+  entityId: string;
+  userId: string;
+  userName: string;
+  rating: number;
+  title: string;
+  comment: string;
+}): Promise<{ reviewId: string }> {
+  const {
+    redis,
+    entityType,
+    entityId,
+    userId,
+    userName,
+    rating,
+    title,
+    comment,
+  } = params;
+  const reviewId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+
+  const reviewData = {
+    review_id: reviewId,
+    user_id: userId,
+    user_name: userName,
+    rating,
+    title,
+    comment,
+    created_at: createdAt,
+  };
+
+  if (!redis) {
+    const state = memory[entityType];
+    const reviews = state.reviews.get(entityKey(entityType, entityId)) ?? [];
+    reviews.unshift({
+      id: reviewId,
+      userId,
+      userName,
+      rating,
+      title,
+      comment,
+      createdAt,
+    });
+    state.reviews.set(entityKey(entityType, entityId), reviews);
+    return { reviewId };
+  }
+
+  // Use a transaction to update list and stats
+  const multi = redis.multi();
+  const listKey = redisReviewListKey(entityType, entityId);
+  const statsKey = redisReviewStatsKey(entityType, entityId);
+
+  // Push to front of list
+  multi.lpush(listKey, JSON.stringify(reviewData));
+
+  // Update stats
+  // We store total_count and sum_ratings in a hash
+  multi.hincrby(statsKey, "count", 1);
+  multi.hincrby(statsKey, "sum", rating);
+
+  await multi.exec();
+
+  return { reviewId };
+}
+
+export async function getReviews(params: {
+  redis: Redis | null;
+  entityType: EntityType;
+  entityId: string;
+  limit?: number;
+  cursor?: string;
+}): Promise<{
+  reviews: Array<any>;
+  averageRating: number;
+  totalReviews: number;
+  nextCursor: string | null;
+}> {
+  const { redis, entityType, entityId, limit = 20 } = params;
+
+  if (!redis) {
+    const state = memory[entityType];
+    const allReviews = state.reviews.get(entityKey(entityType, entityId)) ?? [];
+
+    // Calculate stats
+    const totalReviews = allReviews.length;
+    const sumRatings = allReviews.reduce((sum, r) => sum + r.rating, 0);
+    const averageRating = totalReviews > 0 ? sumRatings / totalReviews : 0;
+
+    // Slice for pagination
+    const startIndex = params.cursor ? parseInt(params.cursor, 10) : 0;
+    const reviews = allReviews.slice(startIndex, startIndex + limit).map(r => ({
+      review_id: r.id,
+      user_id: r.userId,
+      user_name: r.userName,
+      rating: r.rating,
+      title: r.title,
+      comment: r.comment,
+      created_at: r.createdAt
+    }));
+
+    const nextIndex = startIndex + limit;
+    const nextCursor = nextIndex < totalReviews ? nextIndex.toString() : null;
+
+    return { reviews, averageRating, totalReviews, nextCursor };
+  }
+
+  const listKey = redisReviewListKey(entityType, entityId);
+  const statsKey = redisReviewStatsKey(entityType, entityId);
+
+  const startIndex = params.cursor ? parseInt(params.cursor, 10) : 0;
+  const stopIndex = startIndex + limit - 1;
+
+  const [rawReviews, stats] = await Promise.all([
+    redis.lrange(listKey, startIndex, stopIndex),
+    redis.hmget(statsKey, "count", "sum")
+  ]);
+
+  const totalReviews = parseRedisInt(stats?.[0] ?? "0");
+  const sumRatings = parseRedisInt(stats?.[1] ?? "0");
+  const averageRating = totalReviews > 0 ? sumRatings / totalReviews : 0;
+
+  const reviews = rawReviews.map(r => JSON.parse(r));
+  const nextCursor = (startIndex + reviews.length) < totalReviews ? (startIndex + reviews.length).toString() : null;
+
+  return {
+    reviews,
+    averageRating,
+    totalReviews,
+    nextCursor
+  };
 }

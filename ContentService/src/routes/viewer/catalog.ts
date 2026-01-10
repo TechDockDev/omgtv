@@ -3,6 +3,7 @@ import { loadConfig } from "../../config";
 import {
   feedQuerySchema,
   seriesDetailParamsSchema,
+  seriesDetailByIdParamsSchema,
   relatedSeriesParamsSchema,
   relatedSeriesQuerySchema,
   categoryListQuerySchema,
@@ -14,6 +15,7 @@ import {
 } from "../../services/data-quality-monitor";
 import { getRedis } from "../../lib/redis";
 import { TrendingService } from "../../services/trending-service";
+import { EngagementClient } from "../../clients/engagement-client";
 
 export default async function viewerCatalogRoutes(fastify: FastifyInstance) {
   const config = loadConfig();
@@ -30,6 +32,10 @@ export default async function viewerCatalogRoutes(fastify: FastifyInstance) {
     redis,
     trending: trendingService,
     qualityMonitor,
+    engagement: new EngagementClient({
+      baseUrl: config.ENGAGEMENT_SERVICE_URL,
+      timeoutMs: config.SERVICE_REQUEST_TIMEOUT_MS,
+    }),
   });
 
   const verifyRequest = async (
@@ -113,6 +119,44 @@ export default async function viewerCatalogRoutes(fastify: FastifyInstance) {
               issue: error.issue.kind,
             },
             "Catalog data quality failure on series detail"
+          );
+          const failure = fastify.httpErrors.internalServerError(
+            "Catalog data quality issue"
+          );
+          (failure as { issue?: string }).issue = error.issue.kind;
+          throw failure;
+        }
+        throw error;
+      }
+    },
+  });
+
+  fastify.get("/series/id/:id", {
+    config: { metricsId: "/catalog/series/id/:id" },
+    preHandler: verifyRequest,
+    schema: {
+      params: seriesDetailByIdParamsSchema,
+    },
+    handler: async (request, reply) => {
+      const params = seriesDetailByIdParamsSchema.parse(request.params);
+      try {
+        const result = await viewerCatalog.getSeriesById({
+          id: params.id,
+        });
+        if (!result) {
+          throw fastify.httpErrors.notFound("Series not found");
+        }
+        // Result is already formatted as requested JSON
+        return result;
+      } catch (error) {
+        if (error instanceof CatalogConsistencyError) {
+          request.log.error(
+            {
+              err: error,
+              contentId: error.issue.attributes.episodeId,
+              issue: error.issue.kind,
+            },
+            "Catalog data quality failure on series detail by id"
           );
           const failure = fastify.httpErrors.internalServerError(
             "Catalog data quality issue"
