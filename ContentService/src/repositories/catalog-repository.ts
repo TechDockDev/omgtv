@@ -938,11 +938,6 @@ export class CatalogRepository {
       seasons: normalizedSeasons,
       standaloneEpisodes,
     };
-    return {
-      ...(rest as Series & { category: Category | null }),
-      seasons: normalizedSeasons,
-      standaloneEpisodes,
-    };
   }
 
   async findSeriesForViewerById(params: {
@@ -995,11 +990,6 @@ export class CatalogRepository {
                   },
                 },
                 season: true,
-                series: {
-                  include: {
-                    category: true,
-                  },
-                },
               },
               orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
             },
@@ -1032,11 +1022,6 @@ export class CatalogRepository {
               },
             },
             season: true,
-            series: {
-              include: {
-                category: true,
-              },
-            },
           },
           orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
         },
