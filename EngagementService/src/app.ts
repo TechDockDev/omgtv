@@ -9,6 +9,7 @@ import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import { loadConfig } from "./config";
 import serviceAuthPlugin from "./plugins/service-auth";
+import globalResponsePlugin from "./plugins/global-response";
 import internalRoutes from "./routes/internal";
 
 export async function buildApp() {
@@ -20,12 +21,12 @@ export async function buildApp() {
       transport:
         config.NODE_ENV === "development"
           ? {
-              target: "pino-pretty",
-              options: {
-                colorize: true,
-                translateTime: "SYS:standard",
-              },
-            }
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              translateTime: "SYS:standard",
+            },
+          }
           : undefined,
     },
     trustProxy: true,
@@ -39,17 +40,8 @@ export async function buildApp() {
   await app.register(cors, { origin: false });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(serviceAuthPlugin);
+  await app.register(globalResponsePlugin);
   await app.register(internalRoutes, { prefix: "/internal" });
-
-  app.setErrorHandler(async (error, request, reply) => {
-    if (error instanceof Error && error.message.startsWith("UNAUTHORIZED:")) {
-      request.log.warn({ err: error }, "Unauthorized request");
-      return reply.unauthorized(
-        error.message.replace("UNAUTHORIZED:", "").trim()
-      );
-    }
-    return reply.send(error);
-  });
 
   app.get("/health", async () => ({ status: "ok" }));
 

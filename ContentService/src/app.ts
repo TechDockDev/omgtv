@@ -10,6 +10,7 @@ import cors from "@fastify/cors";
 import { loadConfig } from "./config";
 import serviceAuthPlugin from "./plugins/service-auth";
 import metricsPlugin from "./plugins/metrics";
+import globalResponsePlugin from "./plugins/global-response";
 import internalRoutes from "./routes/internal";
 import adminRoutes from "./routes/admin";
 import viewerCatalogRoutes from "./routes/viewer/catalog";
@@ -24,12 +25,12 @@ export async function buildApp() {
       transport:
         config.NODE_ENV === "development"
           ? {
-              target: "pino-pretty",
-              options: {
-                colorize: true,
-                translateTime: "SYS:standard",
-              },
-            }
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              translateTime: "SYS:standard",
+            },
+          }
           : undefined,
     },
     trustProxy: true,
@@ -43,6 +44,7 @@ export async function buildApp() {
   await app.register(cors, { origin: false });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(metricsPlugin);
+  await app.register(globalResponsePlugin);
   await app.register(serviceAuthPlugin);
   await app.register(internalRoutes, { prefix: "/internal" });
 
