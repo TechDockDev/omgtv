@@ -411,9 +411,18 @@ export class ViewerCatalogService {
           }
         }
 
-        const series = await this.repo.findSeriesForViewer({
-          slug: params.slug,
-        });
+
+        let series;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidRegex.test(params.slug)) {
+          series = await this.repo.findSeriesForViewerById({
+            id: params.slug,
+          });
+        } else {
+          series = await this.repo.findSeriesForViewer({
+            slug: params.slug,
+          });
+        }
         if (!series) {
           return null;
         }
