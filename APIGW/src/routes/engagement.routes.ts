@@ -9,6 +9,8 @@ import {
   engagementSaveSuccessResponseSchema,
   engagementStatsSuccessResponseSchema,
   engagementViewSuccessResponseSchema,
+  batchInteractionBodySchema,
+  batchInteractionSuccessResponseSchema,
   type EngagementEventBody,
   type EngagementEventData,
   type EngagementIdParams,
@@ -17,6 +19,8 @@ import {
   type EngagementSaveData,
   type EngagementStatsData,
   type EngagementViewData,
+  type BatchInteractionBody,
+  type BatchInteractionData,
 } from "../schemas/engagement.schema";
 import { errorResponseSchema } from "../schemas/base.schema";
 import {
@@ -37,6 +41,7 @@ import {
   seriesStats,
   seriesUnlike,
   seriesUnsave,
+  batchInteractions,
 } from "../proxy/engagement.proxy";
 
 export default fp(
@@ -506,6 +511,37 @@ export default fp(
         const { id } = engagementIdParamsSchema.parse(request.params);
         return seriesStats(
           id,
+          request.correlationId,
+          request.user!,
+          request.telemetrySpan
+        );
+      },
+    });
+
+    // Batch interactions endpoint
+    fastify.route<{
+      Body: BatchInteractionBody;
+      Reply: BatchInteractionData;
+    }>({
+      method: "POST",
+      url: "/batch",
+      schema: {
+        description: "Sync multiple interactions (likes, saves, views) in one request",
+        tags: ["Batch"],
+        body: batchInteractionBodySchema,
+        response: {
+          200: batchInteractionSuccessResponseSchema,
+          400: errorResponseSchema,
+          401: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: authenticatedConfig,
+      preHandler: [fastify.authorize(["user", "admin"])],
+      async handler(request) {
+        const body = batchInteractionBodySchema.parse(request.body);
+        return batchInteractions(
+          body,
           request.correlationId,
           request.user!,
           request.telemetrySpan

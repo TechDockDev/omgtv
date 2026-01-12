@@ -19,6 +19,12 @@ const envSchema = z.object({
     .transform((value) =>
       value && value.trim().length > 0 ? value : undefined
     ),
+  DATABASE_URL: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value && value.trim().length > 0 ? value : undefined
+    ),
   SERVICE_AUTH_TOKEN: z
     .string()
     .optional()

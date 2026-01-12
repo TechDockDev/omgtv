@@ -1,0 +1,66 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ContentType {
+  REEL
+  SERIES
+}
+
+enum ActionType {
+  LIKE
+  SAVE
+}
+
+// Individual user actions (for "did I like this?")
+model UserAction {
+  id          String      @id @default(uuid())
+  userId      String
+  contentType ContentType
+  contentId   String
+  actionType  ActionType
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([userId, contentType, contentId, actionType])
+  @@index([userId, actionType])
+  @@index([contentId, contentType, actionType])
+}
+
+// Aggregated counts (synced from Redis)
+model ContentStats {
+  id           String      @id @default(uuid())
+  contentType  ContentType
+  contentId    String
+  likeCount    Int         @default(0)
+  saveCount    Int         @default(0)
+  viewCount    Int         @default(0)
+  lastSyncedAt DateTime    @default(now())
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([contentType, contentId])
+  @@index([contentType, contentId])
+}
+
+// View progress tracking (for "continue watching" - episodes only)
+model ViewProgress {
+  id              String    @id @default(uuid())
+  userId          String
+  episodeId       String
+  progressSeconds Int       @default(0)
+  durationSeconds Int
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, episodeId])
+  @@index([userId, updatedAt])
+}
