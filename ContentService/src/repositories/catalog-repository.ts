@@ -840,8 +840,10 @@ export class CatalogRepository {
   }): Promise<SeriesWithRelations | null> {
     const now = params.now ?? new Date();
     const availabilityFilter: Prisma.EpisodeWhereInput = {
-      OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }],
-      AND: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }],
+      AND: [
+        { OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }] },
+        { OR: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }] },
+      ],
     };
 
     const series = await this.prisma.series.findFirst({
@@ -865,12 +867,7 @@ export class CatalogRepository {
                 visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
                 publishedAt: { lte: now },
                 ...availabilityFilter,
-                mediaAsset: {
-                  is: {
-                    status: MediaAssetStatus.READY,
-                    deletedAt: null,
-                  },
-                },
+
               },
               include: {
                 mediaAsset: {
@@ -897,12 +894,7 @@ export class CatalogRepository {
             visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
             publishedAt: { lte: now },
             ...availabilityFilter,
-            mediaAsset: {
-              is: {
-                status: MediaAssetStatus.READY,
-                deletedAt: null,
-              },
-            },
+
           },
           include: {
             mediaAsset: {
@@ -946,8 +938,10 @@ export class CatalogRepository {
   }): Promise<SeriesWithRelations | null> {
     const now = params.now ?? new Date();
     const availabilityFilter: Prisma.EpisodeWhereInput = {
-      OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }],
-      AND: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }],
+      AND: [
+        { OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }] },
+        { OR: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }] },
+      ],
     };
 
     const series = await this.prisma.series.findFirst({
@@ -971,12 +965,7 @@ export class CatalogRepository {
                 visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
                 publishedAt: { lte: now },
                 ...availabilityFilter,
-                mediaAsset: {
-                  is: {
-                    status: MediaAssetStatus.READY,
-                    deletedAt: null,
-                  },
-                },
+
               },
               include: {
                 mediaAsset: {
@@ -1003,12 +992,7 @@ export class CatalogRepository {
             visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
             publishedAt: { lte: now },
             ...availabilityFilter,
-            mediaAsset: {
-              is: {
-                status: MediaAssetStatus.READY,
-                deletedAt: null,
-              },
-            },
+
           },
           include: {
             mediaAsset: {
