@@ -22,8 +22,27 @@ const continueWatchResponseSchema = z.object({
   entries: z.array(continueWatchEntrySchema),
 });
 
+// User state schemas for engagement enrichment
+const userStateItemSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+});
+
+const userStateEntrySchema = z.object({
+  isLiked: z.boolean(),
+  isSaved: z.boolean(),
+  likeCount: z.number().int().nonnegative(),
+  viewCount: z.number().int().nonnegative(),
+});
+
+const userStateResponseSchema = z.object({
+  states: z.record(userStateEntrySchema),
+});
+
 export type ContinueWatchEntry = z.infer<typeof continueWatchEntrySchema>;
 export type ContinueWatchQuery = z.infer<typeof continueWatchQuerySchema>;
+export type UserStateEntry = z.infer<typeof userStateEntrySchema>;
+export type UserStateItem = z.infer<typeof userStateItemSchema>;
 
 export class EngagementClient {
   constructor(
@@ -52,6 +71,38 @@ export class EngagementClient {
     }
 
     return parsed.data.entries;
+  }
+
+  /**
+   * Get user state for multiple content items.
+   * Returns like/save state and engagement counts for each item.
+   */
+  async getUserStates(params: {
+    userId: string;
+    items: UserStateItem[];
+  }): Promise<Record<string, UserStateEntry>> {
+    if (params.items.length === 0) {
+      return {};
+    }
+
+    const response: ServiceRequestResult<unknown> = await performServiceRequest({
+      serviceName: "engagement",
+      baseUrl: this.options.baseUrl,
+      path: "/internal/user-state",
+      method: "POST",
+      body: { items: params.items },
+      headers: { "x-user-id": params.userId },
+      timeoutMs: this.options.timeoutMs,
+      spanName: "client:engagement:getUserStates",
+    });
+
+    const parsed = userStateResponseSchema.safeParse(response.payload);
+    if (!parsed.success) {
+      console.error("Invalid user state response:", parsed.error);
+      return {};
+    }
+
+    return parsed.data.states;
   }
 
   async getReviews(params: {
@@ -110,3 +161,4 @@ export class EngagementClient {
     return parsed.data;
   }
 }
+

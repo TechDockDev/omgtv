@@ -463,3 +463,53 @@ export function seriesSavedList(
     },
   });
 }
+
+// Import batch schemas
+import {
+  batchInteractionBodySchema,
+  batchInteractionDataSchema,
+  type BatchInteractionBody,
+  type BatchInteractionData,
+} from "../schemas/engagement.schema";
+
+export async function batchInteractions(
+  body: BatchInteractionBody,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<BatchInteractionData> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const validatedBody = batchInteractionBodySchema.parse(body);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<BatchInteractionData>({
+      serviceName: "engagement",
+      baseUrl,
+      path: "/internal/interactions/batch",
+      method: "POST",
+      correlationId,
+      user,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:engagement:batchInteractions",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to process batch interactions",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const parsed = batchInteractionDataSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+
+  return parsed.data;
+}

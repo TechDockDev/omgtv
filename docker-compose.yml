@@ -72,11 +72,18 @@ services:
     build:
       context: EngagementService
       dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       NODE_ENV: ${ENGAGEMENT_SERVICE_NODE_ENV:-production}
       HTTP_HOST: 0.0.0.0
       HTTP_PORT: ${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}
       LOG_LEVEL: ${ENGAGEMENT_SERVICE_LOG_LEVEL:-info}
+      REDIS_URL: ${ENGAGEMENT_SERVICE_REDIS_URL:-redis://redis:6379/3}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${ENGAGEMENT_SERVICE_DB:-pocketlol_engagement}?schema=public
       SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
     ports:
       - "${ENGAGEMENT_SERVICE_HTTP_HOST_PORT:-4700}:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}"

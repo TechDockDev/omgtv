@@ -428,6 +428,7 @@ data:
   HTTP_HOST: 0.0.0.0
   HTTP_PORT: "4700"
   LOG_LEVEL: info
+  REDIS_URL: ""
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -435,6 +436,8 @@ metadata:
   name: engagement-service
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: engagement-service
@@ -445,29 +448,61 @@ spec:
     spec:
       serviceAccountName: pocketlol-sa
       containers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+          command: ["/cloud-sql-proxy"]
+          args:
+            [
+              "--address",
+              "0.0.0.0",
+              "--port",
+              "5432",
+              "$(CLOUD_SQL_CONNECTION_NAME)",
+            ]
+          envFrom:
+            - secretRef:
+                name: cloudsql-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 200m
+              memory: 512Mi
         - name: engagement-service
           image: engagement-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 4700
               name: http
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
           envFrom:
             - configMapRef:
                 name: engagement-service-config
+            - secretRef:
+                name: engagement-service-secrets
             - secretRef:
                 name: shared-secrets
           readinessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 3
 ---

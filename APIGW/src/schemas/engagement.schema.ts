@@ -77,3 +77,27 @@ export type EngagementLikeData = z.infer<typeof engagementLikeDataSchema>;
 export type EngagementSaveData = z.infer<typeof engagementSaveDataSchema>;
 export type EngagementViewData = z.infer<typeof engagementViewDataSchema>;
 export type EngagementListData = z.infer<typeof engagementListDataSchema>;
+
+// Batch interaction schemas
+export const batchInteractionItemSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+  action: z.enum(["like", "unlike", "save", "unsave", "view"]),
+});
+
+export const batchInteractionBodySchema = z.object({
+  actions: z.array(batchInteractionItemSchema).min(1).max(100),
+});
+
+export const batchInteractionDataSchema = z.object({
+  processed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative().optional(),
+});
+
+export const batchInteractionSuccessResponseSchema = createSuccessResponseSchema(
+  batchInteractionDataSchema
+);
+
+export type BatchInteractionBody = z.infer<typeof batchInteractionBodySchema>;
+export type BatchInteractionData = z.infer<typeof batchInteractionDataSchema>;
+
