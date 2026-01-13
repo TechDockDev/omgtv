@@ -17,6 +17,10 @@ import {
   type EngagementSaveData,
   type EngagementStatsData,
   type EngagementViewData,
+  batchActionRequestSchema,
+  batchActionResponseDataSchema,
+  type BatchActionRequest,
+  type BatchActionResponseData,
 } from "../schemas/engagement.schema";
 import type { GatewayUser } from "../types";
 
@@ -472,6 +476,7 @@ import {
   type BatchInteractionData,
 } from "../schemas/engagement.schema";
 
+// Batch interactions (simple version from origin)
 export async function batchInteractions(
   body: BatchInteractionBody,
   correlationId: string,
@@ -507,6 +512,49 @@ export async function batchInteractions(
   }
 
   const parsed = batchInteractionDataSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+
+  return parsed.data;
+}
+
+// Batch actions (detailed version with results)
+export async function processBatchActions(
+  body: BatchActionRequest,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<BatchActionResponseData> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const validatedBody = batchActionRequestSchema.parse(body);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<BatchActionResponseData>({
+      serviceName: "engagement",
+      baseUrl,
+      path: "/internal/batch",
+      method: "POST",
+      correlationId,
+      user,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:engagement:batchActions",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to process batch engagement actions",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const parsed = batchActionResponseDataSchema.safeParse(payload);
   if (!parsed.success) {
     throw new Error("Invalid response from engagement service");
   }

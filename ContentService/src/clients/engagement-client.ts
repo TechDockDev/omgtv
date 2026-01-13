@@ -160,5 +160,66 @@ export class EngagementClient {
     }
     return parsed.data;
   }
+
+  async getUserState(params: {
+    userId: string;
+    items: Array<{ contentType: "reel" | "series"; contentId: string }>;
+  }): Promise<
+    Record<
+      string,
+      {
+        likeCount: number;
+        viewCount: number;
+        isLiked: boolean;
+        isSaved: boolean;
+      }
+    >
+  > {
+    if (params.items.length === 0) {
+      return {};
+    }
+
+    const userStateRequestSchema = z.object({
+      items: z.array(
+        z.object({
+          contentType: z.enum(["reel", "series"]),
+          contentId: z.string().uuid(),
+        })
+      ),
+    });
+
+    const userStateEntrySchema = z.object({
+      likeCount: z.number().int().nonnegative(),
+      viewCount: z.number().int().nonnegative(),
+      isLiked: z.boolean(),
+      isSaved: z.boolean(),
+    });
+
+    const userStateResponseSchema = z.object({
+      states: z.record(userStateEntrySchema),
+    });
+
+    const body = userStateRequestSchema.parse({ items: params.items });
+
+    const response: ServiceRequestResult<unknown> = await performServiceRequest({
+      serviceName: "engagement",
+      baseUrl: this.options.baseUrl,
+      path: "/internal/user-state",
+      method: "POST",
+      body,
+      headers: {
+        "x-user-id": params.userId,
+      },
+      timeoutMs: this.options.timeoutMs,
+      spanName: "client:engagement:getUserState",
+    });
+
+    const parsed = userStateResponseSchema.safeParse(response.payload);
+    if (!parsed.success) {
+      throw new Error("Invalid response from EngagementService (user-state)");
+    }
+
+    return parsed.data.states;
+  }
 }
 

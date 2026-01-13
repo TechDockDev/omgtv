@@ -1766,10 +1766,9 @@ const contentDocument: OpenAPIV3.Document = {
     schemas: {
       CategoryWriteRequest: {
         type: "object",
-        required: ["slug", "name"],
+        required: ["name"],
         additionalProperties: false,
         properties: {
-          slug: { type: "string", minLength: 3 },
           name: { type: "string", minLength: 1 },
           description: { type: "string", maxLength: 1000, nullable: true },
           displayOrder: { type: "integer", format: "int32", nullable: true },

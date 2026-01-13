@@ -78,7 +78,7 @@ export type EngagementSaveData = z.infer<typeof engagementSaveDataSchema>;
 export type EngagementViewData = z.infer<typeof engagementViewDataSchema>;
 export type EngagementListData = z.infer<typeof engagementListDataSchema>;
 
-// Batch interaction schemas
+// Batch interaction schemas (from origin - simple version)
 export const batchInteractionItemSchema = z.object({
   contentType: z.enum(["reel", "series"]),
   contentId: z.string().uuid(),
@@ -101,3 +101,46 @@ export const batchInteractionSuccessResponseSchema = createSuccessResponseSchema
 export type BatchInteractionBody = z.infer<typeof batchInteractionBodySchema>;
 export type BatchInteractionData = z.infer<typeof batchInteractionDataSchema>;
 
+// Batch action schemas (detailed version with results)
+export const batchActionItemSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+  action: z.enum(["like", "unlike", "save", "unsave", "view"]),
+});
+
+export const batchActionRequestSchema = z.object({
+  actions: z.array(batchActionItemSchema).min(1).max(50),
+});
+
+export const batchActionResultSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+  action: z.enum(["like", "unlike", "save", "unsave", "view"]),
+  success: z.boolean(),
+  result: z
+    .object({
+      liked: z.boolean().optional(),
+      saved: z.boolean().optional(),
+      likes: z.number().int().nonnegative().optional(),
+      views: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+  error: z.string().optional(),
+});
+
+export const batchActionResponseDataSchema = z.object({
+  results: z.array(batchActionResultSchema),
+  processed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+
+export const batchActionSuccessResponseSchema = createSuccessResponseSchema(
+  batchActionResponseDataSchema
+);
+
+export type BatchActionItem = z.infer<typeof batchActionItemSchema>;
+export type BatchActionRequest = z.infer<typeof batchActionRequestSchema>;
+export type BatchActionResult = z.infer<typeof batchActionResultSchema>;
+export type BatchActionResponseData = z.infer<
+  typeof batchActionResponseDataSchema
+>;

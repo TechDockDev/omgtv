@@ -73,9 +73,21 @@ export class CatalogRepository {
     });
   }
 
+  async findCategoryByIdIncludingDeleted(id: string) {
+    return this.prisma.category.findFirst({
+      where: { id },
+    });
+  }
+
   async findCategoryBySlug(slug: string) {
     return this.prisma.category.findFirst({
       where: { slug, deletedAt: null },
+    });
+  }
+
+  async findCategoryBySlugIncludingDeleted(slug: string) {
+    return this.prisma.category.findFirst({
+      where: { slug },
     });
   }
 
@@ -126,6 +138,27 @@ export class CatalogRepository {
       data: {
         deletedAt: new Date(),
         updatedByAdminId: adminId,
+      },
+    });
+  }
+
+  async restoreCategory(
+    id: string,
+    data: {
+      name: string;
+      description?: string | null;
+      displayOrder?: number | null;
+      adminId?: string;
+    }
+  ) {
+    return this.prisma.category.update({
+      where: { id },
+      data: {
+        name: data.name,
+        description: data.description ?? null,
+        displayOrder: data.displayOrder ?? null,
+        deletedAt: null,
+        updatedByAdminId: data.adminId,
       },
     });
   }
