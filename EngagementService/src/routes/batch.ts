@@ -3,10 +3,8 @@ import type { FastifyInstance } from "fastify";
 import {
     batchInteractionRequestSchema,
     batchInteractionResponseSchema,
-    userStateRequestSchema,
-    userStateResponseSchema,
 } from "../schemas/batch";
-import { processBatchInteractions, getUserStates } from "../services/batch-service";
+import { processBatchInteractions } from "../services/batch-service";
 import { getRedisOptional } from "../lib/redis";
 import { getPrismaOptional } from "../lib/prisma";
 
@@ -55,18 +53,9 @@ export default fp(async function batchRoutes(fastify: FastifyInstance) {
      * Returns like/save state and counts for multiple content items
      * Used by ContentService to enrich responses
      */
-    fastify.post("/user-state", {
-        schema: {
-            body: userStateRequestSchema,
-            response: { 200: userStateResponseSchema },
-        },
-        handler: async (request) => {
-            const userId = requireUserId(request.headers as Record<string, unknown>);
-            const body = userStateRequestSchema.parse(request.body);
-
-            const states = await getUserStates({ redis, prisma }, userId, body.items);
-
-            return userStateResponseSchema.parse({ states });
-        },
-    });
+    /**
+     * User state API is defined in ./internal.ts
+     * Do not duplicate it here.
+     */
+    // fastify.post("/user-state", { ... });
 });
