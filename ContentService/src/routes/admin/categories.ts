@@ -7,7 +7,6 @@ import {
 import { loadConfig } from "../../config";
 
 const categoryBodySchema = z.object({
-  slug: z.string().min(3),
   name: z.string().min(1),
   description: z.string().max(1000).optional(),
   displayOrder: z.number().int().optional(),
@@ -47,7 +46,20 @@ export default async function adminCategoryRoutes(fastify: FastifyInstance) {
       try {
         const adminId = requireAdminId(request, reply);
         const result = await catalog.createCategory(adminId, body);
-        return reply.status(201).send(result);
+
+        if (result.restored) {
+          // Category was restored from deleted state
+          return reply.status(200).send({
+            ...result.category,
+            message: "Category restored successfully (was previously deleted)",
+          });
+        }
+
+        // New category created
+        return reply.status(201).send({
+          ...result.category,
+          message: "Category created successfully",
+        });
       } catch (error) {
         if (error instanceof CatalogServiceError) {
           if (error.code === "CONFLICT") {
@@ -58,7 +70,7 @@ export default async function adminCategoryRoutes(fastify: FastifyInstance) {
           }
         }
         request.log.error(
-          { err: error, contentId: body.slug },
+          { err: error, contentId: body.name },
           "Failed to create category"
         );
         return reply.status(500).send({ message: "Unable to create category" });
@@ -177,10 +189,30 @@ export default async function adminCategoryRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const params = z.object({ id: z.string().uuid() }).parse(request.params);
+      request.log.info({ categoryId: params.id }, "Received unique delete category request");
       try {
         const adminId = requireAdminId(request, reply);
-        await catalog.deleteCategory(adminId, params.id);
-        return reply.status(204).send();
+        const result = await catalog.deleteCategory(adminId, params.id);
+
+        request.log.info({ result }, "Delete category result from service");
+
+        if (result.alreadyDeleted) {
+          // Category was already deleted - return 410 Gone
+          return reply.status(410).send({
+            id: result.category.id,
+            slug: result.category.slug,
+            deletedAt: result.category.deletedAt,
+            message: "Category was already deleted",
+          });
+        }
+
+        // Category successfully deleted - return 200
+        return reply.status(200).send({
+          id: result.category.id,
+          slug: result.category.slug,
+          deletedAt: result.category.deletedAt,
+          message: "Category deleted successfully",
+        });
       } catch (error) {
         if (
           error instanceof CatalogServiceError &&

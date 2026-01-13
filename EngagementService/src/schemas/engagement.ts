@@ -102,3 +102,67 @@ export type ViewResponse = z.infer<typeof viewResponseSchema>;
 export type ListResponse = z.infer<typeof listResponseSchema>;
 export type StatsBatchRequest = z.infer<typeof statsBatchRequestSchema>;
 export type StatsBatchResponse = z.infer<typeof statsBatchResponseSchema>;
+
+// Batch action schemas
+export const batchActionItemSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+  action: z.enum(["like", "unlike", "save", "unsave", "view"]),
+});
+
+export const batchActionRequestSchema = z.object({
+  actions: z.array(batchActionItemSchema).min(1).max(50),
+});
+
+export const batchActionResultSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+  action: z.enum(["like", "unlike", "save", "unsave", "view"]),
+  success: z.boolean(),
+  result: z
+    .object({
+      liked: z.boolean().optional(),
+      saved: z.boolean().optional(),
+      likes: z.number().int().nonnegative().optional(),
+      views: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+  error: z.string().optional(),
+});
+
+export const batchActionResponseSchema = z.object({
+  results: z.array(batchActionResultSchema),
+  processed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+
+export type BatchActionItem = z.infer<typeof batchActionItemSchema>;
+export type BatchActionRequest = z.infer<typeof batchActionRequestSchema>;
+export type BatchActionResult = z.infer<typeof batchActionResultSchema>;
+export type BatchActionResponse = z.infer<typeof batchActionResponseSchema>;
+
+// User state schemas (for ContentService enrichment)
+export const userStateItemSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+});
+
+export const userStateRequestSchema = z.object({
+  items: z.array(userStateItemSchema).min(1).max(100),
+});
+
+export const userStateEntrySchema = z.object({
+  likeCount: z.number().int().nonnegative(),
+  viewCount: z.number().int().nonnegative(),
+  isLiked: z.boolean(),
+  isSaved: z.boolean(),
+});
+
+export const userStateResponseSchema = z.object({
+  states: z.record(userStateEntrySchema),
+});
+
+export type UserStateItem = z.infer<typeof userStateItemSchema>;
+export type UserStateRequest = z.infer<typeof userStateRequestSchema>;
+export type UserStateEntry = z.infer<typeof userStateEntrySchema>;
+export type UserStateResponse = z.infer<typeof userStateResponseSchema>;

@@ -149,15 +149,43 @@ export class CatalogService {
   async createCategory(
     adminId: string,
     input: {
-      slug: string;
       name: string;
       description?: string | null;
       displayOrder?: number | null;
     }
-  ): Promise<Category> {
+  ): Promise<{ restored: boolean; category: Category }> {
+    // Generate unique slug from name
+    const baseSlug = slugify(input.name);
+    let slug = baseSlug;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    // Keep generating slugs until we find a unique one
+    while (attempts < maxAttempts) {
+      const existing = await this.repo.findCategoryBySlugIncludingDeleted(slug);
+
+      if (!existing) {
+        // Slug is available, proceed with creation
+        break;
+      }
+
+      // If exists but is deleted, we could restore it - but user wants new category
+      // Generate new slug with random suffix
+      const uniqueSuffix = Math.random().toString(36).substring(2, 8);
+      slug = `${baseSlug}-${uniqueSuffix}`;
+      attempts++;
+    }
+
+    if (attempts >= maxAttempts) {
+      throw new CatalogServiceError(
+        "CONFLICT",
+        "Could not generate unique slug after multiple attempts"
+      );
+    }
+
     try {
       const category = await this.repo.createCategory({
-        slug: input.slug,
+        slug,
         name: input.name,
         description: input.description ?? null,
         displayOrder: input.displayOrder ?? null,
@@ -169,12 +197,13 @@ export class CatalogService {
         operation: "create",
         payload: { slug: category.slug },
       });
-      return category;
+      return { restored: false, category };
     } catch (error) {
       if (isKnownPrismaError(error, "P2002")) {
+        // Race condition - try again with new slug
         throw new CatalogServiceError(
           "CONFLICT",
-          "Category with this slug already exists"
+          "Slug conflict occurred, please try again"
         );
       }
       throw error;
@@ -272,10 +301,21 @@ export class CatalogService {
     }
   }
 
-  async deleteCategory(adminId: string, id: string): Promise<void> {
-    const existing = await this.repo.findCategoryById(id);
+  async deleteCategory(
+    adminId: string,
+    id: string
+  ): Promise<{ alreadyDeleted: boolean; category: { id: string; slug: string; deletedAt: Date | null } }> {
+    // Use findCategoryByIdIncludingDeleted to check if category exists at all
+    const existing = await this.repo.findCategoryByIdIncludingDeleted(id);
     if (!existing) {
       throw new CatalogServiceError("NOT_FOUND", "Category not found");
+    }
+    // If already soft-deleted, return info about the already-deleted category
+    if (existing.deletedAt) {
+      return {
+        alreadyDeleted: true,
+        category: { id: existing.id, slug: existing.slug, deletedAt: existing.deletedAt },
+      };
     }
     await this.repo.softDeleteCategory(id, adminId);
     await this.emitCatalogEvent({
@@ -284,6 +324,10 @@ export class CatalogService {
       operation: "delete",
       payload: { slug: existing.slug },
     });
+    return {
+      alreadyDeleted: false,
+      category: { id: existing.id, slug: existing.slug, deletedAt: new Date() },
+    };
   }
 
   async deleteSeries(adminId: string, id: string): Promise<void> {

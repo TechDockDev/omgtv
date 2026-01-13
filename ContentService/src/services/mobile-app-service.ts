@@ -77,6 +77,12 @@ type CarouselEntryView = {
   videoUrl: string | null;
   rating: number | null;
   series_id: string | null;
+  engagement?: {
+    likeCount: number;
+    viewCount: number;
+    isLiked: boolean;
+    isSaved: boolean;
+  } | null;
 };
 
 export type MobileAppConfig = {
@@ -109,7 +115,7 @@ export class MobileAppService {
       engagementClient?: EngagementClient;
       subscriptionClient?: SubscriptionClient;
     }
-  ) {}
+  ) { }
 
   async listTags(query: MobileTagsQuery): Promise<MobileTagsResponse> {
     const parsed = mobileTagsQuerySchema.parse(query);
@@ -152,7 +158,13 @@ export class MobileAppService {
       limit: this.deps.config.continueWatchLimit * 4,
       options,
     });
-    const carouselItems = await this.buildCarouselItems(filteredItems);
+
+    // Load engagement states for all items (using series_id for series-based items)
+    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
+      filteredItems.map((item) => ({ id: item.series.id, contentType: "series" as const }));
+    const engagementStates = await this.loadEngagementStates(engagementItems, options);
+
+    const carouselItems = await this.buildCarouselItems(filteredItems, engagementStates);
     const prioritizedItems = [
       ...filteredItems.filter((item) => progressMap.has(item.id)),
       ...filteredItems.filter((item) => !progressMap.has(item.id)),
@@ -161,17 +173,27 @@ export class MobileAppService {
       0,
       this.deps.config.continueWatchLimit
     );
-    const continueWatch = continueWatchSource.map((item) =>
-      this.toContinueWatchItem(
-        item,
-        entitlements.episode,
-        progressMap.get(item.id)
-      )
-    );
+    const continueWatch = continueWatchSource.map((item) => {
+      const engagement = engagementStates.get(item.series.id);
+      return {
+        ...this.toContinueWatchItem(
+          item,
+          entitlements.episode,
+          progressMap.get(item.id)
+        ),
+        engagement: engagement ?? null,
+      };
+    });
 
     const sectionItems = filteredItems
       .slice(0, this.deps.config.sectionItemLimit)
-      .map((item) => this.toSectionEntry(item, progressMap.get(item.id)));
+      .map((item) => {
+        const engagement = engagementStates.get(item.series.id);
+        return {
+          ...this.toSectionEntry(item, progressMap.get(item.id)),
+          engagement: engagement ?? null,
+        };
+      });
 
     const sections = this.buildSections(
       sectionItems,
@@ -214,20 +236,26 @@ export class MobileAppService {
     }
 
     const entitlements = await this.resolveEntitlements(options);
-    const progressMap = await this.loadProgressMap(
-      [
-        ...detail.seasons.flatMap((season) => season.episodes),
-        ...detail.standaloneEpisodes,
-      ],
-      {
-        options,
-        limit: 200,
-      }
-    );
+    const allEpisodes = [
+      ...detail.seasons.flatMap((season) => season.episodes),
+      ...detail.standaloneEpisodes,
+    ];
+    const progressMap = await this.loadProgressMap(allEpisodes, {
+      options,
+      limit: 200,
+    });
+
+    // Load engagement states for series and all episodes
+    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> = [
+      { id: detail.series.id, contentType: "series" },
+      ...allEpisodes.map((ep) => ({ id: ep.id, contentType: "reel" as const })),
+    ];
+    const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
     const data = this.buildSeriesPayload(detail, {
       entitlements,
       progressMap,
+      engagementStates,
     });
     return mobileSeriesDataSchema.parse(data);
   }
@@ -243,9 +271,21 @@ export class MobileAppService {
     });
 
     const entitlements = await this.resolveEntitlements(options);
-    const items = result.items.map((reel) =>
-      this.toReelItem(reel, entitlements.reel)
+
+    // Load engagement states for all reels
+    const engagementStates = await this.loadEngagementStates(
+      result.items.map((reel) => ({ id: reel.id, contentType: "reel" as const })),
+      options
     );
+
+    const items = result.items.map((reel) => {
+      const item = this.toReelItem(reel, entitlements.reel);
+      const engagement = engagementStates.get(reel.id);
+      return {
+        ...item,
+        engagement: engagement ?? null,
+      };
+    });
 
     const currentPage = parsed.page ?? 1;
     const hasNextPage = Boolean(result.nextCursor);
@@ -264,21 +304,37 @@ export class MobileAppService {
   }
 
   private async buildCarouselItems(
-    feedItems: ViewerFeedItem[]
+    feedItems: ViewerFeedItem[],
+    engagementStates?: Map<
+      string,
+      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+    >
   ): Promise<CarouselEntryView[]> {
     const limit = this.deps.config.carouselLimit;
     const entries = await this.deps.repository.listCarouselEntries();
     if (entries.length === 0) {
       return feedItems
         .slice(0, limit)
-        .map((item, index) => this.toCarouselItem(item, index + 1));
+        .map((item, index) => {
+          const engagement = engagementStates?.get(item.series.id);
+          return {
+            ...this.toCarouselItem(item, index + 1),
+            engagement: engagement ?? null,
+          };
+        });
     }
 
-    const curated = this.formatCuratedCarouselEntries(entries);
+    const curated = this.formatCuratedCarouselEntries(entries, engagementStates);
     if (curated.length === 0) {
       return feedItems
         .slice(0, limit)
-        .map((item, index) => this.toCarouselItem(item, index + 1));
+        .map((item, index) => {
+          const engagement = engagementStates?.get(item.series.id);
+          return {
+            ...this.toCarouselItem(item, index + 1),
+            engagement: engagement ?? null,
+          };
+        });
     }
 
     const trimmed = curated.slice(0, limit);
@@ -295,15 +351,23 @@ export class MobileAppService {
     const fallback = feedItems
       .filter((item) => !usedIds.has(item.id))
       .slice(0, remaining)
-      .map((item, index) =>
-        this.toCarouselItem(item, highestPriority + index + 1)
-      );
+      .map((item, index) => {
+        const engagement = engagementStates?.get(item.series.id);
+        return {
+          ...this.toCarouselItem(item, highestPriority + index + 1),
+          engagement: engagement ?? null,
+        };
+      });
 
     return [...trimmed, ...fallback];
   }
 
   private formatCuratedCarouselEntries(
-    entries: CarouselEntryWithContent[]
+    entries: CarouselEntryWithContent[],
+    engagementStates?: Map<
+      string,
+      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+    >
   ): CarouselEntryView[] {
     const items: CarouselEntryView[] = [];
     for (const entry of entries) {
@@ -313,11 +377,19 @@ export class MobileAppService {
           { reason: "recent" },
           null
         );
-        items.push(this.toCarouselItem(feedItem, entry.position));
+        const engagement = engagementStates?.get(feedItem.series.id);
+        items.push({
+          ...this.toCarouselItem(feedItem, entry.position),
+          engagement: engagement ?? null,
+        });
         continue;
       }
       if (entry.series) {
-        items.push(this.toSeriesCarouselItem(entry.series, entry.position));
+        const engagement = engagementStates?.get(entry.series.id);
+        items.push({
+          ...this.toSeriesCarouselItem(entry.series, entry.position),
+          engagement: engagement ?? null,
+        });
       }
     }
     return items.sort((a, b) => a.priority - b.priority);
@@ -492,6 +564,10 @@ export class MobileAppService {
     options: {
       entitlements: EntitlementLookup;
       progressMap: Map<string, ContinueWatchEntry>;
+      engagementStates?: Map<
+        string,
+        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+      >;
     }
   ): MobileSeriesData {
     const episodes = this.flattenEpisodes(detail, options);
@@ -501,14 +577,15 @@ export class MobileAppService {
     const averageRating =
       ratings.length > 0
         ? Number(
-            (
-              ratings.reduce((total, value) => total + value, 0) /
-              ratings.length
-            ).toFixed(1)
-          )
+          (
+            ratings.reduce((total, value) => total + value, 0) /
+            ratings.length
+          ).toFixed(1)
+        )
         : null;
 
     const trailerSource = episodes[0];
+    const seriesEngagement = options.engagementStates?.get(detail.series.id);
 
     return {
       series_id: detail.series.id,
@@ -520,12 +597,13 @@ export class MobileAppService {
       category: detail.series.category?.name ?? null,
       trailer: trailerSource
         ? {
-            thumbnail: trailerSource.thumbnail,
-            duration_seconds: trailerSource.duration_seconds,
-            streaming: trailerSource.streaming,
-          }
+          thumbnail: trailerSource.thumbnail,
+          duration_seconds: trailerSource.duration_seconds,
+          streaming: trailerSource.streaming,
+        }
         : null,
       episodes,
+      engagement: seriesEngagement ?? null,
       reviews: {
         summary: {
           average_rating: averageRating,
@@ -541,34 +619,42 @@ export class MobileAppService {
     options: {
       entitlements: EntitlementLookup;
       progressMap: Map<string, ContinueWatchEntry>;
+      engagementStates?: Map<
+        string,
+        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+      >;
     }
   ) {
     const entries: MobileSeriesData["episodes"] = [];
 
     detail.seasons.forEach((season) => {
       season.episodes.forEach((episode, idx) => {
-        entries.push(
-          this.toSeriesEpisode(
+        const engagement = options.engagementStates?.get(episode.id);
+        entries.push({
+          ...this.toSeriesEpisode(
             episode,
             season.sequenceNumber,
             idx + 1,
             options.entitlements.episode,
             options.progressMap.get(episode.id)
-          )
-        );
+          ),
+          engagement: engagement ?? null,
+        });
       });
     });
 
     detail.standaloneEpisodes.forEach((episode, idx) => {
-      entries.push(
-        this.toSeriesEpisode(
+      const engagement = options.engagementStates?.get(episode.id);
+      entries.push({
+        ...this.toSeriesEpisode(
           episode,
           null,
           idx + 1,
           options.entitlements.episode,
           options.progressMap.get(episode.id)
-        )
-      );
+        ),
+        engagement: engagement ?? null,
+      });
     });
 
     return entries;
@@ -684,15 +770,15 @@ export class MobileAppService {
     const variants = playback.variants.length
       ? playback.variants
       : [
-          {
-            label: "auto",
-            width: null,
-            height: null,
-            bitrateKbps: null,
-            codec: null,
-            frameRate: null,
-          },
-        ];
+        {
+          label: "auto",
+          width: null,
+          height: null,
+          bitrateKbps: null,
+          codec: null,
+          frameRate: null,
+        },
+      ];
 
     const qualities = variants.map((variant) => ({
       quality: variant.label,
@@ -812,5 +898,56 @@ export class MobileAppService {
     const totalBytes = totalBits / 8;
     const totalMb = totalBytes / (1024 * 1024);
     return Math.round(totalMb);
+  }
+
+  private async loadEngagementStates(
+    items: Array<{ id: string; contentType: "reel" | "series" }>,
+    options?: MobileRequestOptions
+  ): Promise<
+    Map<
+      string,
+      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+    >
+  > {
+    if (!this.deps.engagementClient) {
+      return new Map();
+    }
+
+    const userId = options?.context?.userId;
+    if (!userId || items.length === 0) {
+      return new Map();
+    }
+
+    try {
+      const states = await this.deps.engagementClient.getUserState({
+        userId,
+        items: items.map((item) => ({
+          contentType: item.contentType,
+          contentId: item.id,
+        })),
+      });
+
+      // Convert to Map keyed by item id
+      const result = new Map<
+        string,
+        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+      >();
+
+      for (const item of items) {
+        const key = `${item.contentType}:${item.id}`;
+        const state = states[key];
+        if (state) {
+          result.set(item.id, state);
+        }
+      }
+
+      return result;
+    } catch (error) {
+      options?.logger?.warn?.(
+        { err: error },
+        "Failed to fetch engagement states"
+      );
+      return new Map();
+    }
   }
 }

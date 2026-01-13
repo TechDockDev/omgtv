@@ -445,3 +445,126 @@ export async function getReviews(params: {
     nextCursor
   };
 }
+
+// User state batch query for content enrichment
+export type UserStateEntry = {
+  likeCount: number;
+  viewCount: number;
+  isLiked: boolean;
+  isSaved: boolean;
+};
+
+export async function getUserStateBatch(params: {
+  redis: Redis | null;
+  userId: string;
+  items: Array<{ contentType: "reel" | "series"; contentId: string }>;
+}): Promise<Record<string, UserStateEntry>> {
+  const { redis, userId, items } = params;
+
+  if (items.length === 0) {
+    return {};
+  }
+
+  // Group items by entity type
+  const reelIds = items
+    .filter((item) => item.contentType === "reel")
+    .map((item) => item.contentId);
+  const seriesIds = items
+    .filter((item) => item.contentType === "series")
+    .map((item) => item.contentId);
+
+  if (!redis) {
+    // In-memory fallback
+    const result: Record<string, UserStateEntry> = {};
+
+    const reelState = memory.reel;
+    const seriesState = memory.series;
+
+    const userLikedReels = reelState.userLiked.get(userId) ?? new Set();
+    const userSavedReels = reelState.userSaved.get(userId) ?? new Set();
+    const userLikedSeries = seriesState.userLiked.get(userId) ?? new Set();
+    const userSavedSeries = seriesState.userSaved.get(userId) ?? new Set();
+
+    for (const id of reelIds) {
+      result[`reel:${id}`] = {
+        ...getStatsMemory("reel", id),
+        likeCount: getStatsMemory("reel", id).likes,
+        viewCount: getStatsMemory("reel", id).views,
+        isLiked: userLikedReels.has(id),
+        isSaved: userSavedReels.has(id),
+      };
+    }
+
+    for (const id of seriesIds) {
+      result[`series:${id}`] = {
+        ...getStatsMemory("series", id),
+        likeCount: getStatsMemory("series", id).likes,
+        viewCount: getStatsMemory("series", id).views,
+        isLiked: userLikedSeries.has(id),
+        isSaved: userSavedSeries.has(id),
+      };
+    }
+
+    return result;
+  }
+
+  // Redis optimized batch query using pipeline
+  const pipeline = redis.pipeline();
+
+  // Get stats for all items (likes & views)
+  for (const item of items) {
+    pipeline.get(redisLikesKey(item.contentType, item.contentId));
+    pipeline.get(redisViewsKey(item.contentType, item.contentId));
+  }
+
+  // Check if user liked/saved each item
+  for (const id of reelIds) {
+    pipeline.sismember(redisUserLikedKey("reel", userId), id);
+    pipeline.sismember(redisUserSavedKey("reel", userId), id);
+  }
+  for (const id of seriesIds) {
+    pipeline.sismember(redisUserLikedKey("series", userId), id);
+    pipeline.sismember(redisUserSavedKey("series", userId), id);
+  }
+
+  const results = await pipeline.exec();
+  if (!results) {
+    return {};
+  }
+
+  const result: Record<string, UserStateEntry> = {};
+  let idx = 0;
+
+  // Parse stats results
+  for (const item of items) {
+    const likesRaw = results[idx]?.[1] as string | null;
+    const viewsRaw = results[idx + 1]?.[1] as string | null;
+    result[`${item.contentType}:${item.contentId}`] = {
+      likeCount: clampNonNegative(parseRedisInt(likesRaw)),
+      viewCount: clampNonNegative(parseRedisInt(viewsRaw)),
+      isLiked: false,
+      isSaved: false,
+    };
+    idx += 2;
+  }
+
+  // Parse isLiked/isSaved for reels
+  for (const id of reelIds) {
+    const isLiked = (results[idx]?.[1] as number) === 1;
+    const isSaved = (results[idx + 1]?.[1] as number) === 1;
+    result[`reel:${id}`].isLiked = isLiked;
+    result[`reel:${id}`].isSaved = isSaved;
+    idx += 2;
+  }
+
+  // Parse isLiked/isSaved for series
+  for (const id of seriesIds) {
+    const isLiked = (results[idx]?.[1] as number) === 1;
+    const isSaved = (results[idx + 1]?.[1] as number) === 1;
+    result[`series:${id}`].isLiked = isLiked;
+    result[`series:${id}`].isSaved = isSaved;
+    idx += 2;
+  }
+
+  return result;
+}

@@ -11,6 +11,8 @@ import {
   engagementViewSuccessResponseSchema,
   batchInteractionBodySchema,
   batchInteractionSuccessResponseSchema,
+  batchActionRequestSchema,
+  batchActionSuccessResponseSchema,
   type EngagementEventBody,
   type EngagementEventData,
   type EngagementIdParams,
@@ -21,6 +23,8 @@ import {
   type EngagementViewData,
   type BatchInteractionBody,
   type BatchInteractionData,
+  type BatchActionRequest,
+  type BatchActionResponseData,
 } from "../schemas/engagement.schema";
 import { errorResponseSchema } from "../schemas/base.schema";
 import {
@@ -42,6 +46,7 @@ import {
   seriesUnlike,
   seriesUnsave,
   batchInteractions,
+  processBatchActions,
 } from "../proxy/engagement.proxy";
 
 export default fp(
@@ -83,6 +88,40 @@ export default fp(
         request.log.info(
           { videoId: body.videoId, action: body.action },
           "Engagement event forwarded"
+        );
+        return response;
+      },
+    });
+
+    // Batch endpoint for processing multiple engagement actions
+    fastify.route<{
+      Body: BatchActionRequest;
+      Reply: BatchActionResponseData;
+    }>({
+      method: "POST",
+      url: "/batch",
+      schema: {
+        body: batchActionRequestSchema,
+        response: {
+          200: batchActionSuccessResponseSchema,
+          400: errorResponseSchema,
+          401: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: authenticatedConfig,
+      preHandler: [fastify.authorize(["user", "admin"])],
+      async handler(request) {
+        const body = batchActionRequestSchema.parse(request.body);
+        const response = await processBatchActions(
+          body,
+          request.correlationId,
+          request.user!,
+          request.telemetrySpan
+        );
+        request.log.info(
+          { processed: response.processed, failed: response.failed },
+          "Batch engagement actions forwarded"
         );
         return response;
       },

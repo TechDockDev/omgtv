@@ -33,6 +33,13 @@ const progressSchema = z.object({
   is_completed: z.boolean(),
 });
 
+const engagementSchema = z.object({
+  likeCount: z.number().int().nonnegative(),
+  viewCount: z.number().int().nonnegative(),
+  isLiked: z.boolean(),
+  isSaved: z.boolean(),
+});
+
 const continueWatchItemSchema = z.object({
   series_id: z.string(),
   episode_id: z.string(),
@@ -44,6 +51,7 @@ const continueWatchItemSchema = z.object({
   streaming: streamingInfoSchema,
   progress: progressSchema,
   rating: z.number().nullable(),
+  engagement: engagementSchema.nullable().optional(),
 });
 
 const carouselItemSchema = z.object({
@@ -56,6 +64,7 @@ const carouselItemSchema = z.object({
   videoUrl: z.string().url().nullable(),
   rating: z.number().nullable(),
   series_id: z.string().nullable(),
+  engagement: engagementSchema.nullable().optional(),
 });
 
 const sectionItemSchema = z.object({
@@ -70,6 +79,7 @@ const sectionItemSchema = z.object({
   rating: z.number().nullable(),
   lastWatchedAt: z.string().datetime().nullable(),
   series_id: z.string().nullable(),
+  engagement: engagementSchema.nullable().optional(),
 });
 
 const sectionSchema = z.object({
@@ -131,6 +141,7 @@ const seriesEpisodeSchema = z.object({
   views: z.number().nullable(),
   streaming: streamingInfoSchema,
   progress: progressSchema,
+  engagement: engagementSchema.nullable().optional(),
 });
 
 export const mobileSeriesDataSchema = z.object({
@@ -143,6 +154,7 @@ export const mobileSeriesDataSchema = z.object({
   category: z.string().nullable(),
   trailer: trailerSchema,
   episodes: z.array(seriesEpisodeSchema),
+  engagement: engagementSchema.nullable().optional(),
   reviews: z.object({
     summary: z.object({
       average_rating: z.number().nullable(),
@@ -170,6 +182,7 @@ const reelItemSchema = z.object({
   rating: z.number().nullable(),
   thumbnail: z.string().url().nullable(),
   streaming: streamingInfoSchema,
+  engagement: engagementSchema.nullable().optional(),
 });
 
 export const mobileReelsDataSchema = z.object({

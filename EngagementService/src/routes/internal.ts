@@ -14,7 +14,12 @@ import {
   statsBatchResponseSchema,
   statsSchema,
   viewResponseSchema,
+  batchActionRequestSchema,
+  batchActionResponseSchema,
+  userStateRequestSchema,
+  userStateResponseSchema,
   type EngagementEventMetrics,
+  type BatchActionResult,
 } from "../schemas/engagement";
 import {
   addReviewBodySchema,
@@ -38,6 +43,7 @@ import {
   unsaveEntity,
   addReview,
   getReviews,
+  getUserStateBatch,
 } from "../services/collection-engagement";
 
 function requireUserId(headers: Record<string, unknown>) {
@@ -66,6 +72,143 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
         likes: stats.likes,
         views: stats.views,
       };
+    },
+  });
+
+  // Batch actions endpoint
+  fastify.post("/batch", {
+    schema: {
+      body: batchActionRequestSchema,
+      response: { 200: batchActionResponseSchema },
+    },
+    handler: async (request) => {
+      const body = batchActionRequestSchema.parse(request.body);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+
+      const results: BatchActionResult[] = [];
+      let failed = 0;
+
+      for (const action of body.actions) {
+        const entityType = action.contentType === "reel" ? "reel" : "series";
+        const entityId = action.contentId;
+
+        try {
+          let result: BatchActionResult["result"];
+
+          switch (action.action) {
+            case "like": {
+              const likeResult = await likeEntity({
+                redis,
+                entityType: entityType as "reel" | "series",
+                entityId,
+                userId,
+              });
+              result = {
+                liked: likeResult.liked,
+                likes: likeResult.likes,
+                views: likeResult.views,
+              };
+              break;
+            }
+            case "unlike": {
+              const unlikeResult = await unlikeEntity({
+                redis,
+                entityType: entityType as "reel" | "series",
+                entityId,
+                userId,
+              });
+              result = {
+                liked: unlikeResult.liked,
+                likes: unlikeResult.likes,
+                views: unlikeResult.views,
+              };
+              break;
+            }
+            case "save": {
+              const saveResult = await saveEntity({
+                redis,
+                entityType: entityType as "reel" | "series",
+                entityId,
+                userId,
+              });
+              result = { saved: saveResult.saved };
+              break;
+            }
+            case "unsave": {
+              const unsaveResult = await unsaveEntity({
+                redis,
+                entityType: entityType as "reel" | "series",
+                entityId,
+                userId,
+              });
+              result = { saved: unsaveResult.saved };
+              break;
+            }
+            case "view": {
+              const viewResult = await addView({
+                redis,
+                entityType: entityType as "reel" | "series",
+                entityId,
+              });
+              result = { views: viewResult.views };
+              break;
+            }
+          }
+
+          results.push({
+            contentType: action.contentType,
+            contentId: action.contentId,
+            action: action.action,
+            success: true,
+            result,
+          });
+        } catch (error) {
+          failed++;
+          results.push({
+            contentType: action.contentType,
+            contentId: action.contentId,
+            action: action.action,
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      }
+
+      request.log.info(
+        { processed: results.length, failed },
+        "Processed batch engagement actions"
+      );
+
+      return batchActionResponseSchema.parse({
+        results,
+        processed: results.length,
+        failed,
+      });
+    },
+  });
+
+  // User state endpoint for ContentService enrichment (internal only)
+  fastify.post("/user-state", {
+    schema: {
+      body: userStateRequestSchema,
+      response: { 200: userStateResponseSchema },
+    },
+    handler: async (request) => {
+      const body = userStateRequestSchema.parse(request.body);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+
+      const states = await getUserStateBatch({
+        redis,
+        userId,
+        items: body.items,
+      });
+
+      request.log.info(
+        { itemCount: body.items.length },
+        "Processed user state query"
+      );
+
+      return userStateResponseSchema.parse({ states });
     },
   });
 
