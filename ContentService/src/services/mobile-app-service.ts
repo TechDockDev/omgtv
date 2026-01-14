@@ -147,62 +147,71 @@ export class MobileAppService {
   ): Promise<{ data: MobileHomeData; fromCache: boolean }> {
     const parsed = mobileHomeQuerySchema.parse(query);
 
-    const feed = await this.deps.viewerCatalog.getFeed({
-      limit: parsed.limit ?? this.deps.config.homeFeedLimit,
-      cursor: parsed.cursor,
-    });
+    // Fetch Series for Sections (Main Content) and Episodes for Continue Watch (Resume)
+    const [seriesFeed, episodeFeed] = await Promise.all([
+      this.deps.viewerCatalog.getHomeSeries({
+        limit: parsed.limit ?? this.deps.config.homeFeedLimit,
+        cursor: parsed.cursor,
+      }),
+      this.deps.viewerCatalog.getFeed({
+        limit: this.deps.config.continueWatchLimit * 2, // Fetch double to ensure enough valid candidates
+        cursor: null, // Always latest
+      }),
+    ]);
 
-    const filteredItems = this.filterByTag(feed.items, parsed.tag);
+    console.log(`[MobileAppService] Home Series fetched: ${seriesFeed.items.length}`);
+    console.log(`[MobileAppService] Recent Episodes fetched: ${episodeFeed.items.length}`);
+
+    const filteredItems = this.filterByTag(seriesFeed.items, parsed.tag);
     const entitlements = await this.resolveEntitlements(options);
-    const progressMap = await this.loadProgressMap(filteredItems, {
+
+    // Progress is mainly for Continue Watch items (Episodes)
+    // We can also check progress for Series if needed, but for now focusing on Episodes.
+    const progressMap = await this.loadProgressMap(episodeFeed.items, {
       limit: this.deps.config.continueWatchLimit * 4,
       options,
     });
 
-    // Load engagement states for all items (using series_id for series-based items)
+    // Load engagement for Series (Sections)
     const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
-      filteredItems.map((item) => ({ id: item.series.id, contentType: "series" as const }));
+      filteredItems.map((item) => ({ id: item.id, contentType: "series" as const }));
     const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
     const carouselItems = await this.buildCarouselItems(filteredItems, engagementStates);
-    const prioritizedItems = [
-      ...filteredItems.filter((item) => progressMap.has(item.id)),
-      ...filteredItems.filter((item) => !progressMap.has(item.id)),
-    ];
-    const continueWatchSource = prioritizedItems.slice(
-      0,
-      this.deps.config.continueWatchLimit
-    );
-    const continueWatch = continueWatchSource.map((item) => {
-      const engagement = engagementStates.get(item.series.id);
-      return {
-        ...this.toContinueWatchItem(
-          item,
-          entitlements.episode,
-          progressMap.get(item.id)
-        ),
-        engagement: engagement ?? null,
-      };
-    });
 
-    const sectionItems = filteredItems
-      .slice(0, this.deps.config.sectionItemLimit)
+    // Build Continue Watch from Episode Feed
+    // Filter episodes that have progress
+    const continueWatchCandidates = episodeFeed.items.filter((item) => progressMap.has(item.id));
+    const continueWatch = continueWatchCandidates
+      .slice(0, this.deps.config.continueWatchLimit)
       .map((item) => {
-        const engagement = engagementStates.get(item.series.id);
+        // For episodes, we check engagement on the SERIES mostly? 
+        // Or episode specific? The UI likely likes the Series.
+        // But the engagement system supports both. 
+        // Let's check Series engagement for the subset of continue watch items if we want.
+        // For simplicity, passing null or we need to fetch engagement for these episodes too.
+        // Let's leave engagement null for continue watch cards for now as they are "Resume" focused.
         return {
-          ...this.toSectionEntry(item, progressMap.get(item.id)),
-          engagement: engagement ?? null,
+          ...this.toContinueWatchItem(
+            item,
+            entitlements.episode,
+            progressMap.get(item.id)
+          ),
+          engagement: null,
         };
       });
 
     const sections = this.buildSections(
-      sectionItems,
+      filteredItems.map(item => ({
+        ...this.toSectionEntry(item, undefined), // Series cards don't use progress bar typically
+        engagement: engagementStates.get(item.id) ?? null
+      })),
       continueWatch,
       parsed.tag
     );
 
     const currentPage = parsed.page ?? 1;
-    const hasNextPage = Boolean(feed.nextCursor);
+    const hasNextPage = Boolean(seriesFeed.nextCursor);
 
     const data: MobileHomeData = {
       carousel: carouselItems,
@@ -212,13 +221,13 @@ export class MobileAppService {
         currentPage,
         totalPages: hasNextPage ? currentPage + 1 : currentPage,
         hasNextPage,
-        nextCursor: feed.nextCursor ?? null,
+        nextCursor: seriesFeed.nextCursor ?? null,
       },
     };
 
     return {
       data: mobileHomeDataSchema.parse(data),
-      fromCache: feed.fromCache,
+      fromCache: seriesFeed.fromCache,
     };
   }
 
@@ -313,53 +322,18 @@ export class MobileAppService {
     const limit = this.deps.config.carouselLimit;
     const entries = await this.deps.repository.listCarouselEntries();
     if (entries.length === 0) {
-      return feedItems
-        .slice(0, limit)
-        .map((item, index) => {
-          const engagement = engagementStates?.get(item.series.id);
-          return {
-            ...this.toCarouselItem(item, index + 1),
-            engagement: engagement ?? null,
-          };
-        });
+      return [];
     }
 
     const curated = this.formatCuratedCarouselEntries(entries, engagementStates);
     if (curated.length === 0) {
-      return feedItems
-        .slice(0, limit)
-        .map((item, index) => {
-          const engagement = engagementStates?.get(item.series.id);
-          return {
-            ...this.toCarouselItem(item, index + 1),
-            engagement: engagement ?? null,
-          };
-        });
+      return [];
     }
 
     const trimmed = curated.slice(0, limit);
-    if (trimmed.length === limit) {
-      return trimmed;
-    }
+    return trimmed;
 
-    const usedIds = new Set(trimmed.map((entry) => entry.id));
-    const remaining = limit - trimmed.length;
-    const highestPriority = trimmed.reduce(
-      (max, entry) => Math.max(max, entry.priority),
-      0
-    );
-    const fallback = feedItems
-      .filter((item) => !usedIds.has(item.id))
-      .slice(0, remaining)
-      .map((item, index) => {
-        const engagement = engagementStates?.get(item.series.id);
-        return {
-          ...this.toCarouselItem(item, highestPriority + index + 1),
-          engagement: engagement ?? null,
-        };
-      });
 
-    return [...trimmed, ...fallback];
   }
 
   private formatCuratedCarouselEntries(
@@ -511,6 +485,10 @@ export class MobileAppService {
       rating: item.ratings.average,
       lastWatchedAt: progress?.last_watched_at ?? null,
       series_id: item.series.id,
+      // Internal fields for grouping
+      _categoryName: item.series.category?.name ?? null,
+      _seriesTitle: item.series.title,
+      _seriesThumbnail: item.series.heroImageUrl ?? item.series.bannerImageUrl ?? item.heroImageUrl,
     };
   }
 
@@ -521,6 +499,7 @@ export class MobileAppService {
   ) {
     const sections = [] as MobileHomeData["sections"];
 
+    // 1. Continue Watch Section
     if (continueWatch.length > 0) {
       sections.push({
         id: "section_continue_watch",
@@ -546,17 +525,85 @@ export class MobileAppService {
       });
     }
 
-    if (featured.length > 0) {
-      sections.push({
-        id: `section_${(tag ?? "featured").toLowerCase()}`,
-        type: tag ? "category" : "featured",
-        title: tag ? tag.replace(/\b\w/g, (c) => c.toUpperCase()) : "Featured",
-        priority: sections.length + 1,
-        items: featured,
-      });
+    if (tag) {
+      // If filtering by specific tag, return flat list as "Category" type section
+      if (featured.length > 0) {
+        sections.push({
+          id: `section_${tag.toLowerCase()}`,
+          type: "category",
+          title: tag.replace(/\b\w/g, (c) => c.toUpperCase()),
+          priority: sections.length + 1,
+          items: featured.map(item => this.cleanSectionItem(item)),
+        });
+      }
+      return sections;
     }
 
+    // 2. Group by Category (Internal Grouping Logic)
+    const categoryGroups = new Map<string, typeof featured>();
+    const FALLBACK_CATEGORY = "All Shows";
+
+    featured.forEach(item => {
+      const category = item._categoryName || FALLBACK_CATEGORY;
+      if (!categoryGroups.has(category)) {
+        categoryGroups.set(category, []);
+      }
+      categoryGroups.get(category)!.push(item);
+    });
+
+    // 3. Build Sections from Groups (Deduplicating Series)
+    // We iterate through known categories or just map entries?
+    // Sort keys to ensure deterministic order? Or just use insertion order?
+    // Let's use specific order: Categories first, then All Shows.
+    const keys = Array.from(categoryGroups.keys()).sort((a, b) => {
+      if (a === FALLBACK_CATEGORY) return 1; // All Shows last
+      if (b === FALLBACK_CATEGORY) return -1;
+      return a.localeCompare(b);
+    });
+
+    keys.forEach(categoryName => {
+      const items = categoryGroups.get(categoryName)!;
+      const uniqueSeries = new Map<string, any>();
+
+      items.forEach(item => {
+        // Deduplicate by Series ID
+        // We want to show the SERIES, not the Episode.
+        // So we transform the entry to look like a Series Entry.
+        if (!uniqueSeries.has(item.series_id)) {
+          uniqueSeries.set(item.series_id, {
+            ...item,
+            type: "series", // Change type to series
+            id: item.series_id, // Use Series ID
+            title: item._seriesTitle, // Use Series Title
+            subtitle: null, // Clear subtitle or put Category? Category is in section header.
+            thumbnailUrl: item._seriesThumbnail, // Use Series Thumbnail
+            // Clear episode specific fields
+            duration: null,
+            watchedDuration: null,
+            progress: null,
+            lastWatchedAt: null,
+          });
+        }
+      });
+
+      if (uniqueSeries.size > 0) {
+        sections.push({
+          id: `section_${categoryName.toLowerCase().replace(/\s+/g, "_")}`,
+          type: "category",
+          title: categoryName,
+          priority: sections.length + 1,
+          items: Array.from(uniqueSeries.values()).map(item => this.cleanSectionItem(item)),
+        });
+      }
+    });
+
     return sections;
+  }
+
+  private cleanSectionItem(item: ReturnType<MobileAppService["toSectionEntry"]>) {
+    // Remove internal fields before returning to Zod
+    const { _categoryName, _seriesTitle, _seriesThumbnail, ...rest } = item;
+    return rest;
   }
 
   private buildSeriesPayload(
@@ -909,12 +956,18 @@ export class MobileAppService {
       { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
     >
   > {
+    console.log("[DEBUG loadEngagementStates] engagementClient=", !!this.deps.engagementClient);
+    console.log("[DEBUG loadEngagementStates] userId=", options?.context?.userId);
+    console.log("[DEBUG loadEngagementStates] items.length=", items.length);
+
     if (!this.deps.engagementClient) {
+      console.log("[DEBUG loadEngagementStates] No engagement client, returning empty");
       return new Map();
     }
 
     const userId = options?.context?.userId;
     if (!userId || items.length === 0) {
+      console.log("[DEBUG loadEngagementStates] No userId or empty items, returning empty");
       return new Map();
     }
 
@@ -927,6 +980,8 @@ export class MobileAppService {
         })),
       });
 
+      console.log("[DEBUG loadEngagementStates] states response:", JSON.stringify(states));
+
       // Convert to Map keyed by item id
       const result = new Map<
         string,
@@ -936,13 +991,16 @@ export class MobileAppService {
       for (const item of items) {
         const key = `${item.contentType}:${item.id}`;
         const state = states[key];
+        console.log("[DEBUG loadEngagementStates] looking for key:", key, "found:", !!state);
         if (state) {
           result.set(item.id, state);
         }
       }
 
+      console.log("[DEBUG loadEngagementStates] result map size:", result.size);
       return result;
     } catch (error) {
+      console.log("[DEBUG loadEngagementStates] ERROR:", error);
       options?.logger?.warn?.(
         { err: error },
         "Failed to fetch engagement states"

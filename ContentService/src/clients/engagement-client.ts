@@ -214,8 +214,15 @@ export class EngagementClient {
       spanName: "client:engagement:getUserState",
     });
 
-    const parsed = userStateResponseSchema.safeParse(response.payload);
+    console.log("[DEBUG getUserState] raw response.payload:", JSON.stringify(response.payload));
+
+    // Unwrap data envelope if present
+    const data = (response.payload as any)?.data ?? response.payload;
+    console.log("[DEBUG getUserState] unwrapped data:", JSON.stringify(data));
+
+    const parsed = userStateResponseSchema.safeParse(data);
     if (!parsed.success) {
+      console.log("[DEBUG getUserState] parse error:", JSON.stringify(parsed.error));
       throw new Error("Invalid response from EngagementService (user-state)");
     }
 

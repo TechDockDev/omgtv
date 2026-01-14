@@ -268,8 +268,8 @@ export async function createApp(): Promise<FastifyInstance> {
   app.addHook("onRoute", (routeOptions) => {
     const context = routeOptions.config as
       | (FastifyContextConfig & {
-          security?: { bodyLimit?: number };
-        })
+        security?: { bodyLimit?: number };
+      })
       | undefined;
     const limit = context?.security?.bodyLimit;
     if (typeof limit === "number" && limit > 0) {
@@ -285,7 +285,9 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(authRoutes, { prefix: "/api/v1/auth" });
   await app.register(uploadRoutes, { prefix: "/api/v1/uploads" });
   await app.register(contentRoutes, { prefix: "/api/v1/content" });
+  // Engagement routes registered via plugin
   await app.register(engagementRoutes, { prefix: "/api/v1/engagement" });
+
   await app.register(searchRoutes, { prefix: "/api/v1/search" });
   await app.register(streamingRoutes, { prefix: "/api/v1/streams" });
 
@@ -319,6 +321,8 @@ export async function createApp(): Promise<FastifyInstance> {
 
   await app.register(swaggerPlugin);
   await app.register(proxyRoutes);
+
+
 
   return app;
 }

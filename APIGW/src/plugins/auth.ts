@@ -110,8 +110,8 @@ export default fp(
       const routeAuthConfig =
         (
           request.routeOptions.config as
-            | { auth?: { public?: boolean } }
-            | undefined
+          | { auth?: { public?: boolean } }
+          | undefined
         )?.auth ?? {};
       if (routeAuthConfig && routeAuthConfig.public) {
         return;

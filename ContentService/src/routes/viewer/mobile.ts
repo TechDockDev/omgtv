@@ -43,9 +43,9 @@ function buildRequestContext(request: FastifyRequest): MobileRequestContext {
     ? rolesHeader
     : typeof rolesHeader === "string"
       ? rolesHeader
-          .split(",")
-          .map((entry) => entry.trim())
-          .filter(Boolean)
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
       : [];
 
   return {
@@ -153,16 +153,15 @@ export default async function mobileAppRoutes(fastify: FastifyInstance) {
           success: true,
           statusCode: 200,
           userMessage: "Content loaded successfully",
-          developerMessage: `Home screen data fetched with tag: ${
-            query.tag ?? "home"
-          }`,
+          developerMessage: `Home screen data fetched with tag: ${query.tag ?? "home"
+            }`,
           data: result.data,
         } as const;
       } catch (error) {
         if (error instanceof CatalogConsistencyError) {
           request.log.error({ err: error }, "Mobile home experience failed");
           throw fastify.httpErrors.internalServerError(
-            "Catalog data quality issue"
+            `Catalog data quality issue: ${error.message}`
           );
         }
         throw error;

@@ -1,4 +1,5 @@
 import type Redis from "ioredis";
+import type { PrismaClient } from "@prisma/client";
 
 type EntityType = "reel" | "series";
 
@@ -119,11 +120,12 @@ function getStatsMemory(entityType: EntityType, entityId: string): Stats {
 
 export async function likeEntity(params: {
   redis: Redis | null;
+  prisma: PrismaClient | null;
   entityType: EntityType;
   entityId: string;
   userId: string;
 }): Promise<Stats & { liked: boolean }> {
-  const { redis, entityType, entityId, userId } = params;
+  const { redis, prisma, entityType, entityId, userId } = params;
 
   if (!redis) {
     const state = memory[entityType];
@@ -144,17 +146,43 @@ export async function likeEntity(params: {
     await redis.incr(redisLikesKey(entityType, entityId));
   }
 
+  if (prisma) {
+    void prisma.userAction
+      .upsert({
+        where: {
+          userId_contentType_contentId_actionType: {
+            userId,
+            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+            contentId: entityId,
+            actionType: "LIKE",
+          },
+        },
+        create: {
+          userId,
+          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+          contentId: entityId,
+          actionType: "LIKE",
+          isActive: true,
+        },
+        update: {
+          isActive: true,
+        },
+      })
+      .catch((err) => console.error("DB like write failed:", err));
+  }
+
   const stats = await getStatsRedis(redis, entityType, entityId);
   return { ...stats, liked: true };
 }
 
 export async function unlikeEntity(params: {
   redis: Redis | null;
+  prisma: PrismaClient | null;
   entityType: EntityType;
   entityId: string;
   userId: string;
 }): Promise<Stats & { liked: boolean }> {
-  const { redis, entityType, entityId, userId } = params;
+  const { redis, prisma, entityType, entityId, userId } = params;
 
   if (!redis) {
     const state = memory[entityType];
@@ -177,17 +205,32 @@ export async function unlikeEntity(params: {
     }
   }
 
+  if (prisma) {
+    void prisma.userAction
+      .updateMany({
+        where: {
+          userId,
+          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+          contentId: entityId,
+          actionType: "LIKE",
+        },
+        data: { isActive: false },
+      })
+      .catch((err) => console.error("DB unlike write failed:", err));
+  }
+
   const stats = await getStatsRedis(redis, entityType, entityId);
   return { ...stats, liked: false };
 }
 
 export async function saveEntity(params: {
   redis: Redis | null;
+  prisma: PrismaClient | null;
   entityType: EntityType;
   entityId: string;
   userId: string;
 }): Promise<{ saved: boolean }> {
-  const { redis, entityType, entityId, userId } = params;
+  const { redis, prisma, entityType, entityId, userId } = params;
 
   if (!redis) {
     const state = memory[entityType];
@@ -196,17 +239,43 @@ export async function saveEntity(params: {
     return { saved: true };
   }
 
+  if (prisma) {
+    void prisma.userAction
+      .upsert({
+        where: {
+          userId_contentType_contentId_actionType: {
+            userId,
+            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+            contentId: entityId,
+            actionType: "SAVE",
+          },
+        },
+        create: {
+          userId,
+          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+          contentId: entityId,
+          actionType: "SAVE",
+          isActive: true,
+        },
+        update: {
+          isActive: true,
+        },
+      })
+      .catch((err) => console.error("DB save write failed:", err));
+  }
+
   await redis.sadd(redisUserSavedKey(entityType, userId), entityId);
   return { saved: true };
 }
 
 export async function unsaveEntity(params: {
   redis: Redis | null;
+  prisma: PrismaClient | null;
   entityType: EntityType;
   entityId: string;
   userId: string;
 }): Promise<{ saved: boolean }> {
-  const { redis, entityType, entityId, userId } = params;
+  const { redis, prisma, entityType, entityId, userId } = params;
 
   if (!redis) {
     const state = memory[entityType];
@@ -215,22 +284,59 @@ export async function unsaveEntity(params: {
     return { saved: false };
   }
 
+  if (prisma) {
+    void prisma.userAction
+      .updateMany({
+        where: {
+          userId,
+          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+          contentId: entityId,
+          actionType: "SAVE",
+        },
+        data: { isActive: false },
+      })
+      .catch((err) => console.error("DB unsave write failed:", err));
+  }
+
   await redis.srem(redisUserSavedKey(entityType, userId), entityId);
   return { saved: false };
 }
 
 export async function addView(params: {
   redis: Redis | null;
+  prisma: PrismaClient | null;
   entityType: EntityType;
   entityId: string;
 }): Promise<{ views: number }> {
-  const { redis, entityType, entityId } = params;
+  const { redis, prisma, entityType, entityId } = params;
 
   if (!redis) {
     const state = memory[entityType];
     const key = entityKey(entityType, entityId);
     state.views.set(key, (state.views.get(key) ?? 0) + 1);
     return { views: getStatsMemory(entityType, entityId).views };
+  }
+
+  if (prisma) {
+    void prisma.contentStats
+      .upsert({
+        where: {
+          contentType_contentId: {
+            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+            contentId: entityId,
+          },
+        },
+        create: {
+          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+          contentId: entityId,
+          viewCount: 1,
+        },
+        update: {
+          viewCount: { increment: 1 },
+          lastSyncedAt: new Date(),
+        },
+      })
+      .catch((err) => console.error("DB view write failed:", err));
   }
 
   const views = await redis.incr(redisViewsKey(entityType, entityId));
@@ -257,11 +363,15 @@ export async function listUserEntities(params: {
 }): Promise<string[]> {
   const { redis, entityType, collection, userId } = params;
 
+  console.log(`[DEBUG listUserEntities] redis=${!!redis}, entityType=${entityType}, collection=${collection}, userId=${userId}`);
+
   if (!redis) {
     const state = memory[entityType];
     const map = collection === "liked" ? state.userLiked : state.userSaved;
     const set = map.get(userId);
-    return set ? Array.from(set.values()) : [];
+    const result = set ? Array.from(set.values()) : [];
+    console.log(`[DEBUG listUserEntities] Using memory, result:`, result);
+    return result;
   }
 
   const key =
@@ -269,7 +379,9 @@ export async function listUserEntities(params: {
       ? redisUserLikedKey(entityType, userId)
       : redisUserSavedKey(entityType, userId);
 
+  console.log(`[DEBUG listUserEntities] Redis key:`, key);
   const members = await redis.smembers(key);
+  console.log(`[DEBUG listUserEntities] Redis members:`, members);
   return members;
 }
 
@@ -567,4 +679,122 @@ export async function getUserStateBatch(params: {
   }
 
   return result;
+}
+
+// View Progress (Persistent)
+export async function upsertViewProgress(params: {
+  redis: Redis | null;
+  prisma: PrismaClient | null;
+  userId: string;
+  episodeId: string;
+  progressSeconds: number;
+  durationSeconds: number;
+}): Promise<{
+  progressSeconds: number;
+  durationSeconds: number;
+  completedAt: Date | null;
+}> {
+  const { prisma, userId, episodeId, progressSeconds, durationSeconds } = params;
+
+  // We only support DB persistence for progress
+  if (!prisma) {
+    console.warn("[upsertViewProgress] Prisma not available, skipping write");
+    return {
+      progressSeconds,
+      durationSeconds,
+      completedAt: null,
+    };
+  }
+
+  const isCompleted = progressSeconds >= durationSeconds * 0.9; // 90% completion threshold
+  const completedAt = isCompleted ? new Date() : null;
+
+  try {
+    const result = await prisma.viewProgress.upsert({
+      where: {
+        userId_episodeId: {
+          userId,
+          episodeId,
+        },
+      },
+      create: {
+        userId,
+        episodeId,
+        progressSeconds: Math.floor(progressSeconds),
+        durationSeconds: Math.floor(durationSeconds),
+        completedAt,
+      },
+      update: {
+        progressSeconds: Math.floor(progressSeconds),
+        durationSeconds: Math.floor(durationSeconds),
+        completedAt: completedAt ? completedAt : undefined, // Only update completedAt if completed now
+      },
+    });
+
+    return {
+      progressSeconds: result.progressSeconds,
+      durationSeconds: result.durationSeconds,
+      completedAt: result.completedAt,
+    };
+  } catch (error) {
+    console.error("[upsertViewProgress] DB write failed:", error);
+    throw error;
+  }
+}
+
+export async function getViewProgress(params: {
+  redis: Redis | null;
+  prisma: PrismaClient | null;
+  userId: string;
+  episodeId: string;
+}): Promise<{
+  progressSeconds: number;
+  durationSeconds: number;
+  completedAt: Date | null;
+} | null> {
+  const { prisma, userId, episodeId } = params;
+
+  if (!prisma) {
+    return null;
+  }
+
+  const result = await prisma.viewProgress.findUnique({
+    where: {
+      userId_episodeId: {
+        userId,
+        episodeId,
+      },
+    },
+  });
+
+  if (!result) {
+    return null;
+  }
+
+  return {
+    progressSeconds: result.progressSeconds,
+    durationSeconds: result.durationSeconds,
+    completedAt: result.completedAt,
+  };
+}
+
+export async function getViewProgressBatch(params: {
+  prisma: PrismaClient | null;
+  userId: string;
+  episodeIds: string[];
+}) {
+  const { prisma, userId, episodeIds } = params;
+
+  if (!prisma) {
+    return [];
+  }
+
+  const progressList = await prisma.viewProgress.findMany({
+    where: {
+      userId,
+      episodeId: { in: episodeIds },
+    },
+  });
+
+  return progressList;
 }

@@ -43,7 +43,7 @@ export const engagementViewDataSchema = z.object({
 });
 
 export const engagementListDataSchema = z.object({
-  ids: z.array(z.string().uuid()),
+  items: z.array(z.any()),
 });
 
 export const engagementStatsSuccessResponseSchema = createSuccessResponseSchema(
@@ -144,3 +144,23 @@ export type BatchActionResult = z.infer<typeof batchActionResultSchema>;
 export type BatchActionResponseData = z.infer<
   typeof batchActionResponseDataSchema
 >;
+
+// View Progress
+export const saveProgressBodySchema = z.object({
+  episodeId: z.string().uuid(),
+  progressSeconds: z.coerce.number().nonnegative(),
+  durationSeconds: z.coerce.number().positive(),
+});
+
+export const getProgressParamsSchema = z.object({
+  episodeId: z.string().uuid(),
+});
+
+export const progressResponseSchema = z.object({
+  progressSeconds: z.coerce.number().nonnegative(),
+  durationSeconds: z.coerce.number().positive(),
+  completedAt: z.string().nullable().optional(),
+});
+
+export type SaveProgressBody = z.infer<typeof saveProgressBodySchema>;
+export type ProgressResponse = z.infer<typeof progressResponseSchema>;
