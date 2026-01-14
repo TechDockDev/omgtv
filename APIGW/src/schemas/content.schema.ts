@@ -152,3 +152,14 @@ export const adminCarouselSuccessResponseSchema = createSuccessResponseSchema(
 
 export type AdminCarouselBody = z.infer<typeof adminCarouselBodySchema>;
 export type AdminCarouselResponse = z.infer<typeof adminCarouselResponseSchema>;
+
+export const batchContentRequestSchema = z.object({
+  ids: z.array(z.string().uuid()),
+  type: z.enum(["reel", "series"]),
+});
+
+export const batchContentResponseSchema = z.object({
+  items: z.array(z.any()),
+});
+
+export type BatchContentResponse = z.infer<typeof batchContentResponseSchema>;

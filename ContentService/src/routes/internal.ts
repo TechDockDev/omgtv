@@ -11,6 +11,10 @@ import {
   mediaProcessedEventSchema,
 } from "../schemas/events";
 import { ViewerCatalogService } from "../services/viewer-catalog-service";
+import {
+  batchContentRequestSchema,
+  batchContentResponseSchema,
+} from "../schemas/viewer-catalog";
 import { getRedis } from "../lib/redis";
 import { TrendingService } from "../services/trending-service";
 import { RedisCatalogEventsPublisher } from "../services/catalog-events";
@@ -186,4 +190,23 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       }
     },
   });
+
+  fastify.post("/catalog/batch", {
+    schema: {
+      body: batchContentRequestSchema,
+      response: { 200: batchContentResponseSchema },
+    },
+    handler: async (request) => {
+      const { ids, type } = batchContentRequestSchema.parse(request.body);
+      let items: any[] = [];
+      if (type === "reel") {
+        items = await viewerCatalog.getReelsBatch(ids);
+      } else {
+        items = await viewerCatalog.getSeriesBatch(ids);
+      }
+      return batchContentResponseSchema.parse({ items });
+    },
+  });
+
+
 }

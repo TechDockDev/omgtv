@@ -42,10 +42,10 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       basePath: CONTENT_BASE_PATH,
       target: resolveServiceUrl("content"),
       swaggerPath: "/openapi.json",
-      access: "admin",
-      rateLimitPolicy: "admin",
+      access: "authenticated",
+      rateLimitPolicy: "authenticated",
       internalBasePath: "/api/v1/content",
-      publicPrefixes: ["/catalog", "/mobile"],
+      publicPrefixes: ["/catalog"],
       adminPrefixes: ["/admin"],
     },
     {
@@ -58,6 +58,7 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       access: "authenticated",
       rateLimitPolicy: "authenticated",
       internalBasePath: ENGAGEMENT_BASE_PATH,
+      exposeViaProxy: false, // Use explicit handlers in engagement.routes.ts instead
     },
     {
       name: "search",

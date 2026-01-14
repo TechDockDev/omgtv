@@ -22,6 +22,11 @@ import {
   type BatchActionRequest,
   type BatchActionResponseData,
 } from "../schemas/engagement.schema";
+import { z } from "zod";
+
+const upstreamListSchema = z.object({
+  ids: z.array(z.string().uuid()),
+});
 import type { GatewayUser } from "../types";
 
 export async function publishEngagementEvent(
@@ -58,7 +63,8 @@ export async function publishEngagementEvent(
     throw error;
   }
 
-  const parsed = engagementEventDataSchema.safeParse(payload);
+  const data = (payload as any)?.data ?? payload;
+  const parsed = engagementEventDataSchema.safeParse(data);
   if (!parsed.success) {
     throw new Error("Invalid response from engagement service");
   }
@@ -101,7 +107,8 @@ async function requestEngagement<T>(options: {
     throw error;
   }
 
-  return options.parse(payload);
+  const data = (payload as any)?.data ?? payload;
+  return options.parse(data);
 }
 
 export function reelLike(
@@ -246,7 +253,7 @@ export function reelLikedList(
   correlationId: string,
   user: GatewayUser,
   span?: Span
-): Promise<EngagementListData> {
+): Promise<{ ids: string[] }> {
   return requestEngagement({
     path: "/internal/reels/liked",
     method: "GET",
@@ -255,7 +262,7 @@ export function reelLikedList(
     span,
     spanName: "proxy:engagement:reelLikedList",
     parse: (payload) => {
-      const parsed = engagementListDataSchema.safeParse(payload);
+      const parsed = upstreamListSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error("Invalid response from engagement service");
       }
@@ -268,7 +275,7 @@ export function reelSavedList(
   correlationId: string,
   user: GatewayUser,
   span?: Span
-): Promise<EngagementListData> {
+): Promise<{ ids: string[] }> {
   return requestEngagement({
     path: "/internal/reels/saved",
     method: "GET",
@@ -277,7 +284,7 @@ export function reelSavedList(
     span,
     spanName: "proxy:engagement:reelSavedList",
     parse: (payload) => {
-      const parsed = engagementListDataSchema.safeParse(payload);
+      const parsed = upstreamListSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error("Invalid response from engagement service");
       }
@@ -428,7 +435,7 @@ export function seriesLikedList(
   correlationId: string,
   user: GatewayUser,
   span?: Span
-): Promise<EngagementListData> {
+): Promise<{ ids: string[] }> {
   return requestEngagement({
     path: "/internal/series/liked",
     method: "GET",
@@ -437,7 +444,7 @@ export function seriesLikedList(
     span,
     spanName: "proxy:engagement:seriesLikedList",
     parse: (payload) => {
-      const parsed = engagementListDataSchema.safeParse(payload);
+      const parsed = upstreamListSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error("Invalid response from engagement service");
       }
@@ -450,7 +457,7 @@ export function seriesSavedList(
   correlationId: string,
   user: GatewayUser,
   span?: Span
-): Promise<EngagementListData> {
+): Promise<{ ids: string[] }> {
   return requestEngagement({
     path: "/internal/series/saved",
     method: "GET",
@@ -459,7 +466,7 @@ export function seriesSavedList(
     span,
     spanName: "proxy:engagement:seriesSavedList",
     parse: (payload) => {
-      const parsed = engagementListDataSchema.safeParse(payload);
+      const parsed = upstreamListSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error("Invalid response from engagement service");
       }
@@ -511,7 +518,8 @@ export async function batchInteractions(
     throw error;
   }
 
-  const parsed = batchInteractionDataSchema.safeParse(payload);
+  const data = (payload as any)?.data ?? payload;
+  const parsed = batchInteractionDataSchema.safeParse(data);
   if (!parsed.success) {
     throw new Error("Invalid response from engagement service");
   }
@@ -554,10 +562,108 @@ export async function processBatchActions(
     throw error;
   }
 
-  const parsed = batchActionResponseDataSchema.safeParse(payload);
+  // Unwrap data if wrapped in global response format
+  const data = (payload as any)?.data ?? payload;
+
+  const parsed = batchActionResponseDataSchema.safeParse(data);
   if (!parsed.success) {
     throw new Error("Invalid response from engagement service");
   }
 
+  return parsed.data;
+}
+
+// View Progress
+import {
+  saveProgressBodySchema,
+  progressResponseSchema,
+  type SaveProgressBody,
+  type ProgressResponse,
+} from "../schemas/engagement.schema";
+
+export async function saveProgress(
+  body: SaveProgressBody,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<ProgressResponse> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const validatedBody = saveProgressBodySchema.parse(body);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<ProgressResponse>({
+      serviceName: "engagement",
+      baseUrl,
+      path: "/client/progress",
+      method: "POST",
+      correlationId,
+      user,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:engagement:saveProgress",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to save view progress",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  // Unwrap data if wrapped in global response format
+  const data = (payload as any)?.data ?? payload;
+  console.log("[DEBUG saveProgress] Raw payload:", JSON.stringify(payload));
+  console.log("[DEBUG saveProgress] Unwrapped data:", JSON.stringify(data));
+
+  const parsed = progressResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    console.error("[DEBUG saveProgress] Validation failed:", parsed.error);
+    throw new Error(`Invalid response from engagement service: ${parsed.error.message}`);
+  }
+  return parsed.data;
+}
+
+export async function getProgress(
+  episodeId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<ProgressResponse> {
+  const baseUrl = resolveServiceUrl("engagement");
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<ProgressResponse>({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/client/progress/${episodeId}`,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:getProgress",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to get view progress",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = progressResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
   return parsed.data;
 }

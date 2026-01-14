@@ -1,4 +1,4 @@
-import fp from "fastify-plugin";
+// fp import removed
 import type { FastifyInstance } from "fastify";
 import {
     batchInteractionRequestSchema,
@@ -16,7 +16,7 @@ function requireUserId(headers: Record<string, unknown>): string {
     throw new Error("UNAUTHORIZED: Missing x-user-id");
 }
 
-export default fp(async function batchRoutes(fastify: FastifyInstance) {
+export default async function batchRoutes(fastify: FastifyInstance) {
     const redis = getRedisOptional();
     const prisma = getPrismaOptional();
 
@@ -58,4 +58,4 @@ export default fp(async function batchRoutes(fastify: FastifyInstance) {
      * Do not duplicate it here.
      */
     // fastify.post("/user-state", { ... });
-});
+}

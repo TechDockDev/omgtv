@@ -511,6 +511,19 @@ export class CatalogRepository {
     });
   }
 
+  async findReelsByIds(ids: string[]) {
+    if (ids.length === 0) return [];
+    return this.prisma.reel.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      include: {
+        mediaAsset: {
+          include: { variants: true },
+        },
+        category: true,
+      },
+    });
+  }
+
   async softDeleteEpisode(id: string, adminId?: string) {
     return this.prisma.episode.update({
       where: { id },
@@ -680,8 +693,10 @@ export class CatalogRepository {
     const limit = normalizeLimit(params.limit);
     const now = params.now ?? new Date();
     const availabilityFilter: Prisma.EpisodeWhereInput = {
-      OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }],
-      AND: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }],
+      AND: [
+        { OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }] },
+        { OR: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }] },
+      ],
     };
 
     const rows = await this.prisma.episode.findMany({
@@ -1105,8 +1120,10 @@ export class CatalogRepository {
     now = new Date()
   ): Promise<EpisodeWithRelations | null> {
     const availabilityFilter: Prisma.EpisodeWhereInput = {
-      OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }],
-      AND: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }],
+      AND: [
+        { OR: [{ availabilityStart: null }, { availabilityStart: { lte: now } }] },
+        { OR: [{ availabilityEnd: null }, { availabilityEnd: { gte: now } }] },
+      ],
     };
 
     return this.prisma.episode.findFirst({
@@ -1262,6 +1279,42 @@ export class CatalogRepository {
     return {
       averageSeconds: row?.avg_seconds ?? null,
       p95Seconds: row?.p95_seconds ?? null,
+    };
+  }
+
+  async listHomeSeries(params: {
+    limit?: number;
+    cursor?: string | null;
+    now?: Date;
+  }): Promise<PaginatedResult<Series & { category: Category | null }>> {
+    const limit = normalizeLimit(params.limit);
+    const now = params.now ?? new Date();
+
+    const rows = await this.prisma.series.findMany({
+      where: {
+        deletedAt: null,
+        status: PublicationStatus.PUBLISHED,
+        visibility: Visibility.PUBLIC,
+        OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
+      },
+      include: {
+        category: true,
+      },
+      orderBy: [{ releaseDate: "desc" }, { createdAt: "desc" }],
+      take: limit + 1,
+      cursor: params.cursor ? { id: params.cursor } : undefined,
+      skip: params.cursor ? 1 : 0,
+    });
+
+    let nextCursor: string | null = null;
+    if (rows.length > limit) {
+      const next = rows.pop();
+      nextCursor = next?.id ?? null;
+    }
+
+    return {
+      items: rows,
+      nextCursor,
     };
   }
 }

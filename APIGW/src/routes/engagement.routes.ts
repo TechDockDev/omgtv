@@ -1,4 +1,4 @@
-import fp from "fastify-plugin";
+// fp import removed
 import type { FastifyInstance } from "fastify";
 import {
   engagementEventBodySchema,
@@ -42,519 +42,626 @@ import {
   seriesUnlike,
   seriesUnsave,
   processBatchActions,
+  saveProgress,
+  getProgress,
 } from "../proxy/engagement.proxy";
+import { getBatchContent } from "../proxy/content.proxy";
+import {
+  saveProgressBodySchema,
+  progressResponseSchema,
+  getProgressParamsSchema,
+  type SaveProgressBody,
+  type ProgressResponse,
+} from "../schemas/engagement.schema";
 
-export default fp(
-  async function engagementRoutes(fastify: FastifyInstance) {
-    const authenticatedConfig = {
-      auth: { public: false },
-      rateLimitPolicy: "authenticated" as const,
-      security: { bodyLimit: 8 * 1024 },
-    };
+export default async function engagementRoutes(fastify: FastifyInstance) {
+  const authenticatedConfig = {
+    auth: { public: false },
+    rateLimitPolicy: "authenticated" as const,
+    security: { bodyLimit: 8 * 1024 },
+  };
 
-    fastify.route<{
-      Body: EngagementEventBody;
-      Reply: EngagementEventData;
-    }>({
-      method: "POST",
-      url: "/like",
-      schema: {
-        body: engagementEventBodySchema,
-        response: {
-          200: engagementEventSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Body: EngagementEventBody;
+    Reply: EngagementEventData;
+  }>({
+    method: "POST",
+    url: "/like",
+    schema: {
+      body: engagementEventBodySchema,
+      response: {
+        200: engagementEventSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const body = engagementEventBodySchema.parse({
-          ...request.body,
-          action: request.body?.action ?? "like",
-        });
-        const response = await publishEngagementEvent(
-          body,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-        request.log.info(
-          { videoId: body.videoId, action: body.action },
-          "Engagement event forwarded"
-        );
-        return response;
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin"])],
+    async handler(request) {
+      const body = engagementEventBodySchema.parse({
+        ...request.body,
+        action: request.body?.action ?? "like",
+      });
+      const response = await publishEngagementEvent(
+        body,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+      request.log.info(
+        { videoId: body.videoId, action: body.action },
+        "Engagement event forwarded"
+      );
+      return response;
+    },
+  });
 
-    // Batch endpoint for processing multiple engagement actions
-    fastify.route<{
-      Body: BatchActionRequest;
-      Reply: BatchActionResponseData;
-    }>({
-      method: "POST",
-      url: "/batch",
-      schema: {
-        body: batchActionRequestSchema,
-        response: {
-          200: batchActionSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
-      },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const body = batchActionRequestSchema.parse(request.body);
-        const response = await processBatchActions(
-          body,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-        request.log.info(
-          { processed: response.processed, failed: response.failed },
-          "Batch engagement actions forwarded"
-        );
-        return response;
-      },
-    });
 
-    // Reels
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementSaveData;
-    }>({
-      method: "POST",
-      url: "/reels/:id/save",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementSaveSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
-      },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return reelSave(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementSaveData;
-    }>({
-      method: "DELETE",
-      url: "/reels/:id/save",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementSaveSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  // Reels
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementSaveData;
+  }>({
+    method: "POST",
+    url: "/reels/:id/save",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementSaveSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return reelUnsave(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return reelSave(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Reply: EngagementListData;
-    }>({
-      method: "GET",
-      url: "/reels/saved",
-      schema: {
-        response: {
-          200: engagementListSuccessResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementSaveData;
+  }>({
+    method: "DELETE",
+    url: "/reels/:id/save",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementSaveSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        return reelSavedList(
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return reelUnsave(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementLikeData;
-    }>({
-      method: "POST",
-      url: "/reels/:id/like",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementLikeSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Reply: EngagementListData;
+  }>({
+    method: "GET",
+    url: "/reels/saved",
+    schema: {
+      response: {
+        200: engagementListSuccessResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return reelLike(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { ids } = await reelSavedList(
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+      if (ids.length === 0) {
+        return { items: [] };
+      }
+      return getBatchContent({
+        ids,
+        type: "reel",
+        correlationId: request.correlationId,
+        user: request.user!,
+        span: request.telemetrySpan,
+      }) as any;
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementLikeData;
-    }>({
-      method: "DELETE",
-      url: "/reels/:id/like",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementLikeSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementLikeData;
+  }>({
+    method: "POST",
+    url: "/reels/:id/like",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementLikeSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return reelUnlike(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return reelLike(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Reply: EngagementListData;
-    }>({
-      method: "GET",
-      url: "/reels/liked",
-      schema: {
-        response: {
-          200: engagementListSuccessResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementLikeData;
+  }>({
+    method: "DELETE",
+    url: "/reels/:id/like",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementLikeSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        return reelLikedList(
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return reelUnlike(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementViewData;
-    }>({
-      method: "POST",
-      url: "/reels/:id/view",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementViewSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Reply: EngagementListData;
+  }>({
+    method: "GET",
+    url: "/reels/liked",
+    schema: {
+      response: {
+        200: engagementListSuccessResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return reelAddView(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const result = await reelLikedList(
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+      console.log("[DEBUG /reels/liked] reelLikedList raw result:", JSON.stringify(result));
+      const ids = result.ids || [];
+      console.log("[DEBUG /reels/liked] extracted ids:", ids);
+      if (ids.length === 0) {
+        console.log("[DEBUG /reels/liked] No IDs, returning empty items");
+        return { items: [] };
+      }
+      console.log("[DEBUG /reels/liked] Calling getBatchContent with ids:", ids);
+      const batchResult = await getBatchContent({
+        ids,
+        type: "reel",
+        correlationId: request.correlationId,
+        user: request.user!,
+        span: request.telemetrySpan,
+      });
+      console.log("[DEBUG /reels/liked] getBatchContent result:", JSON.stringify(batchResult));
+      return batchResult as any;
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementStatsData;
-    }>({
-      method: "GET",
-      url: "/reels/:id/stats",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementStatsSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementViewData;
+  }>({
+    method: "POST",
+    url: "/reels/:id/view",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementViewSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return reelStats(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return reelAddView(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    // Series
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementSaveData;
-    }>({
-      method: "POST",
-      url: "/series/:id/save",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementSaveSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementStatsData;
+  }>({
+    method: "GET",
+    url: "/reels/:id/stats",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementStatsSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return seriesSave(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return reelStats(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementSaveData;
-    }>({
-      method: "DELETE",
-      url: "/series/:id/save",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementSaveSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  // Series
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementSaveData;
+  }>({
+    method: "POST",
+    url: "/series/:id/save",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementSaveSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return seriesUnsave(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return seriesSave(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Reply: EngagementListData;
-    }>({
-      method: "GET",
-      url: "/series/saved",
-      schema: {
-        response: {
-          200: engagementListSuccessResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementSaveData;
+  }>({
+    method: "DELETE",
+    url: "/series/:id/save",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementSaveSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        return seriesSavedList(
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return seriesUnsave(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementLikeData;
-    }>({
-      method: "POST",
-      url: "/series/:id/like",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementLikeSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Reply: EngagementListData;
+  }>({
+    method: "GET",
+    url: "/series/saved",
+    schema: {
+      response: {
+        200: engagementListSuccessResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return seriesLike(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { ids } = await seriesSavedList(
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+      if (ids.length === 0) {
+        return { items: [] };
+      }
+      return getBatchContent({
+        ids,
+        type: "series",
+        correlationId: request.correlationId,
+        user: request.user!,
+        span: request.telemetrySpan,
+      }) as any;
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementLikeData;
-    }>({
-      method: "DELETE",
-      url: "/series/:id/like",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementLikeSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementLikeData;
+  }>({
+    method: "POST",
+    url: "/series/:id/like",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementLikeSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return seriesUnlike(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return seriesLike(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Reply: EngagementListData;
-    }>({
-      method: "GET",
-      url: "/series/liked",
-      schema: {
-        response: {
-          200: engagementListSuccessResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementLikeData;
+  }>({
+    method: "DELETE",
+    url: "/series/:id/like",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementLikeSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        return seriesLikedList(
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return seriesUnlike(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementViewData;
-    }>({
-      method: "POST",
-      url: "/series/:id/view",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementViewSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Reply: EngagementListData;
+  }>({
+    method: "GET",
+    url: "/series/liked",
+    schema: {
+      response: {
+        200: engagementListSuccessResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return seriesAddView(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
-      },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { ids } = await seriesLikedList(
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+      if (ids.length === 0) {
+        return { items: [] };
+      }
+      return getBatchContent({
+        ids,
+        type: "series",
+        correlationId: request.correlationId,
+        user: request.user!,
+        span: request.telemetrySpan,
+      }) as any;
+    },
+  });
 
-    fastify.route<{
-      Params: EngagementIdParams;
-      Reply: EngagementStatsData;
-    }>({
-      method: "GET",
-      url: "/series/:id/stats",
-      schema: {
-        params: engagementIdParamsSchema,
-        response: {
-          200: engagementStatsSuccessResponseSchema,
-          400: errorResponseSchema,
-          401: errorResponseSchema,
-          500: errorResponseSchema,
-        },
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementViewData;
+  }>({
+    method: "POST",
+    url: "/series/:id/view",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementViewSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-      config: authenticatedConfig,
-      preHandler: [fastify.authorize(["user", "admin"])],
-      async handler(request) {
-        const { id } = engagementIdParamsSchema.parse(request.params);
-        return seriesStats(
-          id,
-          request.correlationId,
-          request.user!,
-          request.telemetrySpan
-        );
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return seriesAddView(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementStatsData;
+  }>({
+    method: "GET",
+    url: "/series/:id/stats",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementStatsSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
       },
-    });
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return seriesStats(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-    // Batch interactions endpoint (Removed duplicate)
-    // The main batch endpoint is defined above using processBatchActions
+  // Batch interactions endpoint
+  fastify.route<{
+    Body: BatchActionRequest;
+    Reply: BatchActionResponseData;
+  }>({
+    method: "POST",
+    url: "/batch",
+    schema: {
+      body: batchActionRequestSchema,
+      response: {
+        200: batchActionSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const body = batchActionRequestSchema.parse(request.body);
+      return processBatchActions(
+        body,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
-  },
-  { name: "engagement-routes" }
-);
+  // View Progress
+  fastify.route<{
+    Body: SaveProgressBody;
+    Reply: ProgressResponse;
+  }>({
+    method: "POST",
+    url: "/progress",
+    schema: {
+      body: saveProgressBodySchema,
+      response: {
+        // 200: progressResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const body = saveProgressBodySchema.parse(request.body);
+      return saveProgress(
+        body,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Params: { episodeId: string };
+    Reply: ProgressResponse;
+  }>({
+    method: "GET",
+    url: "/progress/:episodeId",
+    schema: {
+      params: getProgressParamsSchema,
+      response: {
+        // 200: progressResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { episodeId } = getProgressParamsSchema.parse(request.params);
+      return getProgress(
+        episodeId,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // Logging to confirm registration
+  fastify.log.info("Engagement Routes registered successfully");
+}

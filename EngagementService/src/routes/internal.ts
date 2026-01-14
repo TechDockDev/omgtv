@@ -1,4 +1,4 @@
-import fp from "fastify-plugin";
+// fp import removed
 import type { FastifyInstance } from "fastify";
 import {
   engagementEventBodySchema,
@@ -32,6 +32,7 @@ import {
   upsertProgress,
 } from "../services/engagement";
 import { getRedisOptional } from "../lib/redis";
+import { getPrismaOptional } from "../lib/prisma";
 import {
   addView,
   getStats,
@@ -44,6 +45,7 @@ import {
   addReview,
   getReviews,
   getUserStateBatch,
+  getViewProgressBatch,
 } from "../services/collection-engagement";
 
 function requireUserId(headers: Record<string, unknown>) {
@@ -54,8 +56,9 @@ function requireUserId(headers: Record<string, unknown>) {
   throw new Error("UNAUTHORIZED: Missing x-user-id");
 }
 
-export default fp(async function internalRoutes(fastify: FastifyInstance) {
+export default async function internalRoutes(fastify: FastifyInstance) {
   const redis = getRedisOptional();
+  const prisma = getPrismaOptional();
 
   fastify.post("/events", {
     schema: {
@@ -99,6 +102,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
             case "like": {
               const likeResult = await likeEntity({
                 redis,
+                prisma,
                 entityType: entityType as "reel" | "series",
                 entityId,
                 userId,
@@ -113,6 +117,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
             case "unlike": {
               const unlikeResult = await unlikeEntity({
                 redis,
+                prisma,
                 entityType: entityType as "reel" | "series",
                 entityId,
                 userId,
@@ -127,6 +132,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
             case "save": {
               const saveResult = await saveEntity({
                 redis,
+                prisma,
                 entityType: entityType as "reel" | "series",
                 entityId,
                 userId,
@@ -137,6 +143,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
             case "unsave": {
               const unsaveResult = await unsaveEntity({
                 redis,
+                prisma,
                 entityType: entityType as "reel" | "series",
                 entityId,
                 userId,
@@ -147,6 +154,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
             case "view": {
               const viewResult = await addView({
                 redis,
+                prisma,
                 entityType: entityType as "reel" | "series",
                 entityId,
               });
@@ -223,6 +231,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await likeEntity({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
         userId,
@@ -241,6 +250,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await unlikeEntity({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
         userId,
@@ -273,6 +283,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await saveEntity({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
         userId,
@@ -291,6 +302,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await unsaveEntity({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
         userId,
@@ -322,6 +334,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const { reelId } = reelIdParamsSchema.parse(request.params);
       const result = await addView({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
       });
@@ -369,6 +382,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await likeEntity({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
@@ -387,6 +401,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await unlikeEntity({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
@@ -419,6 +434,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await saveEntity({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
@@ -437,6 +453,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await unsaveEntity({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
@@ -468,6 +485,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const { seriesId } = seriesIdParamsSchema.parse(request.params);
       const result = await addView({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
       });
@@ -543,14 +561,18 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const episodeIds = body.limit
         ? body.episodeIds.slice(0, body.limit)
         : body.episodeIds;
-      const entries = getProgressEntries(body.userId, episodeIds);
+      const entries = await getViewProgressBatch({
+        prisma,
+        userId: body.userId,
+        episodeIds,
+      });
       const payload = {
-        entries: entries.map((entry) => ({
+        entries: entries.map((entry: any) => ({
           episode_id: entry.episodeId,
-          watched_duration: entry.watchedDuration,
-          total_duration: entry.totalDuration,
-          last_watched_at: entry.lastWatchedAt,
-          is_completed: entry.isCompleted,
+          watched_duration: entry.progressSeconds, // DB has progressSeconds
+          total_duration: entry.durationSeconds, // DB has durationSeconds
+          last_watched_at: entry.updatedAt.toISOString(), // Use updatedAt as last watched
+          is_completed: entry.completedAt !== null,
         })),
       };
       return continueWatchResponseSchema.parse(payload);
@@ -609,4 +631,4 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       };
     },
   });
-});
+}
