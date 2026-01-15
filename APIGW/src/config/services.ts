@@ -19,10 +19,11 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       swaggerPath: "/v3/api-docs",
       access: "public",
       rateLimitPolicy: "anonymous",
-      internalBasePath: "",
+      internalBasePath: "/api/v1/auth",
       publicPrefixes: ["/public"],
+      adminPrefixes: ["/admin"],
       documentationBasePath: "",
-      exposeViaProxy: false,
+      exposeViaProxy: true,
     },
     {
       name: "user",
@@ -33,7 +34,7 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       swaggerPath: "/v3/api-docs",
       access: "admin",
       rateLimitPolicy: "admin",
-      internalBasePath: "/",
+      internalBasePath: "/api/v1/user",
     },
     {
       name: "content",
