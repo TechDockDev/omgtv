@@ -80,3 +80,19 @@ model Session {
 
   @@index([subjectId])
 }
+
+model GeneralSetting {
+  id              Int      @id @default(1)
+  supportEmail    String?
+  helpCenterEmail String?
+  contactPhone    String?
+  whatsappNumber  String?
+  twitterHandle   String?
+  facebookUrl     String?
+  instagramHandle String?
+  companyName     String?
+  businessAddress String?
+  updatedByAdminId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

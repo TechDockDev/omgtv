@@ -17,8 +17,26 @@ const envSchema = z.object({
   HTTP_BODY_LIMIT: z.coerce.number().int().positive().default(1_048_576),
   GRPC_BIND_ADDRESS: z.string().default("0.0.0.0:50051"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-  AUTH_JWT_PRIVATE_KEY: z.string().min(1, "AUTH_JWT_PRIVATE_KEY is required"),
-  AUTH_JWT_PUBLIC_KEY: z.string().min(1, "AUTH_JWT_PUBLIC_KEY is required"),
+  AUTH_JWT_PRIVATE_KEY: z
+    .string()
+    .min(1, "AUTH_JWT_PRIVATE_KEY is required")
+    .transform((val) => {
+      let key = val.trim();
+      while ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+        key = key.slice(1, -1).trim();
+      }
+      return key.replace(/(\\n|\\r\n)/g, "\n");
+    }),
+  AUTH_JWT_PUBLIC_KEY: z
+    .string()
+    .min(1, "AUTH_JWT_PUBLIC_KEY is required")
+    .transform((val) => {
+      let key = val.trim();
+      while ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+        key = key.slice(1, -1).trim();
+      }
+      return key.replace(/(\\n|\\r\n)/g, "\n");
+    }),
   AUTH_JWT_KEY_ID: z.string().default("auth-service"),
   DEFAULT_LANGUAGE_ID: z.string().default("hi"),
   ACCESS_TOKEN_TTL: z.coerce.number().int().positive().default(900),
