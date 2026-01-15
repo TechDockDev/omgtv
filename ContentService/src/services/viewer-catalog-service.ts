@@ -336,14 +336,21 @@ export class ViewerCatalogService {
           ? await this.trending.getAverageRatings(ids)
           : new Map<string, number>();
 
-        const items = repoResult.items.map((episode) => {
-          this.ensureEpisodeQuality(episode, { source: "viewer.feed" });
-          const score = scores.get(episode.id);
-          const rating = ratings.get(episode.id) ?? null;
-          const personalization: ViewerFeedItem["personalization"] = score
-            ? { reason: "trending", score }
-            : { reason: "recent" };
-          return buildFeedItem(episode, personalization, rating);
+        const items: ViewerFeedItem[] = [];
+
+        repoResult.items.forEach((episode) => {
+          try {
+            this.ensureEpisodeQuality(episode, { source: "viewer.feed" });
+            const score = scores.get(episode.id);
+            const rating = ratings.get(episode.id) ?? null;
+            const personalization: ViewerFeedItem["personalization"] = score
+              ? { reason: "trending", score }
+              : { reason: "recent" };
+            items.push(buildFeedItem(episode, personalization, rating));
+          } catch (error) {
+            // Log but skip invalid episodes
+            // console.warn(`Skipping invalid episode ${episode.id} in feed:`, error);
+          }
         });
 
         const response: ViewerFeedResponse = {
@@ -674,6 +681,73 @@ export class ViewerCatalogService {
     );
   }
 
+  async getEpisodesBatch(ids: string[]): Promise<ViewerFeedItem[]> {
+    return withSpan("ViewerCatalogService.getEpisodesBatch", { idsCount: ids.length }, async () => {
+      const episodes = await this.repo.findEpisodesWithRelationsByIds(ids);
+      return episodes.map((episode) => {
+        this.ensureEpisodeQuality(episode as EpisodeWithRelations, { source: "batch.lookup" });
+        return buildFeedItem(episode as EpisodeWithRelations, { reason: "recent" }, null);
+      });
+    });
+  }
+
+  async getSeriesBatch(ids: string[]): Promise<any[]> {
+    return withSpan("ViewerCatalogService.getSeriesBatch", { idsCount: ids.length }, async () => {
+      const seriesList = await this.repo.findSeriesByIds(ids);
+      return seriesList.map(series => ({
+        id: series.id,
+        slug: series.slug,
+        title: series.title,
+        synopsis: series.synopsis ?? null,
+        heroImageUrl: series.heroImageUrl ?? null,
+        bannerImageUrl: series.bannerImageUrl ?? null,
+        category: series.category
+          ? {
+            id: series.category.id,
+            slug: series.category.slug,
+            name: series.category.name,
+          }
+          : null,
+      }));
+    });
+  }
+
+  async getReelsBatch(ids: string[]): Promise<any[]> {
+    return withSpan("ViewerCatalogService.getReelsBatch", { idsCount: ids.length }, async () => {
+      const reels = await this.repo.findReelsByIds(ids);
+      return reels.map(reel => ({
+        id: reel.id,
+        slug: reel.slug,
+        title: reel.title,
+        description: reel.description ?? null,
+        durationSeconds: reel.durationSeconds,
+        tags: reel.tags,
+        heroImageUrl: reel.mediaAsset?.defaultThumbnailUrl ?? null,
+        defaultThumbnailUrl: reel.mediaAsset?.defaultThumbnailUrl ?? null,
+        playback: {
+          status: reel.mediaAsset?.status ?? "PENDING",
+          manifestUrl: reel.mediaAsset?.manifestUrl ?? null,
+          defaultThumbnailUrl: reel.mediaAsset?.defaultThumbnailUrl ?? null,
+          variants: reel.mediaAsset?.variants?.map((v: any) => ({
+            label: v.label,
+            width: v.width ?? null,
+            height: v.height ?? null,
+            bitrateKbps: v.bitrateKbps ?? null,
+            codec: v.codec ?? null,
+            frameRate: v.frameRate ?? null,
+          })) ?? [],
+        },
+        category: reel.category
+          ? {
+            id: reel.category.id,
+            slug: reel.category.slug,
+            name: reel.category.name,
+          }
+          : null,
+      }));
+    });
+  }
+
   private buildFeedCacheKey(params: {
     viewerId?: string;
     limit?: number;
@@ -698,5 +772,107 @@ export class ViewerCatalogService {
     context: DataQualityContext
   ) {
     this.qualityMonitor?.ensureEpisodeConsistency(episode, context);
+  }
+  async getHomeSeries(params: {
+    viewerId?: string;
+    limit?: number;
+    cursor?: string | null;
+  }): Promise<ViewerFeedResponse & { fromCache: boolean }> {
+    return withSpan(
+      "ViewerCatalogService.getHomeSeries",
+      {
+        viewerId: params.viewerId ?? "anon",
+        limit: params.limit ?? "default",
+        cursor: params.cursor ?? "origin",
+      },
+      async (span) => {
+        // We can reuse the feed cache structure or create a new one.
+        // For simplicity, let's use a distinct key.
+        const cacheKey = `home_series:${params.viewerId ?? "anon"}:${params.limit ?? "default"}:${params.cursor ?? "origin"}`;
+
+        if (this.redis) {
+          const cached = await getCachedJson<ViewerFeedResponse>(
+            this.redis,
+            cacheKey
+          );
+          if (cached) {
+            span.setAttribute("cache.hit", true);
+            return { ...cached, fromCache: true };
+          }
+        }
+
+        const decodedCursor = decodeCursor(params.cursor);
+        const repoResult = await this.repo.listHomeSeries({
+          limit: params.limit,
+          cursor: decodedCursor,
+        });
+        span.setAttribute("result.count", repoResult.items.length);
+
+        // Map Series to ViewerFeedItem (lightweight)
+        // We don't have episode details here, so we fill what we can.
+        // Importantly: NO ensureEpisodeQuality check!
+        const items = repoResult.items.map((series) => {
+          return {
+            id: series.id,
+            slug: series.slug,
+            title: series.title,
+            tags: series.tags,
+            synopsis: series.synopsis ?? null,
+            heroImageUrl: series.heroImageUrl ?? null,
+            defaultThumbnailUrl: series.heroImageUrl ?? series.bannerImageUrl ?? null,
+            durationSeconds: 0, // Not applicable for series card
+            publishedAt: series.releaseDate?.toISOString() ?? series.createdAt.toISOString(),
+            availability: {
+              start: null,
+              end: null,
+            },
+            season: null,
+            series: {
+              id: series.id,
+              slug: series.slug,
+              title: series.title,
+              synopsis: series.synopsis ?? null,
+              heroImageUrl: series.heroImageUrl ?? null,
+              bannerImageUrl: series.bannerImageUrl ?? null,
+              category: series.category
+                ? {
+                  id: series.category.id,
+                  slug: series.category.slug,
+                  name: series.category.name,
+                }
+                : null,
+            },
+            playback: {
+              status: MediaAssetStatus.READY, // Assume ready for series container
+              manifestUrl: null,
+              defaultThumbnailUrl: null,
+              variants: [],
+            },
+            localization: {
+              captions: [],
+              availableLanguages: [],
+            },
+            personalization: { reason: "recent" },
+            ratings: {
+              average: null,
+            },
+          } satisfies ViewerFeedItem;
+        });
+
+        const response: ViewerFeedResponse = {
+          items,
+          nextCursor: repoResult.nextCursor
+            ? encodeCursor(repoResult.nextCursor)
+            : null,
+        };
+
+        if (this.redis) {
+          await setCachedJson(this.redis, cacheKey, response, this.feedTtl);
+          span.setAttribute("cache.write", true);
+        }
+
+        return { ...response, fromCache: false };
+      }
+    );
   }
 }

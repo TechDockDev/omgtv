@@ -2038,10 +2038,9 @@ const contentDocument: OpenAPIV3.Document = {
     schemas: {
       CategoryWriteRequest: {
         type: "object",
-        required: ["slug", "name"],
+        required: ["name"],
         additionalProperties: false,
         properties: {
-          slug: { type: "string", minLength: 3 },
           name: { type: "string", minLength: 1 },
           description: { type: "string", maxLength: 1000, nullable: true },
           displayOrder: { type: "integer", format: "int32", nullable: true },
@@ -3492,6 +3491,35 @@ const engagementDocument: OpenAPIV3.Document = {
         },
       },
     },
+    "/batch": {
+      post: {
+        summary: "Sync multiple interactions in batch",
+        description:
+          "Processes multiple like/unlike/save/unsave/view actions for reels and series in a single request. Useful for syncing offline actions or reducing API calls.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/BatchInteractionBody" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Batch processed successfully.",
+            content: successContent({
+              $ref: "#/components/schemas/BatchInteractionData",
+            }),
+          },
+          "400": { description: "Invalid request.", content: errorContent() },
+          "401": {
+            description: "Authentication required.",
+            content: errorContent(),
+          },
+          "500": { description: "Internal error.", content: errorContent() },
+        },
+      },
+    },
   },
   components: {
     schemas: {
@@ -3563,6 +3591,61 @@ const engagementDocument: OpenAPIV3.Document = {
           ids: {
             type: "array",
             items: { type: "string", format: "uuid" },
+          },
+        },
+      },
+      BatchInteractionItem: {
+        type: "object",
+        additionalProperties: false,
+        required: ["contentType", "contentId", "action"],
+        properties: {
+          contentType: {
+            type: "string",
+            enum: ["reel", "series"],
+            description: "Type of content to interact with.",
+          },
+          contentId: {
+            type: "string",
+            format: "uuid",
+            description: "UUID of the reel or series.",
+          },
+          action: {
+            type: "string",
+            enum: ["like", "unlike", "save", "unsave", "view"],
+            description: "The interaction action to perform.",
+          },
+        },
+      },
+      BatchInteractionBody: {
+        type: "object",
+        additionalProperties: false,
+        required: ["actions"],
+        properties: {
+          actions: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: { $ref: "#/components/schemas/BatchInteractionItem" },
+            description: "Array of interaction actions to process.",
+          },
+        },
+      },
+      BatchInteractionData: {
+        type: "object",
+        additionalProperties: false,
+        required: ["processed"],
+        properties: {
+          processed: {
+            type: "integer",
+            format: "int32",
+            minimum: 0,
+            description: "Number of actions successfully processed.",
+          },
+          failed: {
+            type: "integer",
+            format: "int32",
+            minimum: 0,
+            description: "Number of actions that failed (optional).",
           },
         },
       },

@@ -43,7 +43,7 @@ export const engagementViewDataSchema = z.object({
 });
 
 export const engagementListDataSchema = z.object({
-  ids: z.array(z.string().uuid()),
+  items: z.array(z.any()),
 });
 
 export const engagementStatsSuccessResponseSchema = createSuccessResponseSchema(
@@ -77,3 +77,90 @@ export type EngagementLikeData = z.infer<typeof engagementLikeDataSchema>;
 export type EngagementSaveData = z.infer<typeof engagementSaveDataSchema>;
 export type EngagementViewData = z.infer<typeof engagementViewDataSchema>;
 export type EngagementListData = z.infer<typeof engagementListDataSchema>;
+
+// Batch interaction schemas (from origin - simple version)
+export const batchInteractionItemSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+  action: z.enum(["like", "unlike", "save", "unsave", "view"]),
+});
+
+export const batchInteractionBodySchema = z.object({
+  actions: z.array(batchInteractionItemSchema).min(1).max(100),
+});
+
+export const batchInteractionDataSchema = z.object({
+  processed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative().optional(),
+});
+
+export const batchInteractionSuccessResponseSchema = createSuccessResponseSchema(
+  batchInteractionDataSchema
+);
+
+export type BatchInteractionBody = z.infer<typeof batchInteractionBodySchema>;
+export type BatchInteractionData = z.infer<typeof batchInteractionDataSchema>;
+
+// Batch action schemas (detailed version with results)
+export const batchActionItemSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+  action: z.enum(["like", "unlike", "save", "unsave", "view"]),
+});
+
+export const batchActionRequestSchema = z.object({
+  actions: z.array(batchActionItemSchema).min(1).max(50),
+});
+
+export const batchActionResultSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string().uuid(),
+  action: z.enum(["like", "unlike", "save", "unsave", "view"]),
+  success: z.boolean(),
+  result: z
+    .object({
+      liked: z.boolean().optional(),
+      saved: z.boolean().optional(),
+      likes: z.number().int().nonnegative().optional(),
+      views: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+  error: z.string().optional(),
+});
+
+export const batchActionResponseDataSchema = z.object({
+  results: z.array(batchActionResultSchema),
+  processed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+
+export const batchActionSuccessResponseSchema = createSuccessResponseSchema(
+  batchActionResponseDataSchema
+);
+
+export type BatchActionItem = z.infer<typeof batchActionItemSchema>;
+export type BatchActionRequest = z.infer<typeof batchActionRequestSchema>;
+export type BatchActionResult = z.infer<typeof batchActionResultSchema>;
+export type BatchActionResponseData = z.infer<
+  typeof batchActionResponseDataSchema
+>;
+
+// View Progress
+export const saveProgressBodySchema = z.object({
+  episodeId: z.string().uuid(),
+  progressSeconds: z.coerce.number().nonnegative(),
+  durationSeconds: z.coerce.number().positive(),
+});
+
+export const getProgressParamsSchema = z.object({
+  episodeId: z.string().uuid(),
+});
+
+export const progressResponseSchema = z.object({
+  progressSeconds: z.coerce.number().nonnegative(),
+  durationSeconds: z.coerce.number().positive(),
+  completedAt: z.string().nullable().optional(),
+});
+
+export type SaveProgressBody = z.infer<typeof saveProgressBodySchema>;
+export type ProgressResponse = z.infer<typeof progressResponseSchema>;

@@ -10,7 +10,11 @@ import cors from "@fastify/cors";
 import { loadConfig } from "./config";
 import serviceAuthPlugin from "./plugins/service-auth";
 import globalResponsePlugin from "./plugins/global-response";
+import swaggerPlugin from "./plugins/swagger";
 import internalRoutes from "./routes/internal";
+import batchRoutes from "./routes/batch";
+import clientRoutes from "./routes/client";
+import { startProgressSyncWorker } from "./workers/progress-sync";
 
 export async function buildApp() {
   const config = loadConfig();
@@ -39,11 +43,17 @@ export async function buildApp() {
   await app.register(sensible);
   await app.register(cors, { origin: false });
   await app.register(helmet, { contentSecurityPolicy: false });
+  await app.register(swaggerPlugin);
   await app.register(serviceAuthPlugin);
   await app.register(globalResponsePlugin);
   await app.register(internalRoutes, { prefix: "/internal" });
+  await app.register(batchRoutes, { prefix: "/internal" });
+  await app.register(clientRoutes, { prefix: "/client" });
 
   app.get("/health", async () => ({ status: "ok" }));
+
+  // Start background workers
+  startProgressSyncWorker();
 
   return app;
 }

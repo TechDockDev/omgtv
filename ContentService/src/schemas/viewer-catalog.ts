@@ -147,6 +147,15 @@ export const relatedSeriesResponseSchema = z.object({
   ),
 });
 
+export const batchContentRequestSchema = z.object({
+  ids: z.array(z.string().uuid()),
+  type: z.enum(["reel", "series"]),
+});
+
+export const batchContentResponseSchema = z.object({
+  items: z.array(z.any()),
+});
+
 export const categoryListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   cursor: z.string().uuid().optional(),

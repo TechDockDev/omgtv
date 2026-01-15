@@ -8,6 +8,8 @@ import {
   type AdminCarouselBody,
   type AdminCarouselResponse,
   type ContentResponse,
+  batchContentResponseSchema,
+  type BatchContentResponse,
 } from "../schemas/content.schema";
 import { performServiceRequest, UpstreamServiceError } from "../utils/http";
 import { createHttpError } from "../utils/errors";
@@ -21,6 +23,14 @@ interface GetVideoMetadataArgs {
 
 interface SetCarouselArgs {
   body: AdminCarouselBody;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}
+
+interface GetBatchContentArgs {
+  ids: string[];
+  type: "reel" | "series";
   correlationId: string;
   user: GatewayUser;
   span?: Span;
@@ -113,6 +123,48 @@ export async function setAdminCarouselEntries({
   }
 
   const parsed = adminCarouselResponseSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error("Invalid response from content service");
+  }
+
+  return parsed.data;
+}
+
+export async function getBatchContent({
+  ids,
+  type,
+  correlationId,
+  user,
+  span,
+}: GetBatchContentArgs): Promise<BatchContentResponse> {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: "/internal/catalog/batch",
+      method: "POST",
+      body: { ids, type },
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:content:getBatchContent",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Failed to retrieve batch content",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = batchContentResponseSchema.safeParse(data);
   if (!parsed.success) {
     throw new Error("Invalid response from content service");
   }

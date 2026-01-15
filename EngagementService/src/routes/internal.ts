@@ -1,4 +1,4 @@
-import fp from "fastify-plugin";
+// fp import removed
 import type { FastifyInstance } from "fastify";
 import {
   engagementEventBodySchema,
@@ -14,7 +14,12 @@ import {
   statsBatchResponseSchema,
   statsSchema,
   viewResponseSchema,
+  batchActionRequestSchema,
+  batchActionResponseSchema,
+  userStateRequestSchema,
+  userStateResponseSchema,
   type EngagementEventMetrics,
+  type BatchActionResult,
 } from "../schemas/engagement";
 import {
   addReviewBodySchema,
@@ -27,6 +32,7 @@ import {
   upsertProgress,
 } from "../services/engagement";
 import { getRedisOptional } from "../lib/redis";
+import { getPrismaOptional } from "../lib/prisma";
 import {
   addView,
   getStats,
@@ -38,6 +44,8 @@ import {
   unsaveEntity,
   addReview,
   getReviews,
+  getUserStateBatch,
+  getViewProgressBatch,
 } from "../services/collection-engagement";
 
 function requireUserId(headers: Record<string, unknown>) {
@@ -48,8 +56,9 @@ function requireUserId(headers: Record<string, unknown>) {
   throw new Error("UNAUTHORIZED: Missing x-user-id");
 }
 
-export default fp(async function internalRoutes(fastify: FastifyInstance) {
+export default async function internalRoutes(fastify: FastifyInstance) {
   const redis = getRedisOptional();
+  const prisma = getPrismaOptional();
 
   fastify.post("/events", {
     schema: {
@@ -69,6 +78,148 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
     },
   });
 
+  // Batch actions endpoint
+  fastify.post("/batch", {
+    schema: {
+      body: batchActionRequestSchema,
+      response: { 200: batchActionResponseSchema },
+    },
+    handler: async (request) => {
+      const body = batchActionRequestSchema.parse(request.body);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+
+      const results: BatchActionResult[] = [];
+      let failed = 0;
+
+      for (const action of body.actions) {
+        const entityType = action.contentType === "reel" ? "reel" : "series";
+        const entityId = action.contentId;
+
+        try {
+          let result: BatchActionResult["result"];
+
+          switch (action.action) {
+            case "like": {
+              const likeResult = await likeEntity({
+                redis,
+                prisma,
+                entityType: entityType as "reel" | "series",
+                entityId,
+                userId,
+              });
+              result = {
+                liked: likeResult.liked,
+                likes: likeResult.likes,
+                views: likeResult.views,
+              };
+              break;
+            }
+            case "unlike": {
+              const unlikeResult = await unlikeEntity({
+                redis,
+                prisma,
+                entityType: entityType as "reel" | "series",
+                entityId,
+                userId,
+              });
+              result = {
+                liked: unlikeResult.liked,
+                likes: unlikeResult.likes,
+                views: unlikeResult.views,
+              };
+              break;
+            }
+            case "save": {
+              const saveResult = await saveEntity({
+                redis,
+                prisma,
+                entityType: entityType as "reel" | "series",
+                entityId,
+                userId,
+              });
+              result = { saved: saveResult.saved };
+              break;
+            }
+            case "unsave": {
+              const unsaveResult = await unsaveEntity({
+                redis,
+                prisma,
+                entityType: entityType as "reel" | "series",
+                entityId,
+                userId,
+              });
+              result = { saved: unsaveResult.saved };
+              break;
+            }
+            case "view": {
+              const viewResult = await addView({
+                redis,
+                prisma,
+                entityType: entityType as "reel" | "series",
+                entityId,
+              });
+              result = { views: viewResult.views };
+              break;
+            }
+          }
+
+          results.push({
+            contentType: action.contentType,
+            contentId: action.contentId,
+            action: action.action,
+            success: true,
+            result,
+          });
+        } catch (error) {
+          failed++;
+          results.push({
+            contentType: action.contentType,
+            contentId: action.contentId,
+            action: action.action,
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      }
+
+      request.log.info(
+        { processed: results.length, failed },
+        "Processed batch engagement actions"
+      );
+
+      return batchActionResponseSchema.parse({
+        results,
+        processed: results.length,
+        failed,
+      });
+    },
+  });
+
+  // User state endpoint for ContentService enrichment (internal only)
+  fastify.post("/user-state", {
+    schema: {
+      body: userStateRequestSchema,
+      response: { 200: userStateResponseSchema },
+    },
+    handler: async (request) => {
+      const body = userStateRequestSchema.parse(request.body);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+
+      const states = await getUserStateBatch({
+        redis,
+        userId,
+        items: body.items,
+      });
+
+      request.log.info(
+        { itemCount: body.items.length },
+        "Processed user state query"
+      );
+
+      return userStateResponseSchema.parse({ states });
+    },
+  });
+
   // Reels
   fastify.post("/reels/:reelId/like", {
     schema: {
@@ -80,6 +231,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await likeEntity({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
         userId,
@@ -98,6 +250,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await unlikeEntity({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
         userId,
@@ -130,6 +283,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await saveEntity({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
         userId,
@@ -148,6 +302,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await unsaveEntity({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
         userId,
@@ -179,6 +334,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const { reelId } = reelIdParamsSchema.parse(request.params);
       const result = await addView({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
       });
@@ -226,6 +382,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await likeEntity({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
@@ -244,6 +401,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await unlikeEntity({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
@@ -276,6 +434,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await saveEntity({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
@@ -294,6 +453,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const result = await unsaveEntity({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
@@ -325,6 +485,7 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const { seriesId } = seriesIdParamsSchema.parse(request.params);
       const result = await addView({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
       });
@@ -400,14 +561,18 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       const episodeIds = body.limit
         ? body.episodeIds.slice(0, body.limit)
         : body.episodeIds;
-      const entries = getProgressEntries(body.userId, episodeIds);
+      const entries = await getViewProgressBatch({
+        prisma,
+        userId: body.userId,
+        episodeIds,
+      });
       const payload = {
-        entries: entries.map((entry) => ({
+        entries: entries.map((entry: any) => ({
           episode_id: entry.episodeId,
-          watched_duration: entry.watchedDuration,
-          total_duration: entry.totalDuration,
-          last_watched_at: entry.lastWatchedAt,
-          is_completed: entry.isCompleted,
+          watched_duration: entry.progressSeconds, // DB has progressSeconds
+          total_duration: entry.durationSeconds, // DB has durationSeconds
+          last_watched_at: entry.updatedAt.toISOString(), // Use updatedAt as last watched
+          is_completed: entry.completedAt !== null,
         })),
       };
       return continueWatchResponseSchema.parse(payload);
@@ -466,4 +631,4 @@ export default fp(async function internalRoutes(fastify: FastifyInstance) {
       };
     },
   });
-});
+}
