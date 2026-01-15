@@ -13,6 +13,7 @@ enum SubscriptionStatus {
   ACTIVE
   EXPIRED
   CANCELED
+  TRIAL
 }
 
 enum TransactionStatus {
@@ -37,11 +38,40 @@ model SubscriptionPlan {
   isUnlimitedEpisodes Boolean @default(false)
   isUnlimitedSeries Boolean @default(false)
   isActive         Boolean  @default(true)
+  
+  // New UI fields
+  features         String[]
+  isPopular        Boolean  @default(false)
+  subscriberCount  Int      @default(0)
+  icon             String?  // e.g., "Zap", "Crown", "Star"
+  savings          Int      @default(0) // Percentage
+  razorpayPlanId   String?
+  
+  deletedAt        DateTime?
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   subscriptions UserSubscription[]
   transactions  Transaction[]
+  trialPlans    TrialPlan[]
+}
+
+model TrialPlan {
+  id              String           @id @default(uuid())
+  trialPricePaise Int
+  durationDays    Int
+  reminderDays    Int
+  isAutoDebit     Boolean          @default(true)
+  isActive        Boolean          @default(true)
+  
+  targetPlanId    String
+  targetPlan      SubscriptionPlan @relation(fields: [targetPlanId], references: [id])
+  
+  subscriptions   UserSubscription[]
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model FreePlanConfig {
@@ -60,6 +90,7 @@ model UserSubscription {
   id                String              @id @default(uuid())
   userId            String
   planId            String?
+  trialPlanId       String?
   status            SubscriptionStatus  @default(PENDING)
   startsAt          DateTime
   endsAt            DateTime
@@ -69,6 +100,7 @@ model UserSubscription {
   updatedAt         DateTime            @updatedAt
 
   plan        SubscriptionPlan? @relation(fields: [planId], references: [id])
+  trialPlan   TrialPlan?        @relation(fields: [trialPlanId], references: [id])
   transaction Transaction?      @relation("TransactionUserSubscriptions", fields: [transactionId], references: [id])
 
   @@index([userId, status])

@@ -12,18 +12,18 @@ services:
       - ${POSTGRES_VOLUME_NAME:-postgres-data}:/var/lib/postgresql/data
       - ./docker/postgres:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
       timeout: 5s
       retries: 10
 
   redis:
     image: redis:${REDIS_IMAGE_TAG:-7-alpine}
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: [ "redis-server", "--save", "", "--appendonly", "no" ]
     ports:
       - "${REDIS_HOST_PORT:-6380}:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -58,11 +58,7 @@ services:
     ports:
       - "${CONTENT_SERVICE_HTTP_HOST_PORT:-4600}:${CONTENT_SERVICE_HTTP_PORT:-4600}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:${HTTP_PORT:-4600}/health >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-4600}/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -88,11 +84,7 @@ services:
     ports:
       - "${ENGAGEMENT_SERVICE_HTTP_HOST_PORT:-4700}:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:${HTTP_PORT:-4700}/health >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-4700}/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -112,11 +104,7 @@ services:
     ports:
       - "${SEARCH_SERVICE_HTTP_HOST_PORT:-4800}:${SEARCH_SERVICE_HTTP_PORT:-4800}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:${HTTP_PORT:-4800}/health >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-4800}/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -137,11 +125,7 @@ services:
     ports:
       - "${STREAMING_SERVICE_HTTP_HOST_PORT:-4900}:${STREAMING_SERVICE_HTTP_PORT:-4900}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:${HTTP_PORT:-4900}/health >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-4900}/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -165,11 +149,7 @@ services:
     ports:
       - "${UPLOAD_SERVICE_HTTP_HOST_PORT:-5000}:${UPLOAD_SERVICE_HTTP_PORT:-5000}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:${HTTP_PORT:-5000}/health >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-5000}/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -184,6 +164,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    env_file:
+      - SubscriptionService/.env
     environment:
       NODE_ENV: ${SUBSCRIPTION_SERVICE_NODE_ENV:-production}
       HTTP_HOST: 0.0.0.0
@@ -193,17 +175,11 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${SUBSCRIPTION_SERVICE_DB:-pocketlol_subscriptions}?schema=public
       REDIS_URL: ${SUBSCRIPTION_SERVICE_REDIS_URL:-redis://redis:6379/2}
       SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
-      RAZORPAY_KEY_ID: ${SUBSCRIPTION_SERVICE_RAZORPAY_KEY_ID:-rzp_test_key}
-      RAZORPAY_KEY_SECRET: ${SUBSCRIPTION_SERVICE_RAZORPAY_KEY_SECRET:-rzp_test_secret}
     ports:
       - "${SUBSCRIPTION_SERVICE_HTTP_HOST_PORT:-5100}:${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}"
       - "${SUBSCRIPTION_SERVICE_GRPC_HOST_PORT:-50071}:${SUBSCRIPTION_SERVICE_GRPC_PORT:-50071}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:${HTTP_PORT:-5100}/health >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-5100}/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -230,11 +206,7 @@ services:
       - "${USER_SERVICE_HTTP_HOST_PORT:-4500}:${USER_SERVICE_HTTP_PORT:-4500}"
       - "${USER_SERVICE_GRPC_HOST_PORT:-50052}:${USER_SERVICE_GRPC_PORT:-50052}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:4500/health >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:4500/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -273,11 +245,7 @@ services:
       - "${AUTH_SERVICE_HTTP_HOST_PORT:-4000}:${AUTH_SERVICE_HTTP_PORT:-4000}"
       - "${AUTH_SERVICE_GRPC_HOST_PORT:-50051}:${AUTH_SERVICE_GRPC_PORT:-50051}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:4000/health >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:4000/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -302,8 +270,8 @@ services:
         condition: service_healthy
       streaming-service:
         condition: service_healthy
-      upload-service:
-        condition: service_healthy
+      #       upload-service:
+      #         condition: service_healthy
       subscription-service:
         condition: service_healthy
     environment:
@@ -336,11 +304,7 @@ services:
     ports:
       - "${GATEWAY_HTTP_HOST_PORT:-3000}:${GATEWAY_HTTP_PORT:-3000}"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:3000/health/live >/dev/null || exit 1",
-        ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:3000/health/live >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5

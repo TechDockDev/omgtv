@@ -9,8 +9,8 @@ COPY proto ./proto
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
-RUN npm run build
 RUN npx prisma generate
+RUN npm run build
 
 FROM node:20-alpine AS runtime
 WORKDIR /app

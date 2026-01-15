@@ -78,6 +78,9 @@ model CustomerProfile {
   id           String               @id @default(uuid())
   firebaseUid  String               @unique
   phoneNumber  String?
+  name         String?
+  email        String?
+  status       String               @default("active") // active, inactive, blocked
   createdAt    DateTime             @default(now())
   updatedAt    DateTime             @updatedAt
   devices      CustomerDeviceLink[]

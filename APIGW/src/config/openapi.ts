@@ -305,6 +305,45 @@ const authDocument: OpenAPIV3.Document = {
         security: [{ bearerAuth: [] }],
       },
     },
+    "/api/v1/auth/admin/general-settings": {
+      get: {
+        summary: "Get general settings",
+        description: "Retrieve global platform settings.",
+        tags: ["Auth Service"],
+        responses: {
+          "200": {
+            description: "General settings retrieved successfully.",
+            content: successContent({
+              $ref: "#/components/schemas/GeneralSetting",
+            }),
+          },
+        },
+      },
+      post: {
+        summary: "Create or Update general settings",
+        description: "Create or Update global platform settings.",
+        tags: ["Auth Service"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/UpdateGeneralSettingRequest",
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "General settings saved successfully.",
+            content: successContent({
+              $ref: "#/components/schemas/GeneralSetting",
+            }),
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -561,6 +600,39 @@ const authDocument: OpenAPIV3.Document = {
           },
         },
       },
+      GeneralSetting: {
+        type: "object",
+        properties: {
+          id: { type: "integer" },
+          supportEmail: { type: "string" },
+          helpCenterEmail: { type: "string" },
+          contactPhone: { type: "string" },
+          whatsappNumber: { type: "string" },
+          twitterHandle: { type: "string" },
+          facebookUrl: { type: "string" },
+          instagramHandle: { type: "string" },
+          companyName: { type: "string" },
+          businessAddress: { type: "string" },
+          updatedByAdminId: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      UpdateGeneralSettingRequest: {
+        type: "object",
+        properties: {
+          supportEmail: { type: "string" },
+          helpCenterEmail: { type: "string" },
+          contactPhone: { type: "string" },
+          whatsappNumber: { type: "string" },
+          twitterHandle: { type: "string" },
+          facebookUrl: { type: "string" },
+          instagramHandle: { type: "string" },
+          companyName: { type: "string" },
+          businessAddress: { type: "string" },
+          updatedByAdminId: { type: "string" },
+        },
+      },
     },
   },
 };
@@ -573,6 +645,172 @@ const userDocument: OpenAPIV3.Document = {
     description: "Administrative user and role management APIs.",
   },
   paths: {
+    "/api/v1/user/admin/app-users": {
+      get: {
+        summary: "List users",
+        description:
+          "Retrieve a paginated list of users with filtering and search capabilities.",
+        tags: ["User Service"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "page",
+            in: "query",
+            schema: { type: "integer", default: 1 },
+          },
+          {
+            name: "limit",
+            in: "query",
+            schema: { type: "integer", default: 20 },
+          },
+          {
+            name: "search",
+            in: "query",
+            schema: { type: "string" },
+          },
+          {
+            name: "status",
+            in: "query",
+            schema: {
+              type: "string",
+              enum: ["active", "inactive", "blocked", "all"],
+              default: "all",
+            },
+          },
+          {
+            name: "plan",
+            in: "query",
+            schema: {
+              type: "string",
+              enum: ["Free", "Basic", "Premium", "all"],
+              default: "all",
+            },
+          },
+          {
+            name: "userType",
+            in: "query",
+            schema: {
+              type: "string",
+              enum: ["registered", "guest", "all"],
+              default: "all",
+            },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Paginated list of users.",
+            content: successContent({
+              $ref: "#/components/schemas/ListUsersResponse",
+            }),
+          },
+        },
+      },
+    },
+    "/api/v1/user/admin/app-users/{userId}": {
+      get: {
+        summary: "Get user details",
+        description: "Retrieve detailed information for a specific user.",
+        tags: ["User Service"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "userId",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "The unique identifier of the user.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "User details retrieved successfully.",
+            content: successContent({
+              $ref: "#/components/schemas/UserListItem",
+            }),
+          },
+          "404": {
+            description: "User not found.",
+            content: errorContent(),
+          },
+        },
+      },
+
+      delete: {
+        summary: "Delete a user",
+        description: "Permanently removes the user and their associated data.",
+        tags: ["User Service"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "userId",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "User deleted successfully.",
+            content: successContent({
+              type: "object",
+              properties: {
+                deleted: { type: "boolean" },
+              },
+            }),
+          },
+          "404": {
+            description: "User not found.",
+            content: errorContent(),
+          },
+        },
+      },
+    },
+    "/api/v1/user/admin/app-users/{userId}/block": {
+      patch: {
+        summary: "Block or Unblock a user",
+        description: "Updates the blocked status of a user.",
+        tags: ["User Service"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "userId",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["status"],
+                properties: {
+                  status: { type: "string", enum: ["active", "blocked"] },
+                  reason: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "User block status updated.",
+            content: successContent({
+              type: "object",
+              properties: {
+                status: { type: "string" },
+              },
+            }),
+          },
+          "404": {
+            description: "User not found.",
+            content: errorContent(),
+          },
+        },
+      },
+    },
     "/api/v1/user/admin/users/{userId}/context": {
       get: {
         summary: "Fetch user RBAC context",
@@ -790,6 +1028,40 @@ const userDocument: OpenAPIV3.Document = {
             type: "array",
             items: { $ref: "#/components/schemas/Role" },
           },
+        },
+      },
+      UserListItem: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "name", "status", "userType"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          name: { type: "string" },
+          email: { type: "string", nullable: true },
+          phone: { type: "string", nullable: true },
+          status: { type: "string" },
+          plan: { type: "string" },
+          userType: { type: "string" },
+          signupDate: { type: "string", format: "date-time" },
+          lastActive: { type: "string", format: "date-time" },
+          avatar: { type: "string" },
+          deviceId: { type: "string", nullable: true },
+          watchTime: { type: "integer" },
+          contentViewed: { type: "integer" },
+        },
+      },
+      ListUsersResponse: {
+        type: "object",
+        additionalProperties: false,
+        required: ["items", "total", "page", "totalPages"],
+        properties: {
+          items: {
+            type: "array",
+            items: { $ref: "#/components/schemas/UserListItem" },
+          },
+          total: { type: "integer" },
+          page: { type: "integer" },
+          totalPages: { type: "integer" },
         },
       },
       ResponseEnvelope: {
@@ -3556,7 +3828,7 @@ const subscriptionDocument: OpenAPIV3.Document = {
       get: {
         summary: "List all subscription plans",
         description:
-          "Returns the full catalog of subscription plans, including inactive entries.",
+          "Returns all subscription plans that are not deleted.",
         tags: ["Subscription Service - Admin"],
         responses: {
           "200": {
@@ -3624,7 +3896,7 @@ const subscriptionDocument: OpenAPIV3.Document = {
         },
       },
       delete: {
-        summary: "Deactivate a subscription plan",
+        summary: "Soft delete a subscription plan",
         description:
           "Marks a subscription plan as inactive instead of deleting it permanently.",
         tags: ["Subscription Service - Admin"],
@@ -3647,25 +3919,73 @@ const subscriptionDocument: OpenAPIV3.Document = {
         },
       },
     },
-    "/admin/free-plan": {
-      put: {
-        summary: "Configure free usage limits",
-        description:
-          "Sets global free tier limits for reels, episodes, and series access.",
+
+
+
+    "/admin/custom-trials": {
+      get: {
+        summary: "List all trial plans",
+        description: "Returns all configured trial plans.",
+        tags: ["Subscription Service - Admin"],
+        responses: {
+          "200": {
+            description: "List of trial plans.",
+            content: successContent({
+              type: "array",
+              items: { $ref: "#/components/schemas/TrialPlan" },
+            }),
+          },
+        },
+      },
+      post: {
+        summary: "Create a trial plan",
+        description: "Creates a new trial configuration linked to a subscription plan.",
         tags: ["Subscription Service - Admin"],
         requestBody: {
           required: true,
           content: {
             "application/json": {
-              schema: { $ref: "#/components/schemas/FreePlanConfigRequest" },
+              schema: { $ref: "#/components/schemas/CreateTrialPlanRequest" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Trial plan created successfully.",
+            content: successContent({
+              $ref: "#/components/schemas/TrialPlan",
+            }),
+          },
+        },
+      },
+    },
+    "/admin/custom-trials/{id}": {
+      put: {
+        summary: "Update a trial plan",
+        description: "Updates an existing trial configuration.",
+        tags: ["Subscription Service - Admin"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Trial plan identifier.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/UpdateTrialPlanRequest" },
             },
           },
         },
         responses: {
           "200": {
-            description: "Free plan configuration saved.",
+            description: "Updated trial plan returned.",
             content: successContent({
-              $ref: "#/components/schemas/FreePlanConfig",
+              $ref: "#/components/schemas/TrialPlan",
             }),
           },
         },
@@ -3714,18 +4034,40 @@ const subscriptionDocument: OpenAPIV3.Document = {
         },
       },
     },
-    "/plans": {
-      get: {
-        summary: "List active plans",
-        description:
-          "Returns only active subscription plans available for purchase.",
-        tags: ["Subscription Service"],
+
+    "/admin/plans/{id}/status": {
+      patch: {
+        summary: "Activate or deactivate a plan",
+        description: "Updates the active status of a subscription plan.",
+        tags: ["Subscription Service - Admin"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Subscription plan identifier.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["isActive"],
+                properties: {
+                  isActive: { type: "boolean" },
+                },
+              },
+            },
+          },
+        },
         responses: {
           "200": {
-            description: "Active plans available to customers.",
+            description: "Plan status updated.",
             content: successContent({
-              type: "array",
-              items: { $ref: "#/components/schemas/SubscriptionPlan" },
+              $ref: "#/components/schemas/SubscriptionPlan",
             }),
           },
         },
@@ -3891,6 +4233,16 @@ const subscriptionDocument: OpenAPIV3.Document = {
           isActive: { type: "boolean" },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },
+          features: { type: "array", items: { type: "string" } },
+          isPopular: { type: "boolean", default: false },
+          subscriberCount: { type: "integer", default: 0 },
+          icon: { type: "string", nullable: true },
+          savings: { type: "integer", default: 0 },
+          duration: { type: "string" },
+          durationLabel: { type: "string" },
+          durationMonths: { type: "integer" },
+          price: { type: "integer" },
+          pricePerMonth: { type: "integer" },
         },
       },
       CreatePlanRequest: {
@@ -3925,6 +4277,11 @@ const subscriptionDocument: OpenAPIV3.Document = {
           isUnlimitedReels: { type: "boolean", default: false },
           isUnlimitedEpisodes: { type: "boolean", default: false },
           isUnlimitedSeries: { type: "boolean", default: false },
+          features: { type: "array", items: { type: "string" } },
+          isPopular: { type: "boolean", default: false },
+          subscriberCount: { type: "integer", default: 0 },
+          icon: { type: "string", nullable: true },
+          savings: { type: "integer", default: 0 },
           isActive: { type: "boolean", default: true },
         },
       },
@@ -3960,6 +4317,11 @@ const subscriptionDocument: OpenAPIV3.Document = {
           isUnlimitedEpisodes: { type: "boolean" },
           isUnlimitedSeries: { type: "boolean" },
           isActive: { type: "boolean" },
+          features: { type: "array", items: { type: "string" } },
+          isPopular: { type: "boolean" },
+          subscriberCount: { type: "integer" },
+          icon: { type: "string", nullable: true },
+          savings: { type: "integer" },
         },
       },
       FreePlanConfigRequest: {
@@ -4176,6 +4538,57 @@ const subscriptionDocument: OpenAPIV3.Document = {
             description: "Payload returned when the request succeeds.",
             additionalProperties: true,
           },
+        },
+      },
+      TrialPlan: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "id",
+          "trialPricePaise",
+          "durationDays",
+          "isAutoDebit",
+          "isActive",
+          "targetPlanId",
+          "createdAt",
+          "updatedAt",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          trialPricePaise: { type: "integer", minimum: 0 },
+          durationDays: { type: "integer", minimum: 1 },
+          reminderDays: { type: "integer", minimum: 0 },
+          isAutoDebit: { type: "boolean" },
+          isActive: { type: "boolean" },
+          targetPlanId: { type: "string", format: "uuid" },
+          targetPlan: { $ref: "#/components/schemas/SubscriptionPlan" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      CreateTrialPlanRequest: {
+        type: "object",
+        additionalProperties: false,
+        required: ["targetPlanId", "trialPricePaise", "durationDays"],
+        properties: {
+          targetPlanId: { type: "string", format: "uuid" },
+          trialPricePaise: { type: "integer", minimum: 0 },
+          durationDays: { type: "integer", minimum: 1 },
+          reminderDays: { type: "integer", minimum: 0, default: 0 },
+          isAutoDebit: { type: "boolean", default: true },
+          isActive: { type: "boolean", default: true },
+        },
+      },
+      UpdateTrialPlanRequest: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          targetPlanId: { type: "string", format: "uuid" },
+          trialPricePaise: { type: "integer", minimum: 0 },
+          durationDays: { type: "integer", minimum: 1 },
+          reminderDays: { type: "integer", minimum: 0 },
+          isAutoDebit: { type: "boolean" },
+          isActive: { type: "boolean" },
         },
       },
     },
