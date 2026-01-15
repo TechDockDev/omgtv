@@ -21,8 +21,16 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().min(1, "RAZORPAY_KEY_ID is required"),
   RAZORPAY_KEY_SECRET: z.string().min(1, "RAZORPAY_KEY_SECRET is required"),
   OTEL_SERVICE_NAME: z.string().default("subscription-service"),
-  OTEL_TRACES_ENDPOINT: z.string().url().optional(),
-  OTEL_METRICS_ENDPOINT: z.string().url().optional(),
+  OTEL_TRACES_ENDPOINT: z
+    .string()
+    .optional()
+    .transform((v) => (v === "" ? undefined : v))
+    .pipe(z.string().url().optional()),
+  OTEL_METRICS_ENDPOINT: z
+    .string()
+    .optional()
+    .transform((v) => (v === "" ? undefined : v))
+    .pipe(z.string().url().optional()),
   OTEL_METRICS_EXPORT_INTERVAL_MS: z.coerce.number().int().positive().default(60000),
 });
 

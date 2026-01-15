@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
+import { getRazorpay } from "../../lib/razorpay";
 
 const planBodySchema = z.object({
   name: z.string().min(1),
@@ -16,6 +17,12 @@ const planBodySchema = z.object({
   isUnlimitedEpisodes: z.boolean().default(false),
   isUnlimitedSeries: z.boolean().default(false),
   isActive: z.boolean().default(true),
+  // New UI fields
+  features: z.array(z.string()).default([]),
+  isPopular: z.boolean().default(false),
+  subscriberCount: z.number().int().nonnegative().default(0),
+  icon: z.string().optional(),
+  savings: z.number().int().nonnegative().default(0),
 });
 
 const planUpdateSchema = planBodySchema.partial();
@@ -42,15 +49,57 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const body = planBodySchema.parse(request.body);
+
+      const razorpay = getRazorpay();
+
+      // Calculate period and interval
+      // Simple logic: treat as monthly if multiple of 30, else daily
+      let period: "daily" | "weekly" | "monthly" | "yearly" = "daily";
+      let interval = body.durationDays;
+
+      if (body.durationDays % 365 === 0) {
+        period = "yearly";
+        interval = body.durationDays / 365;
+      } else if (body.durationDays % 30 === 0) {
+        period = "monthly";
+        interval = body.durationDays / 30;
+      }
+
+      let razorpayPlanId: string | undefined;
+
+      try {
+        const rzpPlan = await razorpay.plans.create({
+          period,
+          interval,
+          item: {
+            name: body.name,
+            amount: body.pricePaise, // amount in smallest currency unit
+            currency: body.currency,
+            description: body.description || "Subscription Plan",
+          },
+        });
+        razorpayPlanId = rzpPlan.id;
+      } catch (error) {
+        request.log.error(error, "Failed to create Razorpay plan");
+        // Fail if Razorpay creation fails to maintain consistency
+        return reply.status(502).send({ message: "Failed to create plan on Razorpay", error });
+      }
+
       const plan = await prisma.subscriptionPlan.create({
-        data: body,
+        data: {
+          ...body,
+          razorpayPlanId
+        },
       });
       return reply.code(201).send(plan);
     }
   );
 
   app.get("/plans", async () => {
-    return prisma.subscriptionPlan.findMany({ orderBy: { createdAt: "desc" } });
+    return prisma.subscriptionPlan.findMany({
+      where: { deletedAt: null },
+      orderBy: { createdAt: "desc" },
+    });
   });
 
   app.put<{ Params: { id: string }; Body: PlanUpdateBody }>(
@@ -61,10 +110,79 @@ export default async function adminRoutes(app: FastifyInstance) {
         body: planUpdateSchema,
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const body = planUpdateSchema.parse(request.body);
       const { id } = request.params;
-      return prisma.subscriptionPlan.update({ where: { id }, data: body });
+
+      const existingPlan = await prisma.subscriptionPlan.findUnique({
+        where: { id },
+      });
+
+      if (!existingPlan) {
+        return reply.status(404).send({ message: "Plan not found" });
+      }
+
+      let razorpayPlanId = existingPlan.razorpayPlanId;
+
+      // Check if critical fields for Razorpay are changing
+      const isPriceChanging =
+        body.pricePaise !== undefined && body.pricePaise !== existingPlan.pricePaise;
+
+      if (isPriceChanging) {
+        const newPrice = body.pricePaise!;
+
+        if (newPrice === 0) {
+          // If price becomes 0, remove Razorpay association
+          razorpayPlanId = null;
+        } else {
+          // If price is > 0, create a new Razorpay plan
+          // Need to use new duration if provided, else existing
+          const durationDays = body.durationDays ?? existingPlan.durationDays;
+          const name = body.name ?? existingPlan.name;
+          const description = body.description ?? existingPlan.description;
+          const currency = body.currency ?? existingPlan.currency;
+
+          // Recalculate period/interval
+          let period: "daily" | "weekly" | "monthly" | "yearly" = "daily";
+          let interval = durationDays;
+
+          if (durationDays % 365 === 0) {
+            period = "yearly";
+            interval = durationDays / 365;
+          } else if (durationDays % 30 === 0) {
+            period = "monthly";
+            interval = durationDays / 30;
+          }
+
+          const razorpay = getRazorpay();
+          try {
+            const rzpPlan = await razorpay.plans.create({
+              period,
+              interval,
+              item: {
+                name,
+                amount: newPrice,
+                currency,
+                description: description || "Subscription Plan",
+              },
+            });
+            razorpayPlanId = rzpPlan.id;
+          } catch (error) {
+            request.log.error(error, "Failed to create new Razorpay plan during update");
+            return reply
+              .status(502)
+              .send({ message: "Failed to create plan on Razorpay", error });
+          }
+        }
+      }
+
+      return prisma.subscriptionPlan.update({
+        where: { id },
+        data: {
+          ...body,
+          razorpayPlanId,
+        },
+      });
     }
   );
 
@@ -75,25 +193,136 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
     async (request) => {
       const { id } = request.params as { id: string };
-      return prisma.subscriptionPlan.update({
+      const data = await prisma.subscriptionPlan.update({
         where: { id },
-        data: { isActive: false },
+        data: { deletedAt: new Date() },
+      });
+
+      return {
+        success: true,
+        statusCode: 0,
+        userMessage: "Plan deleted successfully",
+        developerMessage: "Plan soft-deleted successfully",
+        data,
+      };
+    }
+  );
+
+  const planStatusSchema = z.object({
+    isActive: z.boolean(),
+  });
+
+  app.patch<{ Params: { id: string }; Body: z.infer<typeof planStatusSchema> }>(
+    "/plans/:id/status",
+    {
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: planStatusSchema,
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { isActive } = planStatusSchema.parse(request.body);
+
+      const plan = await prisma.subscriptionPlan.findUnique({ where: { id } });
+      if (!plan) {
+        return reply.status(404).send({ message: "Plan not found" });
+      }
+
+      const updatedPlan = await prisma.subscriptionPlan.update({
+        where: { id },
+        data: { isActive },
+      });
+
+      return updatedPlan;
+    }
+  );
+
+
+
+  const trialPlanBodySchema = z.object({
+    targetPlanId: z.string().uuid(),
+    trialPricePaise: z.number().int().nonnegative(),
+    durationDays: z.number().int().positive(),
+    reminderDays: z.number().int().nonnegative(),
+    isAutoDebit: z.boolean().default(true),
+    isActive: z.boolean().default(true),
+  });
+  const trialPlanUpdateSchema = trialPlanBodySchema.partial();
+
+  app.post<{ Body: z.infer<typeof trialPlanBodySchema> }>(
+    "/custom-trials",
+    {
+      schema: { body: trialPlanBodySchema },
+    },
+    async (request, reply) => {
+      const body = trialPlanBodySchema.parse(request.body);
+      const targetPlan = await prisma.subscriptionPlan.findUnique({
+        where: { id: body.targetPlanId },
+      });
+      if (!targetPlan) {
+        return reply.status(404).send({ message: "Target plan not found" });
+      }
+      const trialPlan = await prisma.trialPlan.create({ data: body });
+      return reply.code(201).send({
+        success: true,
+        statusCode: 0,
+        userMessage: "Trial plan created successfully",
+        developerMessage: "Trial plan created successfully",
+        data: trialPlan,
       });
     }
   );
 
-  app.put<{ Body: FreePlanBody }>(
-    "/free-plan",
+  app.get("/custom-trials", async () => {
+    const data = await prisma.trialPlan.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { targetPlan: true },
+    });
+    return {
+      success: true,
+      statusCode: 0,
+      userMessage: "Trial plans retrieved successfully",
+      developerMessage: "Trial plans retrieved successfully",
+      data,
+    };
+  });
+
+  app.put<{ Params: { id: string }; Body: z.infer<typeof trialPlanUpdateSchema> }>(
+    "/custom-trials/:id",
     {
-      schema: { body: freePlanSchema },
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: trialPlanUpdateSchema,
+      },
     },
-    async (request) => {
-      const { adminId, ...limits } = freePlanSchema.parse(request.body);
-      return prisma.freePlanConfig.upsert({
-        where: { id: 1 },
-        update: { ...limits, updatedByAdminId: adminId },
-        create: { id: 1, ...limits, updatedByAdminId: adminId },
+    async (request, reply) => {
+      const { id } = request.params;
+      const body = trialPlanUpdateSchema.parse(request.body);
+
+      const existing = await prisma.trialPlan.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.status(404).send({ message: "Trial plan not found" });
+      }
+
+      if (body.targetPlanId) {
+        const targetPlan = await prisma.subscriptionPlan.findUnique({
+          where: { id: body.targetPlanId }
+        });
+        if (!targetPlan) return reply.status(404).send({ message: "Target plan not found" });
+      }
+
+      const updated = await prisma.trialPlan.update({
+        where: { id },
+        data: body,
       });
+      return {
+        success: true,
+        statusCode: 0,
+        userMessage: "Trial plan updated successfully",
+        developerMessage: "Trial plan updated successfully",
+        data: updated,
+      };
     }
   );
 
@@ -118,4 +347,6 @@ export default async function adminRoutes(app: FastifyInstance) {
       });
     }
   );
+
+
 }

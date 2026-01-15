@@ -12,7 +12,25 @@ export default async function customerRoutes(app: FastifyInstance) {
   const prisma = getPrisma();
 
   app.get("/plans", async () => {
-    return prisma.subscriptionPlan.findMany({ where: { isActive: true } });
+    const plans = await prisma.subscriptionPlan.findMany({
+      where: { isActive: true },
+      orderBy: { pricePaise: 'asc' }
+    });
+
+    return plans.map(plan => {
+      const durationMonths = Math.round(plan.durationDays / 30);
+      const price = Math.floor(plan.pricePaise / 100);
+      const pricePerMonth = durationMonths > 0 ? Math.floor(price / durationMonths) : price;
+
+      return {
+        ...plan,
+        duration: `${durationMonths}_months`,
+        durationLabel: `${durationMonths} Months`,
+        durationMonths,
+        price,
+        pricePerMonth,
+      };
+    });
   });
 
   app.get("/me/subscription", {
