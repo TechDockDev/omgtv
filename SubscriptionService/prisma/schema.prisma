@@ -118,6 +118,7 @@ model Transaction {
   razorpayOrderId    String?
   razorpayPaymentId  String?
   razorpaySignature  String?
+  subscriptionId     String?
   failureReason      String?
   metadata           Json?
   createdAt          DateTime           @default(now())
@@ -128,5 +129,6 @@ model Transaction {
 
   @@index([userId, status])
   @@index([razorpayOrderId])
+  @@index([subscriptionId])
   @@index([razorpayPaymentId])
 }

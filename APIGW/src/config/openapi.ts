@@ -4153,6 +4153,41 @@ const subscriptionDocument: OpenAPIV3.Document = {
         },
       },
     },
+    "/purchase/verify": {
+      post: {
+        summary: "Verify payment manually",
+        description:
+          "Synchronously verify a Razorpay payment signature and activate the subscription. Use this if the client wants immediate confirmation.",
+        tags: ["Subscription Service"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/VerifyPurchaseRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Payment verified and subscription activated.",
+            content: successContent({
+              type: "object",
+              properties: {
+                status: { type: "string", enum: ["active"] },
+              },
+            }),
+          },
+          "400": {
+            description: "Invalid signature or bad request.",
+            content: errorContent(),
+          },
+          "404": {
+            description: "Transaction not found.",
+            content: errorContent(),
+          },
+        },
+      },
+    },
     "/internal/entitlements/check": {
       post: {
         summary: "Check content entitlement",
@@ -4464,15 +4499,26 @@ const subscriptionDocument: OpenAPIV3.Document = {
           deviceId: { type: "string", nullable: true },
         },
       },
+      VerifyPurchaseRequest: {
+        type: "object",
+        additionalProperties: false,
+        required: ["paymentId", "subscriptionId", "signature"],
+        properties: {
+          paymentId: { type: "string" },
+          subscriptionId: { type: "string" },
+          signature: { type: "string" },
+        },
+      },
       PurchaseIntentResponse: {
         type: "object",
         additionalProperties: false,
         required: ["transactionId", "amountPaise", "currency"],
         properties: {
           transactionId: { type: "string", format: "uuid" },
-          razorpayOrderId: { type: "string", nullable: true },
+          subscriptionId: { type: "string", nullable: true },
           amountPaise: { type: "integer", format: "int32" },
           currency: { type: "string" },
+          razorpayKeyId: { type: "string", nullable: true },
         },
       },
       EntitlementCheckRequest: {
