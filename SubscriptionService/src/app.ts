@@ -47,6 +47,9 @@ export async function buildApp() {
   await app.register(adminRoutes, { prefix: `${externalBase}/admin` });
   await app.register(customerRoutes, { prefix: externalBase });
 
+  // Register webhooks
+  await app.register(import("./routes/webhooks"), { prefix: `${externalBase}/webhooks` });
+
   app.get("/health", async () => ({ status: "ok" }));
 
   return app;

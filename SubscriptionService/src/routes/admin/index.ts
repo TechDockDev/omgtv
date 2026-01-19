@@ -91,15 +91,28 @@ export default async function adminRoutes(app: FastifyInstance) {
           razorpayPlanId
         },
       });
-      return reply.code(201).send(plan);
+      return reply.code(201).send({
+        success: true,
+        statusCode: 201,
+        userMessage: "Plan created successfully",
+        developerMessage: "Subscription plan created",
+        data: plan,
+      });
     }
   );
 
   app.get("/plans", async () => {
-    return prisma.subscriptionPlan.findMany({
+    const data = await prisma.subscriptionPlan.findMany({
       where: { deletedAt: null },
       orderBy: { createdAt: "desc" },
     });
+    return {
+      success: true,
+      statusCode: 200,
+      userMessage: "Plans retrieved successfully",
+      developerMessage: "Admin plans retrieved",
+      data,
+    };
   });
 
   app.put<{ Params: { id: string }; Body: PlanUpdateBody }>(
@@ -176,13 +189,21 @@ export default async function adminRoutes(app: FastifyInstance) {
         }
       }
 
-      return prisma.subscriptionPlan.update({
+      const updatedPlan = await prisma.subscriptionPlan.update({
         where: { id },
         data: {
           ...body,
           razorpayPlanId,
         },
       });
+
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "Plan updated successfully",
+        developerMessage: "Subscription plan updated",
+        data: updatedPlan,
+      };
     }
   );
 
@@ -234,7 +255,13 @@ export default async function adminRoutes(app: FastifyInstance) {
         data: { isActive },
       });
 
-      return updatedPlan;
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "Plan status updated successfully",
+        developerMessage: "Plan activity status changed",
+        data: updatedPlan,
+      };
     }
   );
 
@@ -326,12 +353,44 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
-  app.get("/transactions", async () => {
-    return prisma.transaction.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    });
+  const paginationSchema = z.object({
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10),
   });
+
+  app.get(
+    "/transactions",
+    {
+      schema: { querystring: paginationSchema },
+    },
+    async (request) => {
+      const { page, limit } = request.query as z.infer<typeof paginationSchema>;
+      const skip = (page - 1) * limit;
+
+      const [total, data] = await Promise.all([
+        prisma.transaction.count(),
+        prisma.transaction.findMany({
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit,
+        }),
+      ]);
+
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "Transactions retrieved successfully",
+        developerMessage: "Transactions retrieved with pagination",
+        data,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    }
+  );
 
   app.get(
     "/users/:userId/subscription",
@@ -340,11 +399,18 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
     async (request) => {
       const { userId } = request.params as { userId: string };
-      return prisma.userSubscription.findFirst({
+      const data = await prisma.userSubscription.findFirst({
         where: { userId },
         orderBy: { createdAt: "desc" },
         include: { plan: true, transaction: true },
       });
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "User subscription retrieved successfully",
+        developerMessage: "Admin user subscription details",
+        data,
+      };
     }
   );
 

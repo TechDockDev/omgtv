@@ -83,6 +83,7 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       rateLimitPolicy: "authenticated",
       internalBasePath: SUBSCRIPTION_BASE_PATH,
       adminPrefixes: ["/admin"],
+      publicPrefixes: ["/webhooks"],
     },
     {
       name: "streaming",
