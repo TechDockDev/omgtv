@@ -65,8 +65,8 @@ model TrialPlan {
   isAutoDebit     Boolean          @default(true)
   isActive        Boolean          @default(true)
   
-  targetPlanId    String
-  targetPlan      SubscriptionPlan @relation(fields: [targetPlanId], references: [id])
+  targetPlanId    String?
+  targetPlan      SubscriptionPlan? @relation(fields: [targetPlanId], references: [id])
   
   subscriptions   UserSubscription[]
 

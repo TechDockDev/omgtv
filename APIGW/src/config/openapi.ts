@@ -4073,6 +4073,32 @@ const subscriptionDocument: OpenAPIV3.Document = {
         },
       },
     },
+    "/plans": {
+      get: {
+        summary: "List all subscription plans",
+        description:
+          "Returns all active subscription plans. If userId is provided, trial eligibility is checked and trial details are included.",
+        tags: ["Subscription Service"],
+        parameters: [
+          {
+            name: "userId",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Optional user identifier to check trial eligibility.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Active plans with optional trial details.",
+            content: successContent({
+              type: "array",
+              items: { $ref: "#/components/schemas/SubscriptionPlan" },
+            }),
+          },
+        },
+      },
+    },
     "/me/subscription": {
       get: {
         summary: "Get current user's subscription",
@@ -4125,11 +4151,37 @@ const subscriptionDocument: OpenAPIV3.Document = {
         },
       },
     },
+    "/trial-plans": {
+      get: {
+        summary: "List active trial plans",
+        description:
+          "Returns a list of active trial plans available for purchase. If userId is provided, 'isEligible' will indicate if the user can purchase the trial.",
+        tags: ["Subscription Service"],
+        parameters: [
+          {
+            name: "userId",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Optional user identifier to check trial eligibility.",
+          }
+        ],
+        responses: {
+          "200": {
+            description: "Active trial plans.",
+            content: successContent({
+              type: "array",
+              items: { $ref: "#/components/schemas/TrialPlan" },
+            }),
+          },
+        },
+      },
+    },
     "/purchase/intent": {
       post: {
         summary: "Create a purchase intent",
         description:
-          "Creates a transaction and Razorpay order for a chosen plan so the client can complete payment.",
+          "Creates a transaction and Razorpay order for a chosen plan (Subscription or Trial) so the client can complete payment.",
         tags: ["Subscription Service"],
         requestBody: {
           required: true,
@@ -4278,6 +4330,8 @@ const subscriptionDocument: OpenAPIV3.Document = {
           durationMonths: { type: "integer" },
           price: { type: "integer" },
           pricePerMonth: { type: "integer" },
+          trialPlan: { $ref: "#/components/schemas/TrialPlan", nullable: true },
+          isTrialEligible: { type: "boolean", nullable: true },
         },
       },
       CreatePlanRequest: {
@@ -4495,8 +4549,13 @@ const subscriptionDocument: OpenAPIV3.Document = {
         required: ["userId", "planId"],
         properties: {
           userId: { type: "string" },
-          planId: { type: "string", format: "uuid" },
+          planId: {
+            type: "string",
+            format: "uuid",
+            description: "Subscription plan or Trial plan identifier."
+          },
           deviceId: { type: "string", nullable: true },
+          isTrial: { type: "boolean", nullable: true, description: "If true, attempts to activate the trial associated with the planId." },
         },
       },
       VerifyPurchaseRequest: {
@@ -4608,6 +4667,7 @@ const subscriptionDocument: OpenAPIV3.Document = {
           isActive: { type: "boolean" },
           targetPlanId: { type: "string", format: "uuid" },
           targetPlan: { $ref: "#/components/schemas/SubscriptionPlan" },
+          isEligible: { type: "boolean", nullable: true, description: "Indicates if the user is eligible for this trial (only if userId provided)" },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },
         },
