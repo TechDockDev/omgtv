@@ -4,4 +4,4 @@ metadata:
   name: apigw-cert
 spec:
   domains:
-    - omgtv.in
+    - api.omgtv.in
