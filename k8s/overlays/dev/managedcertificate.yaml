@@ -1,0 +1,7 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: dev-apigw-cert
+spec:
+  domains:
+    - dev.api.omgtv.in

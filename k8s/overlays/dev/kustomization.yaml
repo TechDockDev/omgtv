@@ -5,9 +5,11 @@ namespace: dev
 
 patchesStrategicMerge:
   - patch-configmaps.yaml
+  - patch-ingress-host.yaml
 
 resources:
   - ../../base
+  - managedcertificate.yaml
 
 images:
   - name: apigw
