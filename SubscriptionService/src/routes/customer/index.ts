@@ -3,15 +3,33 @@ import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
 
 const purchaseIntentSchema = z.object({
-  userId: z.string(),
   planId: z.string().uuid(),
   deviceId: z.string().optional(),
+  isTrial: z.boolean().optional(),
 });
 
 export default async function customerRoutes(app: FastifyInstance) {
   const prisma = getPrisma();
 
-  app.get("/plans", async () => {
+  app.get("/plans", {
+    schema: { querystring: z.object({ userId: z.string().optional() }) },
+  }, async (request) => {
+    const { userId } = request.query as { userId?: string };
+
+    // Check if user has already used a trial
+    let hasUsedTrial = false;
+    if (userId) {
+      const trialSub = await prisma.userSubscription.findFirst({
+        where: { userId, trialPlanId: { not: null } }
+      });
+      hasUsedTrial = !!trialSub;
+    }
+
+    // Fetch global trial plan (not tied to any specific plan)
+    const globalTrialPlan = await prisma.trialPlan.findFirst({
+      where: { targetPlanId: null, isActive: true }
+    });
+
     const plans = await prisma.subscriptionPlan.findMany({
       where: { isActive: true },
       orderBy: { pricePaise: 'asc' }
@@ -37,19 +55,85 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Plans retrieved successfully",
       developerMessage: "Public plans retrieved",
+      trialPlan: globalTrialPlan ? {
+        id: globalTrialPlan.id,
+        trialPricePaise: globalTrialPlan.trialPricePaise,
+        durationDays: globalTrialPlan.durationDays,
+        isAutoDebit: globalTrialPlan.isAutoDebit,
+        isEligible: !hasUsedTrial
+      } : null,
       data: formattedPlans,
     };
   });
+
+  app.get("/trial-plans", {
+    schema: { querystring: z.object({ userId: z.string().optional() }) },
+  }, async (request) => {
+    const { userId } = request.query as { userId?: string };
+
+    // Check if user has already used a trial
+    let hasUsedTrial = false;
+    if (userId) {
+      const trialSub = await prisma.userSubscription.findFirst({
+        where: { userId, trialPlanId: { not: null } }
+      });
+      hasUsedTrial = !!trialSub;
+    }
+
+    const trialPlans = await prisma.trialPlan.findMany({
+      where: { isActive: true },
+      include: { targetPlan: true },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const formattedTrialPlans = trialPlans.map(tp => ({
+      id: tp.id,
+      trialPricePaise: tp.trialPricePaise,
+      durationDays: tp.durationDays,
+      reminderDays: tp.reminderDays,
+      isAutoDebit: tp.isAutoDebit,
+      isEligible: !hasUsedTrial, // Eligible if they haven't used a trial yet
+      targetPlan: tp.targetPlan ? {
+        id: tp.targetPlan.id,
+        name: tp.targetPlan.name,
+        description: tp.targetPlan.description,
+        pricePaise: tp.targetPlan.pricePaise,
+        currency: tp.targetPlan.currency,
+        features: tp.targetPlan.features,
+        icon: tp.targetPlan.icon
+      } : null
+    }));
+
+    return {
+      success: true,
+      statusCode: 200,
+      userMessage: "Trial plans retrieved successfully",
+      developerMessage: "Active trial plans retrieved",
+      data: formattedTrialPlans,
+    };
+  });
+
 
   app.get("/me/subscription", {
     schema: { querystring: z.object({ userId: z.string() }) },
   }, async (request) => {
     const { userId } = request.query as { userId: string };
-    const data = await prisma.userSubscription.findFirst({
+    const subscription = await prisma.userSubscription.findFirst({
       where: { userId },
       orderBy: { startsAt: "desc" },
-      include: { plan: true },
+      include: {
+        plan: true,
+        trialPlan: true
+      },
     });
+
+    // If user has a trial, return trial details instead of main plan
+    const data = subscription ? {
+      ...subscription,
+      // During trial period, show trial plan information
+      displayPlan: subscription.trialPlan || subscription.plan
+    } : null;
+
     return {
       success: true,
       statusCode: 200,
@@ -91,8 +175,71 @@ export default async function customerRoutes(app: FastifyInstance) {
   app.post("/purchase/intent", {
     schema: { body: purchaseIntentSchema },
   }, async (request, reply) => {
-    const { userId, planId, deviceId } = request.body as z.infer<typeof purchaseIntentSchema>;
-    const plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
+    const { planId, deviceId, isTrial } = request.body as z.infer<typeof purchaseIntentSchema>;
+    const userId = request.headers['x-user-id'] as string;
+
+    if (!userId) {
+      return reply.code(401).send({
+        success: false,
+        statusCode: 401,
+        code: "UNAUTHORIZED",
+        userMessage: "User not authenticated",
+        developerMessage: "Missing x-user-id header"
+      });
+    }
+
+    let plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
+    let trialPlan: any = null;
+
+    if (plan && isTrial) {
+      // User explicitly requested a trial for this plan
+      trialPlan = await prisma.trialPlan.findFirst({
+        where: { targetPlanId: plan.id, isActive: true }
+      });
+
+      if (!trialPlan) {
+        return reply.badRequest("No active trial available for this plan");
+      }
+    } else if (!plan) {
+      // Fallback: Check if the ID provided is actually a TrialPlan ID (legacy / direct trial ID support)
+      // This supports the previous implementation where frontend might send trialPlanId directly
+      trialPlan = await prisma.trialPlan.findUnique({
+        where: { id: planId },
+        include: { targetPlan: true }
+      });
+
+      if (trialPlan) {
+        plan = trialPlan.targetPlan;
+      }
+    }
+
+    if (trialPlan) {
+      if (!trialPlan.isActive) return reply.notFound("Trial plan is inactive");
+
+      // One trial per user check
+      const existingTrial = await prisma.userSubscription.findFirst({
+        where: {
+          userId,
+          trialPlanId: { not: null }
+        }
+      });
+
+      if (existingTrial) {
+        return reply.code(403).send({
+          success: false,
+          statusCode: 403,
+          code: "TRIAL_ALREADY_USED",
+          userMessage: "You have already used a trial plan.",
+          developerMessage: "User has already consumed a trial."
+        });
+      }
+
+      // Ensure we are working with the target plan for Razorpay
+      if (!plan && trialPlan.targetPlan) {
+        plan = trialPlan.targetPlan;
+      }
+    }
+
     if (!plan || !plan.isActive) {
       return reply.notFound("Plan not found or inactive");
     }
@@ -105,27 +252,53 @@ export default async function customerRoutes(app: FastifyInstance) {
     const razorpay = getRazorpay();
 
     try {
-      const subscription = await razorpay.subscriptions.create({
+      const subscriptionOptions: any = {
         plan_id: plan.razorpayPlanId,
         customer_notify: 1,
-        total_count: 120, // Default to 10 years (120 months) for auto-renew, adjust as per business logic
+        total_count: 120, // Default to 10 years (120 months) for auto-renew
         quantity: 1,
         notes: {
           userId,
-          planId,
-          internalPlanId: plan.id
+          planId: trialPlan ? trialPlan.id : plan.id,
+          internalPlanId: plan.id, // The actual subscription plan ID
+          isTrial: !!trialPlan
         }
-      });
+      };
+
+      if (trialPlan) {
+        // Start the paid subscription after the trial duration
+        // Current time + trial days * 24h * 60m * 60s
+        const startAt = Math.floor(Date.now() / 1000) + (trialPlan.durationDays * 24 * 60 * 60);
+        subscriptionOptions.start_at = startAt;
+
+        // Provide immediate access via trial
+        // If there is a trial price, we add it as an upfront charge (addon)
+        if (trialPlan.trialPricePaise > 0) {
+          subscriptionOptions.addons = [{
+            item: {
+              name: "Trial Period Charge",
+              amount: trialPlan.trialPricePaise,
+              currency: plan.currency
+            }
+          }];
+        }
+      }
+
+      const subscription = await razorpay.subscriptions.create(subscriptionOptions);
 
       const transaction = await prisma.transaction.create({
         data: {
           userId,
-          planId,
-          amountPaise: plan.pricePaise,
+          planId: plan.id, // Link to the target plan (SubscriptionPlan)
+          amountPaise: trialPlan ? trialPlan.trialPricePaise : plan.pricePaise,
           currency: plan.currency,
           subscriptionId: subscription.id,
           razorpayOrderId: null, // Explicitly null for subscriptions
-          metadata: deviceId ? { deviceId, subscriptionId: subscription.id } : { subscriptionId: subscription.id },
+          metadata: {
+            deviceId,
+            subscriptionId: subscription.id,
+            trialPlanId: trialPlan?.id
+          },
         },
       });
 
@@ -238,22 +411,23 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
     }
 
+    // Extract trialPlanId from metadata if available
+    const metadata = transaction.metadata as Record<string, any> | null;
+    const trialPlanId = metadata?.trialPlanId;
+
     await prisma.userSubscription.create({
       data: {
         userId: transaction.userId,
         planId: transaction.planId,
+        trialPlanId: trialPlanId, // Link the trial plan if this was a trial purchase
         status: "ACTIVE",
-        razorpayOrderId: subscriptionId, // This in UserSubscription table might still need to be subscriptionId. 
-        // Checking schema for UserSubscription... it has razorpayOrderId. 
-        // If the user meant "Don't use orderId field in db" generally, I should probably check UserSubscription too.
-        // But for now, I'll stick to Transaction adjustments or use subscriptionId if available.
-        // However, UserSubscription model ALSO has razorpayOrderId. 
-        // I will just put subscriptionId there as it was before, unless instructed otherwise.
+        razorpayOrderId: subscriptionId,
         transactionId: transaction.id,
         startsAt,
         endsAt
       }
     });
+
 
     return reply.send({
       success: true,
