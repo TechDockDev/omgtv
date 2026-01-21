@@ -56,6 +56,13 @@ spec:
           ports:
             - containerPort: 3000
               name: http
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
           envFrom:
             - configMapRef:
                 name: apigw-config
@@ -142,11 +149,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 50m
-              memory: 256Mi
+              cpu: 25m
+              memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
         - name: auth-service
           image: auth-service:latest
           imagePullPolicy: Always
@@ -157,11 +164,11 @@ spec:
               name: grpc
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 150m
+              memory: 384Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 400m
+              memory: 768Mi
           envFrom:
             - configMapRef:
                 name: auth-service-config
@@ -250,11 +257,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 50m
-              memory: 256Mi
+              cpu: 25m
+              memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
         - name: user-service
           image: user-service:latest
           imagePullPolicy: Always
@@ -265,11 +272,11 @@ spec:
               name: grpc
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 150m
+              memory: 384Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 400m
+              memory: 768Mi
           envFrom:
             - configMapRef:
                 name: user-service-config
@@ -366,11 +373,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 50m
-              memory: 256Mi
+              cpu: 25m
+              memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
         - name: content-service
           image: content-service:latest
           imagePullPolicy: Always
@@ -466,11 +473,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 50m
-              memory: 256Mi
+              cpu: 25m
+              memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
         - name: engagement-service
           image: engagement-service:latest
           imagePullPolicy: Always
@@ -715,11 +722,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 50m
-              memory: 256Mi
+              cpu: 25m
+              memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
         - name: upload-service
           image: upload-service:latest
           imagePullPolicy: Always
@@ -820,11 +827,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 50m
-              memory: 256Mi
+              cpu: 25m
+              memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
         - name: subscription-service
           image: subscription-service:latest
           imagePullPolicy: Always
