@@ -3,6 +3,8 @@ kind: Ingress
 metadata:
   name: apigw
   annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.allow-http: "false"
     networking.gke.io/managed-certificates: apigw-cert
 spec:
   rules:
