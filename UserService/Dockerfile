@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 FROM node:20-alpine AS build
 WORKDIR /app
 RUN apk add --no-cache openssl libstdc++
