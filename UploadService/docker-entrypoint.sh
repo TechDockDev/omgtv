@@ -1,5 +1,5 @@
 #!/bin/sh
-set -euo pipefail
+set -e
 
 if [ -z "${DATABASE_URL:-}" ]; then
 	echo "DATABASE_URL must be set" >&2

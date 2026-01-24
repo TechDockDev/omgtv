@@ -16,6 +16,6 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
-RUN chmod +x docker-entrypoint.sh
+RUN chmod +x docker-entrypoint.sh && sed -i 's/\r$//' docker-entrypoint.sh
 EXPOSE 4900
 CMD ["./docker-entrypoint.sh"]

@@ -12,6 +12,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev
+RUN apk add --no-cache curl
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/.env.example ./
 EXPOSE 3000

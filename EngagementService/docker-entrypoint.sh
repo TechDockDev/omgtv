@@ -1,5 +1,5 @@
 #!/bin/sh
-set -euo pipefail
+set -e
 
 # DATABASE_URL is optional for EngagementService (Redis-first approach)
 if [ -n "${DATABASE_URL:-}" ]; then

@@ -1,4 +1,4 @@
 #!/bin/sh
-set -euo pipefail
+set -e
 
 exec node dist/server.js

@@ -19,6 +19,6 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
-RUN chmod +x docker-entrypoint.sh
+RUN chmod +x docker-entrypoint.sh && sed -i 's/\r$//' docker-entrypoint.sh
 EXPOSE 5000
 CMD ["./docker-entrypoint.sh"]
