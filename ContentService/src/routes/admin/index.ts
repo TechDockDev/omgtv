@@ -6,6 +6,7 @@ import adminEpisodeRoutes from "./episodes";
 import adminTagRoutes from "./tags";
 import adminReelRoutes from "./reels";
 import adminCarouselRoutes from "./carousel";
+import adminMediaRoutes from "./media";
 
 export default async function adminRoutes(fastify: FastifyInstance) {
   fastify.addHook("preHandler", async (request, reply) => {
@@ -18,9 +19,9 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       ? rolesHeader
       : typeof rolesHeader === "string"
         ? rolesHeader
-            .split(",")
-            .map((role) => role.trim())
-            .filter(Boolean)
+          .split(",")
+          .map((role) => role.trim())
+          .filter(Boolean)
         : [];
 
     const userTypeHeader =
@@ -70,4 +71,5 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   await fastify.register(adminCarouselRoutes, {
     prefix: "/catalog/carousel",
   });
+  await fastify.register(adminMediaRoutes, { prefix: "/media" });
 }

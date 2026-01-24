@@ -77,6 +77,16 @@ export const listResponseSchema = z.object({
   ids: z.array(z.string().uuid()),
 });
 
+export const listItemWithStatsSchema = z.object({
+  id: z.string().uuid(),
+  likes: z.number().int().nonnegative(),
+  views: z.number().int().nonnegative(),
+});
+
+export const listWithStatsResponseSchema = z.object({
+  items: z.array(listItemWithStatsSchema),
+});
+
 export const statsBatchRequestSchema = z.object({
   ids: z.array(z.string().uuid()).min(1).max(200),
 });
@@ -100,6 +110,8 @@ export type SaveResponse = z.infer<typeof saveResponseSchema>;
 export type LikeResponse = z.infer<typeof likeResponseSchema>;
 export type ViewResponse = z.infer<typeof viewResponseSchema>;
 export type ListResponse = z.infer<typeof listResponseSchema>;
+export type ListItemWithStats = z.infer<typeof listItemWithStatsSchema>;
+export type ListWithStatsResponse = z.infer<typeof listWithStatsResponseSchema>;
 export type StatsBatchRequest = z.infer<typeof statsBatchRequestSchema>;
 export type StatsBatchResponse = z.infer<typeof statsBatchResponseSchema>;
 

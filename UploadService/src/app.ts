@@ -17,6 +17,7 @@ import uploadSessionsPlugin from "./plugins/upload-sessions";
 import quotaPlugin from "./plugins/quota";
 import storagePlugin from "./plugins/storage";
 import uploadManagerPlugin from "./plugins/upload-manager";
+import mediaStatusSubscriber from "./subscribers/media-status";
 import internalRoutes from "./routes/internal";
 import adminRoutes from "./routes/admin";
 import validationRoutes from "./routes/validation";
@@ -38,12 +39,12 @@ export async function buildApp() {
       transport:
         config.NODE_ENV === "development"
           ? {
-              target: "pino-pretty",
-              options: {
-                colorize: true,
-                translateTime: "SYS:standard",
-              },
-            }
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              translateTime: "SYS:standard",
+            },
+          }
           : undefined,
     },
     trustProxy: true,
@@ -64,11 +65,14 @@ export async function buildApp() {
   await app.register(storagePlugin);
   await app.register(pubsubPlugin);
   await app.register(uploadManagerPlugin);
+  await app.register(mediaStatusSubscriber);
   await app.register(serviceAuthPlugin);
   await app.register(internalRoutes, { prefix: `/internal` });
 
   const externalBase = "/api/v1/upload";
   await app.register(adminRoutes, { prefix: `${externalBase}/admin` });
+  // Register validation routes under both admin (for frontend) and internal (for service-to-service)
+  await app.register(validationRoutes, { prefix: `${externalBase}/admin` });
   await app.register(validationRoutes, { prefix: `${externalBase}/internal` });
 
   app.get("/health", async () => ({ status: "ok" }));

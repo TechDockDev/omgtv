@@ -17,7 +17,7 @@ export class RedisCatalogEventsPublisher implements CatalogEventsPublisher {
   constructor(
     private readonly redis: Redis,
     private readonly streamKey: string
-  ) {}
+  ) { }
 
   async publish(event: CatalogEvent): Promise<void> {
     await this.redis.xadd(

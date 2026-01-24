@@ -13,7 +13,13 @@ import { errorResponseSchema } from "../schemas/base.schema";
 import {
   getVideoMetadata,
   setAdminCarouselEntries,
+  processMediaAsset,
+  listMediaAssets,
 } from "../proxy/content.proxy";
+import {
+  mediaProcessSuccessResponseSchema,
+  mediaAssetListSuccessResponseSchema,
+} from "../schemas/content.schema";
 import { getCachedJson, setCachedJson } from "../utils/cache";
 import { getContentCacheTtlSeconds } from "../config";
 
@@ -121,6 +127,45 @@ export default fp(
           "Updated mobile carousel selections"
         );
         return reply.code(201).send(result);
+      },
+    });
+
+    fastify.route<{
+      Params: { id: string };
+    }>({
+      method: "POST",
+      url: "/admin/media/:id/process",
+      schema: {
+        params: contentParamsSchema,
+        response: {
+          200: mediaProcessSuccessResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          404: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const params = contentParamsSchema.parse(request.params);
+        const result = await processMediaAsset({
+          mediaId: params.id,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        request.log.info(
+          {
+            adminId: request.user?.id,
+            mediaId: params.id,
+          },
+          "Triggered manual transcoding"
+        );
+        return reply.code(200).send(result);
       },
     });
   },

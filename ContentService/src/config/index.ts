@@ -67,6 +67,13 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(60000),
+  // GCP Pub/Sub config for media.ready subscription
+  GCP_PROJECT_ID: z.string().optional(),
+  MEDIA_READY_SUBSCRIPTION: z.string().optional(),
+  MEDIA_UPLOADED_SUBSCRIPTION: z.string().optional(),
+  UPLOAD_BUCKET: z.string().optional(),
+  UPLOAD_SERVICE_URL: z.string().url().optional(),
+  TRANSCODING_REQUESTS_TOPIC: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;

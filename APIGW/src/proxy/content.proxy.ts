@@ -171,3 +171,112 @@ export async function getBatchContent({
 
   return parsed.data;
 }
+
+export async function processMediaAsset({
+  mediaId,
+  correlationId,
+  user,
+  span,
+}: {
+  mediaId: string;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}): Promise<any> {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: `/api/v1/content/admin/media/${mediaId}/process`,
+      method: "POST",
+      correlationId,
+      user,
+      headers: {
+        "x-admin-id": user.id,
+      },
+      body: {}, // Empty body as required by the endpoint
+      parentSpan: span,
+      spanName: "proxy:content:processMediaAsset",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 404) {
+        throw createHttpError(404, "Media asset not found", error.cause);
+      }
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Failed to trigger media process",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return payload;
+}
+
+export interface ListMediaAssetsArgs {
+  status?: "PENDING" | "PROCESSING" | "READY" | "FAILED";
+  type?: "EPISODE" | "REEL";
+  unassigned?: boolean;
+  limit?: number;
+  cursor?: string;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}
+
+export async function listMediaAssets({
+  status,
+  type,
+  unassigned,
+  limit,
+  cursor,
+  correlationId,
+  user,
+  span,
+}: ListMediaAssetsArgs): Promise<any> {
+  const baseUrl = resolveServiceUrl("content");
+
+  const query: Record<string, any> = {};
+  if (status) query.status = status;
+  if (type) query.type = type;
+  if (unassigned !== undefined) query.unassigned = unassigned;
+  if (limit) query.limit = limit;
+  if (cursor) query.cursor = cursor;
+
+  const queryString = new URLSearchParams(query).toString();
+  const path = `/api/v1/content/admin/media${queryString ? `?${queryString}` : ""}`;
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path,
+      method: "GET",
+      correlationId,
+      user,
+      headers: {
+        "x-admin-id": user.id,
+      },
+      parentSpan: span,
+      spanName: "proxy:content:listMediaAssets",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Failed to list media assets",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return payload;
+}

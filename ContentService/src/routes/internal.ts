@@ -9,6 +9,7 @@ import {
 import {
   engagementMetricsEventSchema,
   mediaProcessedEventSchema,
+  mediaUploadedEventSchema,
 } from "../schemas/events";
 import { ViewerCatalogService } from "../services/viewer-catalog-service";
 import {
@@ -134,6 +135,27 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         );
       }
     },
+  });
+
+  fastify.post("/events/media-uploaded", {
+    schema: {
+      body: mediaUploadedEventSchema,
+    },
+    handler: async (request, reply) => {
+      const body = mediaUploadedEventSchema.parse(request.body);
+      try {
+        await catalog.handleMediaUploaded({
+          uploadId: body.uploadId,
+          contentId: body.contentId ?? undefined,
+          contentType: body.contentClassification ?? undefined,
+          filename: body.fileName ?? undefined,
+        });
+        return reply.status(202).send({ accepted: true });
+      } catch (error) {
+        request.log.error({ err: error, uploadId: body.uploadId }, "Failed to handle media uploaded event");
+        throw fastify.httpErrors.internalServerError("Unable to process media uploaded event");
+      }
+    }
   });
 
   fastify.post("/events/media-processed", {

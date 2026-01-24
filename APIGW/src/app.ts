@@ -283,7 +283,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(authPlugin);
   await app.register(rateLimitPlugin);
   await app.register(authRoutes, { prefix: "/api/v1/auth" });
-  await app.register(uploadRoutes, { prefix: "/api/v1/uploads" });
+  await app.register(uploadRoutes, { prefix: "/api/v1/upload" });
   await app.register(contentRoutes, { prefix: "/api/v1/content" });
   // Engagement routes registered via plugin
   await app.register(engagementRoutes, { prefix: "/api/v1/engagement" });

@@ -276,6 +276,7 @@ export class UploadManager {
         uploadUrl: signedPolicy.url,
         expiresAt,
         formFields: signedPolicy.fields,
+        fileName: body.fileName,
       });
 
       await this.sessions.markUploading(session.id);
@@ -346,39 +347,39 @@ export class UploadManager {
 
     const validationMeta = rawMeta
       ? {
-          durationSeconds: rawMeta["durationSeconds"] as number | undefined,
-          width: rawMeta["width"] as number | undefined,
-          height: rawMeta["height"] as number | undefined,
-          checksum: rawMeta["checksum"] as string | undefined,
-          bitrateKbps: rawMeta["bitrateKbps"] as number | undefined,
-        }
+        durationSeconds: rawMeta["durationSeconds"] as number | undefined,
+        width: rawMeta["width"] as number | undefined,
+        height: rawMeta["height"] as number | undefined,
+        checksum: rawMeta["checksum"] as string | undefined,
+        bitrateKbps: rawMeta["bitrateKbps"] as number | undefined,
+      }
       : undefined;
 
     const processingMeta = rawMeta
       ? {
-          manifestUrl: rawMeta["manifestUrl"] as string | undefined,
-          defaultThumbnailUrl: rawMeta["defaultThumbnailUrl"] as
-            | string
-            | undefined,
-          previewGeneratedAt: rawMeta["previewGeneratedAt"] as
-            | string
-            | undefined,
-        }
+        manifestUrl: rawMeta["manifestUrl"] as string | undefined,
+        defaultThumbnailUrl: rawMeta["defaultThumbnailUrl"] as
+          | string
+          | undefined,
+        previewGeneratedAt: rawMeta["previewGeneratedAt"] as
+          | string
+          | undefined,
+      }
       : undefined;
 
     const sanitizedValidationMeta =
       validationMeta &&
-      Object.values(validationMeta).some(
-        (value) => typeof value !== "undefined"
-      )
+        Object.values(validationMeta).some(
+          (value) => typeof value !== "undefined"
+        )
         ? validationMeta
         : undefined;
 
     const sanitizedProcessingMeta =
       processingMeta &&
-      Object.values(processingMeta).some(
-        (value) => typeof value !== "undefined"
-      )
+        Object.values(processingMeta).some(
+          (value) => typeof value !== "undefined"
+        )
         ? processingMeta
         : undefined;
 
@@ -417,29 +418,35 @@ export class UploadManager {
       ),
       sizeBytes: session.sizeBytes,
       contentType: session.contentType,
+      fileName: session.fileName,
       validation: session.validationMeta,
       emittedAt: new Date().toISOString(),
     };
 
-    await this.pubsub.topic(topicName).publishMessage({
-      json: message,
-    });
+    // REPLACED PUBSUB WITH DIRECT HTTP CALL
+    const contentServiceUrl = this.config.CONTENT_SERVICE_URL;
+    const serviceToken = this.config.SERVICE_AUTH_TOKEN;
 
-    this.logger.info(
-      {
-        uploadId: session.id,
-        assetType: mapAssetTypeToString(session.assetType),
-        adminId: session.adminId,
-        audit: {
-          action: "upload.event.media_uploaded",
-          uploadId: session.id,
-          adminId: session.adminId,
-          contentId: session.contentId,
-          objectKey: session.objectKey,
+    try {
+      const response = await fetch(`${contentServiceUrl}/internal/events/media-uploaded`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceToken}`
         },
-      },
-      "Emitted media.uploaded event"
-    );
+        body: JSON.stringify(message)
+      });
+
+      if (!response.ok) {
+        this.logger.error({ status: response.status, statusText: response.statusText }, "Failed to notify ContentService of upload");
+        // We don't throw here to avoid failing the upload validation itself, 
+        // but in a real system we might want to retry or queue this.
+      } else {
+        this.logger.info({ uploadId: session.id }, "Successfully notified ContentService of upload via HTTP");
+      }
+    } catch (err) {
+      this.logger.error({ err }, "Error calling ContentService media-uploaded endpoint");
+    }
 
     void this.emitAudit({
       type: "upload.event.media_uploaded",
@@ -690,6 +697,29 @@ export class UploadManager {
     });
   }
 
+  private async publishMediaFailed(session: UploadSession, reason: string) {
+    if (!this.readyTopic) {
+      return;
+    }
+    const event = {
+      eventId: randomUUID(),
+      eventType: "media.failed",
+      occurredAt: new Date().toISOString(),
+      data: {
+        uploadId: session.id,
+        reason: reason,
+        error: { message: reason },
+      },
+    };
+
+    await this.pubsub.topic(this.readyTopic).publishMessage({ json: event });
+
+    this.logger.info(
+      { uploadId: session.id, reason },
+      "Emitted media.failed event"
+    );
+  }
+
   async handleValidation(
     uploadId: string,
     payload: ValidationCallbackBody,
@@ -792,8 +822,8 @@ export class UploadManager {
       : undefined;
     const existingMeta =
       session.validationMeta &&
-      typeof session.validationMeta === "object" &&
-      !Array.isArray(session.validationMeta)
+        typeof session.validationMeta === "object" &&
+        !Array.isArray(session.validationMeta)
         ? (session.validationMeta as Prisma.JsonObject)
         : undefined;
 
@@ -847,6 +877,7 @@ export class UploadManager {
       await this.publishMediaProcessed(updated);
       await this.publishMediaReadyForStream(updated);
     } else {
+      await this.publishMediaFailed(updated, payload.failureReason ?? "Unknown Error");
       this.logger.warn(
         {
           uploadId,
@@ -883,6 +914,49 @@ export class UploadManager {
     }
 
     return updated;
+  }
+
+  async retryProcessing(uploadId: string, adminId: string) {
+    const session = await this.sessions.getSession(uploadId);
+    if (!session) {
+      throw Object.assign(new Error("upload_not_found"), {
+        statusCode: 404,
+      });
+    }
+
+    // Allow retry if admin matches
+    if (session.adminId !== adminId) {
+      // In a real system, Super Admin check might go here
+      throw Object.assign(new Error("unauthorized"), {
+        statusCode: 403,
+      });
+    }
+
+    if (session.status === UploadStatus.READY || session.status === UploadStatus.PROCESSING) {
+      throw Object.assign(new Error("upload_already_processed"), {
+        statusCode: 400,
+        message: "Upload is already processed/processing",
+      });
+    }
+
+    this.logger.info(
+      { uploadId, adminId, status: session.status },
+      "Retrying processing for upload session"
+    );
+
+    // Update status to PROCESSING to indicate it is being processed again
+    await this.sessions.updateStatus(uploadId, UploadStatus.PROCESSING);
+
+    // Re-publish the upload event
+    // This will trigger the TranscodingWorker again
+    await this.publishMediaUploaded(session);
+    await this.publishPreviewRequest(session);
+
+    return {
+      success: true,
+      message: "Processing triggered",
+      uploadId,
+    };
   }
 
   async expireStale(now: Date) {

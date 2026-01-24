@@ -163,3 +163,43 @@ export const batchContentResponseSchema = z.object({
 });
 
 export type BatchContentResponse = z.infer<typeof batchContentResponseSchema>;
+export const mediaProcessResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  mediaId: z.string().uuid(),
+});
+
+export const mediaProcessSuccessResponseSchema = createSuccessResponseSchema(
+  mediaProcessResponseSchema
+);
+
+export type MediaProcessResponse = z.infer<typeof mediaProcessResponseSchema>;
+export type MediaProcessSuccessResponse = SuccessResponse<MediaProcessResponse>;
+
+export const mediaAssetSchema = z.object({
+  id: z.string().uuid(),
+  uploadId: z.string().uuid(),
+  type: z.enum(["EPISODE", "REEL"]),
+  status: z.enum(["PENDING", "PROCESSING", "READY", "FAILED"]),
+  filename: z.string().nullable(),
+  title: z.string().nullable(),
+  manifestUrl: z.string().url().nullable(),
+  defaultThumbnailUrl: z.string().url().nullable(),
+  episodeId: z.string().uuid().nullable(),
+  reelId: z.string().uuid().nullable(),
+  seriesId: z.string().uuid().nullable(),
+  variants: z.array(z.any()),
+  createdAt: z.string().datetime(),
+});
+
+export const mediaAssetListResponseSchema = z.object({
+  items: z.array(mediaAssetSchema),
+  nextCursor: z.string().uuid().nullable(),
+});
+
+export const mediaAssetListSuccessResponseSchema = createSuccessResponseSchema(
+  mediaAssetListResponseSchema
+);
+
+export type MediaAssetListResponse = z.infer<typeof mediaAssetListResponseSchema>;
+export type MediaAssetListSuccessResponse = SuccessResponse<MediaAssetListResponse>;

@@ -246,6 +246,7 @@ export class CatalogRepository {
     releaseDate?: Date | null;
     ownerId: string;
     categoryId?: string | null;
+    isAudioSeries?: boolean;
     adminId?: string;
   }) {
     return this.prisma.series.create({
@@ -261,6 +262,7 @@ export class CatalogRepository {
         releaseDate: data.releaseDate ?? null,
         ownerId: data.ownerId,
         categoryId: data.categoryId ?? null,
+        isAudioSeries: data.isAudioSeries ?? false,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       },
@@ -281,6 +283,7 @@ export class CatalogRepository {
       categoryId?: string | null;
       slug?: string;
       ownerId?: string;
+      isAudioSeries?: boolean;
       adminId?: string;
     }
   ) {
@@ -298,6 +301,7 @@ export class CatalogRepository {
         categoryId: data.categoryId,
         slug: data.slug,
         ownerId: data.ownerId,
+        isAudioSeries: data.isAudioSeries,
         updatedByAdminId: data.adminId,
       },
     });
@@ -534,6 +538,13 @@ export class CatalogRepository {
     });
   }
 
+  async updateReel(id: string, data: Partial<Prisma.ReelUpdateInput>) {
+    return this.prisma.reel.update({
+      where: { id },
+      data,
+    });
+  }
+
   async updateReelTags(id: string, tags: string[], adminId?: string) {
     return this.prisma.reel.update({
       where: { id },
@@ -635,6 +646,98 @@ export class CatalogRepository {
     });
   }
 
+  async findMediaAssetById(id: string) {
+    return this.prisma.mediaAsset.findUnique({
+      where: { id },
+      include: { variants: true },
+    });
+  }
+
+  async updateMediaAssetStatus(
+    id: string,
+    status: MediaAssetStatus,
+    adminId?: string
+  ) {
+    return this.prisma.mediaAsset.update({
+      where: { id },
+      data: {
+        status,
+        updatedByAdminId: adminId,
+      },
+      include: { variants: true },
+    });
+  }
+
+  async upsertMediaAssetByUploadId(data: {
+    uploadId: string;
+    type: MediaAssetType;
+    status: MediaAssetStatus;
+    manifestUrl?: string;
+    defaultThumbnailUrl?: string;
+    filename?: string;
+    episodeId?: string;
+    reelId?: string;
+    variants: Array<{
+      label: string;
+      width?: number;
+      height?: number;
+      bitrateKbps?: number;
+      codec?: string;
+      frameRate?: number;
+    }>;
+  }) {
+    // If we have an episode/reel ID, we try to create relationships.
+    // However, if the asset is just uploaded (no linking yet), those IDs might be undefined.
+
+    // We update uploadId query to include unique constraint if needed, but schema says uploadId is unique? 
+    // Yes. uploadId @unique.
+
+    return this.prisma.mediaAsset.upsert({
+      where: { uploadId: data.uploadId },
+      create: {
+        uploadId: data.uploadId,
+        type: data.type,
+        status: data.status,
+        manifestUrl: data.manifestUrl,
+        defaultThumbnailUrl: data.defaultThumbnailUrl,
+        filename: data.filename,
+        episodeId: data.episodeId,
+        reelId: data.reelId,
+        variants: {
+          create: data.variants.map((v) => ({
+            label: v.label,
+            width: v.width,
+            height: v.height,
+            bitrateKbps: v.bitrateKbps,
+            codec: v.codec,
+            frameRate: v.frameRate,
+          })),
+        },
+      },
+      update: {
+        status: data.status,
+        manifestUrl: data.manifestUrl,
+        defaultThumbnailUrl: data.defaultThumbnailUrl,
+        filename: data.filename,
+        // Don't overwrite IDs if not provided? Or do we?
+        // Usually we want to link if provided.
+        episodeId: data.episodeId,
+        reelId: data.reelId,
+        variants: {
+          deleteMany: {},
+          create: data.variants.map((v) => ({
+            label: v.label,
+            width: v.width,
+            height: v.height,
+            bitrateKbps: v.bitrateKbps,
+            codec: v.codec,
+            frameRate: v.frameRate,
+          })),
+        },
+      },
+    });
+  }
+
   async listModerationQueue(params: {
     status?: PublicationStatus | null;
     limit?: number;
@@ -681,6 +784,53 @@ export class CatalogRepository {
 
     return {
       items: rows,
+      nextCursor,
+    };
+  }
+
+  async listEpisodes(params: {
+    seriesId?: string | null;
+    limit?: number;
+    cursor?: string | null;
+  }): Promise<PaginatedResult<EpisodeWithRelations>> {
+    const limit = normalizeLimit(params.limit);
+    const where: Prisma.EpisodeWhereInput = {
+      deletedAt: null, // Only active episodes
+    };
+
+    if (params.seriesId) {
+      where.seriesId = params.seriesId;
+    }
+
+    const rows = await this.prisma.episode.findMany({
+      where,
+      include: {
+        mediaAsset: {
+          include: { variants: true },
+        },
+        series: {
+          include: { category: true },
+        },
+        season: true,
+      },
+      orderBy: [
+        { seasonId: "asc" }, // Nulls last usually by default but specific to DB
+        { publishedAt: "desc" },
+        { createdAt: "desc" },
+      ],
+      take: limit + 1,
+      cursor: params.cursor ? { id: params.cursor } : undefined,
+      skip: params.cursor ? 1 : 0,
+    });
+
+    let nextCursor: string | null = null;
+    if (rows.length > limit) {
+      const next = rows.pop();
+      nextCursor = next?.id ?? null;
+    }
+
+    return {
+      items: rows as EpisodeWithRelations[],
       nextCursor,
     };
   }
@@ -1296,6 +1446,7 @@ export class CatalogRepository {
         status: PublicationStatus.PUBLISHED,
         visibility: Visibility.PUBLIC,
         OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
+        isAudioSeries: false, // Exclude audio series from home feed
       },
       include: {
         category: true,
@@ -1316,5 +1467,139 @@ export class CatalogRepository {
       items: rows,
       nextCursor,
     };
+  }
+
+  async listAudioSeries(params: {
+    limit?: number;
+    cursor?: string | null;
+    now?: Date;
+  }): Promise<PaginatedResult<Series & { category: Category | null }>> {
+    const limit = normalizeLimit(params.limit);
+    const now = params.now ?? new Date();
+
+    const rows = await this.prisma.series.findMany({
+      where: {
+        deletedAt: null,
+        status: PublicationStatus.PUBLISHED,
+        visibility: Visibility.PUBLIC,
+        OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
+        isAudioSeries: true, // Only audio series
+      },
+      include: {
+        category: true,
+      },
+      orderBy: [{ releaseDate: "desc" }, { createdAt: "desc" }],
+      take: limit + 1,
+      cursor: params.cursor ? { id: params.cursor } : undefined,
+      skip: params.cursor ? 1 : 0,
+    });
+
+    let nextCursor: string | null = null;
+    if (rows.length > limit) {
+      const next = rows.pop();
+      nextCursor = next?.id ?? null;
+    }
+
+    return {
+      items: rows,
+      nextCursor,
+    };
+  }
+
+  async createReel(data: {
+    slug: string;
+    title: string;
+    description?: string | null;
+    status?: PublicationStatus;
+    visibility?: Visibility;
+    publishedAt?: Date | null;
+    tags?: string[];
+    ownerId: string;
+    categoryId?: string | null;
+    durationSeconds?: number;
+    adminId?: string;
+  }) {
+    return this.prisma.reel.create({
+      data: {
+        slug: data.slug,
+        title: data.title,
+        description: data.description ?? null,
+        status: data.status ?? PublicationStatus.DRAFT,
+        visibility: data.visibility ?? Visibility.PUBLIC,
+        publishedAt: data.publishedAt ?? null,
+        tags: data.tags ?? [],
+        ownerId: data.ownerId,
+        categoryId: data.categoryId ?? null,
+        durationSeconds: data.durationSeconds ?? 0,
+        createdByAdminId: data.adminId,
+        updatedByAdminId: data.adminId,
+      },
+    });
+  }
+
+  async findMediaAssetByUploadId(uploadId: string) {
+    return this.prisma.mediaAsset.findUnique({
+      where: { uploadId },
+      include: {
+        episode: true,
+        reel: true,
+      },
+    });
+  }
+
+  async updateMediaAsset(id: string, data: Prisma.MediaAssetUpdateInput) {
+    return this.prisma.mediaAsset.update({
+      where: { id },
+      data,
+    });
+  }
+
+
+
+  async updateEpisodeThumbnail(id: string, thumbnailUrl: string) {
+    return this.prisma.episode.update({
+      where: { id },
+      data: { defaultThumbnailUrl: thumbnailUrl },
+    });
+  }
+
+  async associateMediaAsset(episodeId: string, uploadId: string) {
+    // 1. Check if asset exists by uploadId
+    const asset = await this.prisma.mediaAsset.findUnique({
+      where: { uploadId },
+    });
+
+    if (asset) {
+      // Link existing asset
+      return this.prisma.mediaAsset.update({
+        where: { id: asset.id },
+        data: { episodeId },
+      });
+    } else {
+      // Create pending asset linked to episode
+      return this.prisma.mediaAsset.create({
+        data: {
+          uploadId,
+          sourceUploadId: uploadId,
+          episodeId,
+          type: MediaAssetType.EPISODE,
+          status: MediaAssetStatus.PENDING,
+        },
+      });
+    }
+  }
+
+  async dissociateMediaAsset(episodeId: string) {
+    // Unlink asset (return to library)
+    return this.prisma.mediaAsset.updateMany({
+      where: { episodeId },
+      data: { episodeId: null },
+    });
+  }
+
+  async deleteMediaAsset(id: string) {
+    return this.prisma.mediaAsset.delete({
+      where: { id }
+    });
   }
 }

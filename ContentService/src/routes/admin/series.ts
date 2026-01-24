@@ -19,6 +19,7 @@ const createSeriesSchema = z.object({
   releaseDate: z.coerce.date().optional(),
   ownerId: z.string().uuid().optional(),
   categoryId: z.string().uuid().optional(),
+  isAudioSeries: z.boolean().optional(),
 });
 
 const updateSeriesSchema = createSeriesSchema

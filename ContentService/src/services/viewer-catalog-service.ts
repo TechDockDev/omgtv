@@ -875,4 +875,102 @@ export class ViewerCatalogService {
       }
     );
   }
+
+  async getAudioSeries(params: {
+    viewerId?: string;
+    limit?: number;
+    cursor?: string | null;
+  }): Promise<ViewerFeedResponse & { fromCache: boolean }> {
+    return withSpan(
+      "ViewerCatalogService.getAudioSeries",
+      {
+        viewerId: params.viewerId ?? "anon",
+        limit: params.limit ?? "default",
+        cursor: params.cursor ?? "origin",
+      },
+      async (span) => {
+        const cacheKey = `audio_series:${params.viewerId ?? "anon"}:${params.limit ?? "default"}:${params.cursor ?? "origin"}`;
+
+        if (this.redis) {
+          const cached = await getCachedJson<ViewerFeedResponse>(
+            this.redis,
+            cacheKey
+          );
+          if (cached) {
+            span.setAttribute("cache.hit", true);
+            return { ...cached, fromCache: true };
+          }
+        }
+
+        const decodedCursor = decodeCursor(params.cursor);
+        const repoResult = await this.repo.listAudioSeries({
+          limit: params.limit,
+          cursor: decodedCursor,
+        });
+        span.setAttribute("result.count", repoResult.items.length);
+
+        const items = repoResult.items.map((series) => {
+          return {
+            id: series.id,
+            slug: series.slug,
+            title: series.title,
+            tags: series.tags,
+            synopsis: series.synopsis ?? null,
+            heroImageUrl: series.heroImageUrl ?? null,
+            defaultThumbnailUrl: series.heroImageUrl ?? series.bannerImageUrl ?? null,
+            durationSeconds: 0,
+            publishedAt: series.releaseDate?.toISOString() ?? series.createdAt.toISOString(),
+            availability: {
+              start: null,
+              end: null,
+            },
+            season: null,
+            series: {
+              id: series.id,
+              slug: series.slug,
+              title: series.title,
+              synopsis: series.synopsis ?? null,
+              heroImageUrl: series.heroImageUrl ?? null,
+              bannerImageUrl: series.bannerImageUrl ?? null,
+              category: series.category
+                ? {
+                  id: series.category.id,
+                  slug: series.category.slug,
+                  name: series.category.name,
+                }
+                : null,
+            },
+            playback: {
+              status: MediaAssetStatus.READY,
+              manifestUrl: null,
+              defaultThumbnailUrl: null,
+              variants: [],
+            },
+            localization: {
+              captions: [],
+              availableLanguages: [],
+            },
+            personalization: { reason: "recent" },
+            ratings: {
+              average: null,
+            },
+          } satisfies ViewerFeedItem;
+        });
+
+        const response: ViewerFeedResponse = {
+          items,
+          nextCursor: repoResult.nextCursor
+            ? encodeCursor(repoResult.nextCursor)
+            : null,
+        };
+
+        if (this.redis) {
+          await setCachedJson(this.redis, cacheKey, response, this.feedTtl);
+          span.setAttribute("cache.write", true);
+        }
+
+        return { ...response, fromCache: false };
+      }
+    );
+  }
 }
