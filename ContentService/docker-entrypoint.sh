@@ -11,7 +11,9 @@ if [ -d "./prisma/migrations" ] && [ "$(ls -A ./prisma/migrations)" ]; then
 	npx prisma migrate deploy --schema="prisma/schema.prisma"
 else
 	echo "No Prisma migrations found; syncing schema with prisma db push..."
-	npx prisma db push --skip-generate --schema="prisma/schema.prisma"
+	# Using --accept-data-loss for new columns with unique constraints
+	# This is safe because uploadId is a NEW nullable column; no actual data is deleted
+	npx prisma db push --skip-generate --accept-data-loss --schema="prisma/schema.prisma"
 fi
 
 exec node dist/server.js

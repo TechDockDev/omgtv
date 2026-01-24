@@ -68,6 +68,24 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     }
   );
 
+  fastify.post(
+    "/uploads/:uploadId/retry",
+    {
+      schema: {
+        params: uploadIdParamSchema,
+      },
+    },
+    async (request) => {
+      const adminContext = ensureAdmin(request);
+      const params = uploadIdParamSchema.parse(request.params);
+
+      return await fastify.uploadManager.retryProcessing(
+        params.uploadId,
+        adminContext.adminId
+      );
+    }
+  );
+
   fastify.get(
     "/uploads/:uploadId/status",
     {

@@ -42,3 +42,14 @@ export type MediaProcessedEvent = z.infer<typeof mediaProcessedEventSchema>;
 export type EngagementMetricsEvent = z.infer<
   typeof engagementMetricsEventSchema
 >;
+
+export const mediaUploadedEventSchema = z.object({
+  uploadId: z.string().uuid(),
+  contentId: z.string().uuid().optional().nullable(),
+  contentClassification: z.enum(["EPISODE", "REEL"]).optional().nullable(),
+  fileName: z.string().optional().nullable(),
+  storageUrl: z.string().optional(),
+  assetType: z.string().optional(),
+});
+
+export type MediaUploadedEvent = z.infer<typeof mediaUploadedEventSchema>;

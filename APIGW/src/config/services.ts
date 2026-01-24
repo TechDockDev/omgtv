@@ -32,9 +32,10 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       basePath: USER_BASE_PATH,
       target: resolveServiceUrl("user"),
       swaggerPath: "/v3/api-docs",
-      access: "admin",
-      rateLimitPolicy: "admin",
+      access: "authenticated",
+      rateLimitPolicy: "authenticated",
       internalBasePath: "/api/v1/user",
+      adminPrefixes: ["/admin"],
     },
     {
       name: "content",
@@ -46,7 +47,7 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       access: "authenticated",
       rateLimitPolicy: "authenticated",
       internalBasePath: "/api/v1/content",
-      publicPrefixes: ["/catalog"],
+      publicPrefixes: ["/catalog", "/mobile"],
       adminPrefixes: ["/admin"],
     },
     {

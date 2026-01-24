@@ -37,6 +37,7 @@ model UploadSession {
   assetType         UploadAssetType
   objectKey         String         @unique
   contentType       String
+  fileName          String?        // Original filename provided by client
   sizeBytes         Int
   uploadUrl         String?
   storageUrl        String?

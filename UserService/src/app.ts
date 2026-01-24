@@ -11,6 +11,7 @@ import { loadConfig } from "./config";
 import prismaPlugin from "./plugins/prisma";
 import authServicePlugin from "./plugins/auth-service";
 import adminUserRoutes from "./routes/admin-users";
+import customerRoutes from "./routes/customer";
 import { ensureSystemRoles } from "./services/bootstrap";
 
 export async function buildApp() {
@@ -21,12 +22,12 @@ export async function buildApp() {
       transport:
         config.NODE_ENV === "development"
           ? {
-              target: "pino-pretty",
-              options: {
-                colorize: true,
-                translateTime: "SYS:standard",
-              },
-            }
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              translateTime: "SYS:standard",
+            },
+          }
           : undefined,
     },
     trustProxy: true,
@@ -48,6 +49,9 @@ export async function buildApp() {
   const externalBase = "/api/v1/user";
   await fastify.register(adminUserRoutes, {
     prefix: `${externalBase}/admin`,
+  });
+  await fastify.register(customerRoutes, {
+    prefix: externalBase,
   });
 
   fastify.get("/health", async () => ({ status: "ok" }));

@@ -27,7 +27,9 @@ const createEpisodeSchema = z.object({
   defaultThumbnailUrl: z.string().url().optional(),
   captions: z.record(z.string(), z.unknown()).optional(),
   tags: z.array(z.string()).optional(),
+  uploadId: z.string().optional(),
 });
+
 
 const transitionSchema = z.object({
   status: z.nativeEnum(PublicationStatus),
@@ -47,6 +49,32 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
     throw reply.server.httpErrors.badRequest("Missing x-admin-id header");
   };
 
+  fastify.get("/", {
+    schema: {
+      querystring: z.object({
+        seriesId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().positive().max(100).default(50),
+        cursor: z.string().uuid().optional(),
+      }),
+    },
+    handler: async (request, reply) => {
+      const query = z.object({
+        seriesId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().positive().max(100).default(50),
+        cursor: z.string().uuid().optional(),
+      }).parse(request.query);
+
+      try {
+        requireAdminId(request, reply);
+        const result = await catalog.listEpisodes(query);
+        return reply.send(result);
+      } catch (error) {
+        request.log.error({ err: error, query }, "Failed to list episodes");
+        return reply.status(500).send({ message: "Unable to list episodes" });
+      }
+    },
+  });
+
   fastify.post("/", {
     schema: {
       body: createEpisodeSchema,
@@ -55,7 +83,10 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
       const body = createEpisodeSchema.parse(request.body);
       try {
         const adminId = requireAdminId(request, reply);
-        const result = await catalog.createEpisode(adminId, body);
+        const result = await catalog.createEpisode(adminId, {
+          ...body,
+          uploadId: body.uploadId
+        });
         return reply.status(201).send(result);
       } catch (error) {
         if (error instanceof CatalogServiceError) {
@@ -114,6 +145,69 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
           .send({ message: "Unable to update episode tags" });
       }
     },
+  });
+
+  fastify.get<{
+    Params: { id: string };
+  }>("/:id", {
+    schema: {
+      params: z.object({ id: z.string().uuid() }),
+    },
+    handler: async (request, reply) => {
+      const params = z.object({ id: z.string().uuid() }).parse(request.params);
+      try {
+        requireAdminId(request, reply);
+        const episode = await catalog.getEpisode(params.id);
+        if (!episode) {
+          return reply.status(404).send({ message: "Episode not found" });
+        }
+        return reply.send(episode);
+      } catch (error) {
+        request.log.error({ err: error, episodeId: params.id }, "Failed to get episode");
+        return reply.status(500).send({ message: "Unable to get episode" });
+      }
+    },
+  });
+
+  const updateEpisodeBodySchema = z.object({
+    title: z.string().min(1).optional(),
+    synopsis: z.string().max(5000).optional(),
+    slug: z.string().min(3).optional(),
+    durationSeconds: z.number().int().positive().optional(),
+    status: z.nativeEnum(PublicationStatus).optional(),
+    visibility: z.nativeEnum(Visibility).optional(),
+    publishedAt: z.coerce.date().optional(),
+    availabilityStart: z.coerce.date().optional(),
+    availabilityEnd: z.coerce.date().optional(),
+    heroImageUrl: z.string().url().optional(),
+    defaultThumbnailUrl: z.string().url().optional(),
+    captions: z.record(z.string(), z.unknown()).optional(),
+    seasonId: z.string().uuid().optional(),
+  });
+
+  fastify.patch<{
+    Params: { id: string };
+  }>("/:id", {
+    schema: {
+      params: z.object({ id: z.string().uuid() }),
+      body: updateEpisodeBodySchema,
+    },
+    handler: async (request, reply) => {
+      const params = z.object({ id: z.string().uuid() }).parse(request.params);
+      const body = updateEpisodeBodySchema.parse(request.body);
+      try {
+        const adminId = requireAdminId(request, reply);
+        const result = await catalog.updateEpisode(adminId, params.id, body);
+        return reply.status(200).send(result);
+      } catch (error) {
+        if (error instanceof CatalogServiceError) {
+          if (error.code === "NOT_FOUND") return reply.status(404).send({ message: error.message });
+          if (error.code === "CONFLICT") return reply.status(409).send({ message: error.message });
+        }
+        request.log.error({ err: error, episodeId: params.id }, "Failed to update episode");
+        return reply.status(500).send({ message: "Unable to update episode" });
+      }
+    }
   });
 
   fastify.post<{

@@ -23,6 +23,7 @@ enum Visibility {
 
 enum MediaAssetStatus {
   PENDING
+  UPLOADED  // File uploaded but processing not started
   PROCESSING
   READY
   FAILED
@@ -57,6 +58,7 @@ model Series {
   heroImageUrl     String?
   bannerImageUrl   String?
   tags             String[]          @default([])
+  isAudioSeries    Boolean           @default(false)
   status           PublicationStatus @default(DRAFT)
   visibility       Visibility        @default(PUBLIC)
   releaseDate      DateTime?
@@ -71,7 +73,9 @@ model Series {
   category Category? @relation(fields: [categoryId], references: [id])
   seasons  Season[]
   episodes Episode[]
+  reels    Reel[]
   carouselEntries CarouselEntry[]
+  mediaAssets MediaAsset[]
 
   @@index([categoryId])
   @@index([status, visibility])
@@ -125,6 +129,7 @@ model Episode {
   season Season? @relation(fields: [seasonId], references: [id])
 
   mediaAsset MediaAsset?
+  reels      Reel[]
   carouselEntries CarouselEntry[]
 
   @@index([seriesId, status])
@@ -145,23 +150,33 @@ model Reel {
   tags             String[]          @default([])
   ownerId          String?
   categoryId       String?
+  episodeId        String?
+  seriesId         String?
   createdByAdminId String?
   updatedByAdminId String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   deletedAt        DateTime?
 
-  category  Category?  @relation(fields: [categoryId], references: [id])
+  category   Category?  @relation(fields: [categoryId], references: [id])
+  episode    Episode?   @relation(fields: [episodeId], references: [id])
+  series     Series?    @relation(fields: [seriesId], references: [id])
   mediaAsset MediaAsset?
 
   @@index([categoryId])
+  @@index([episodeId])
+  @@index([seriesId])
   @@index([status, visibility])
 }
 
 model MediaAsset {
   id              String           @id @default(uuid())
   type            MediaAssetType
-  sourceUploadId  String?
+  uploadId        String?          @unique // Link to UploadService session
+  filename        String?          // Original filename
+  title           String?          // User-provided title
+  sizeBytes       BigInt?          // File size
+  sourceUploadId  String?          // Legacy field, use uploadId
   streamingAssetId String?
   manifestUrl     String?
   defaultThumbnailUrl String?
@@ -174,11 +189,41 @@ model MediaAsset {
 
   episodeId String? @unique
   reelId    String? @unique
+  seriesId  String? // Direct series link (for trailers, extras)
 
   episode Episode? @relation(fields: [episodeId], references: [id])
   reel    Reel?    @relation(fields: [reelId], references: [id])
+  series  Series?  @relation(fields: [seriesId], references: [id])
 
   variants MediaAssetVariant[]
+
+  @@index([status])
+  @@index([seriesId])
+}
+
+model ImageAsset {
+  id          String           @id @default(uuid())
+  uploadId    String           @unique
+  filename    String?
+  title       String?
+  sizeBytes   BigInt?
+  url         String           // GCS URL
+  status      MediaAssetStatus @default(PENDING)
+  
+  // Optional linking - can be assigned later
+  seriesId    String?
+  episodeId   String?
+  reelId      String?
+  
+  createdByAdminId String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([seriesId])
+  @@index([episodeId])
+  @@index([reelId])
 }
 
 model MediaAssetVariant {
