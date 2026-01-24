@@ -25,6 +25,7 @@ async function main() {
   try {
     await app.listen({ host: config.HTTP_HOST, port: config.HTTP_PORT });
     grpcServer = await startGrpcServer(app);
+
     app.log.info(
       { http: `${config.HTTP_HOST}:${config.HTTP_PORT}` },
       "ContentService ready"

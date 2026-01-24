@@ -102,7 +102,7 @@ export async function createUploadUrl(
     const response = await performServiceRequest<CreateUploadUrlResponse>({
       serviceName: "upload",
       baseUrl,
-      path: "/v1/admin/uploads/sign",
+      path: "/api/v1/upload/admin/uploads/sign",
       method: "POST",
       correlationId,
       user,
@@ -149,7 +149,7 @@ export async function getUploadStatus(
     const response = await performServiceRequest<UploadStatusResponse>({
       serviceName: "upload",
       baseUrl,
-      path: `/v1/admin/uploads/${uploadId}/status`,
+      path: `/api/v1/upload/admin/uploads/${uploadId}/status`,
       method: "GET",
       correlationId,
       user,
@@ -197,7 +197,7 @@ export async function getUploadQuota(
     const response = await performServiceRequest<UploadQuotaResponse>({
       serviceName: "upload",
       baseUrl,
-      path: "/v1/admin/uploads/quota",
+      path: "/api/v1/upload/admin/uploads/quota",
       method: "GET",
       correlationId,
       user,
@@ -227,4 +227,115 @@ export async function getUploadQuota(
   }
 
   return parsed.data;
+}
+
+export async function retryUploadProcessing(
+  uploadId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<{ success: boolean; message: string; uploadId: string }> {
+  const baseUrl = resolveServiceUrl("upload");
+  const adminContext = await verifyAdminUser(correlationId, user, span);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<{
+      success: boolean;
+      message: string;
+      uploadId: string;
+    }>({
+      serviceName: "upload",
+      baseUrl,
+      path: `/api/v1/upload/admin/uploads/${uploadId}/retry`,
+      method: "POST",
+      correlationId,
+      user,
+      timeoutMs: 5_000,
+      parentSpan: span,
+      spanName: "proxy:upload:retryProcessing",
+      headers: buildAdminHeaders(adminContext),
+      body: {},
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 404) {
+        throw createHttpError(404, "Upload not found", error.cause);
+      }
+      if (error.statusCode === 403) {
+        throw createHttpError(403, "Action not permitted", error.cause);
+      }
+      let errorMessage = "Failed to retry upload processing";
+      if (error.cause && typeof error.cause === "object" && "message" in error.cause) {
+        errorMessage = (error.cause as any).message;
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        errorMessage,
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return payload as { success: boolean; message: string; uploadId: string };
+}
+
+export interface ValidationCallbackBody {
+  status: "success" | "failed";
+  durationSeconds?: number;
+  width?: number;
+  height?: number;
+  checksum?: string;
+  failureReason?: string;
+}
+
+export async function validateUpload(
+  uploadId: string,
+  body: ValidationCallbackBody,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<unknown> {
+  const baseUrl = resolveServiceUrl("upload");
+  const adminContext = await verifyAdminUser(correlationId, user, span);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<unknown>({
+      serviceName: "upload",
+      baseUrl,
+      path: `/api/v1/upload/admin/uploads/${uploadId}/validation`,
+      method: "POST",
+      correlationId,
+      user,
+      body,
+      timeoutMs: 10_000,
+      parentSpan: span,
+      spanName: "proxy:upload:validateUpload",
+      headers: buildAdminHeaders(adminContext),
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 404) {
+        throw createHttpError(404, "Upload not found", error.cause);
+      }
+      if (error.statusCode === 403) {
+        throw createHttpError(403, "Validation not permitted", error.cause);
+      }
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to validate upload",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return payload;
 }

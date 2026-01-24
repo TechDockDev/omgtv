@@ -169,6 +169,48 @@ export default async function mobileAppRoutes(fastify: FastifyInstance) {
     },
   });
 
+  fastify.get("/audio-series", {
+    config: { metricsId: "/mobile/audio-series" },
+    preHandler: verifyRequest,
+    schema: {
+      querystring: mobileHomeQuerySchema,
+      response: {
+        200: mobileHomeEnvelopeSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const query = mobileHomeQuerySchema.parse(request.query);
+      const context = buildRequestContext(request);
+      try {
+        const result = await mobileApp.getAudioExperience(query, {
+          context,
+          logger: request.log,
+        });
+        reply.header(
+          "cache-control",
+          `public, max-age=${config.FEED_CACHE_TTL_SECONDS}`
+        );
+        reply.header("x-cache", result.fromCache ? "hit" : "miss");
+        return {
+          success: true,
+          statusCode: 200,
+          userMessage: "Audio series loaded successfully",
+          developerMessage: `Audio series data fetched with tag: ${query.tag ?? "audio-home"
+            }`,
+          data: result.data,
+        } as const;
+      } catch (error) {
+        if (error instanceof CatalogConsistencyError) {
+          request.log.error({ err: error }, "Mobile audio experience failed");
+          throw fastify.httpErrors.internalServerError(
+            `Catalog data quality issue: ${error.message}`
+          );
+        }
+        throw error;
+      }
+    },
+  });
+
   fastify.get("/series/:seriesId", {
     config: { metricsId: "/mobile/series/:seriesId" },
     preHandler: verifyRequest,

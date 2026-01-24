@@ -231,6 +231,58 @@ export class MobileAppService {
     };
   }
 
+  async getAudioExperience(
+    query: MobileHomeQuery,
+    options?: MobileRequestOptions
+  ): Promise<{ data: MobileHomeData; fromCache: boolean }> {
+    const parsed = mobileHomeQuerySchema.parse(query);
+
+    // Fetch Audio Series
+    const seriesFeed = await this.deps.viewerCatalog.getAudioSeries({
+      limit: parsed.limit ?? this.deps.config.homeFeedLimit,
+      cursor: parsed.cursor,
+    });
+
+    const filteredItems = this.filterByTag(seriesFeed.items, parsed.tag);
+    // Audio series don't usually have "continue watch" episodes in the same way, 
+    // or maybe they do? For now, let's keep it simple and just show the series list.
+    // If we want continue watch for audio, we'd need to fetch episodes. 
+    // Let's assume audio series behave like normal series for now.
+
+    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
+      filteredItems.map((item) => ({ id: item.id, contentType: "series" as const }));
+    const engagementStates = await this.loadEngagementStates(engagementItems, options);
+
+    const sections = this.buildSections(
+      filteredItems.map(item => ({
+        ...this.toSectionEntry(item, undefined),
+        engagement: engagementStates.get(item.id) ?? null
+      })),
+      [], // No continue watch for now
+      parsed.tag
+    );
+
+    const currentPage = parsed.page ?? 1;
+    const hasNextPage = Boolean(seriesFeed.nextCursor);
+
+    const data: MobileHomeData = {
+      // carousel: undefined, // Removed for audio experience
+      "continue watch": [],
+      sections,
+      pagination: {
+        currentPage,
+        totalPages: hasNextPage ? currentPage + 1 : currentPage,
+        hasNextPage,
+        nextCursor: seriesFeed.nextCursor ?? null,
+      },
+    };
+
+    return {
+      data: mobileHomeDataSchema.parse(data),
+      fromCache: seriesFeed.fromCache,
+    };
+  }
+
   async getSeriesDetail(
     params: MobileSeriesParams,
     options?: MobileRequestOptions

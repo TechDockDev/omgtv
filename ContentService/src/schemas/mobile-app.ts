@@ -98,7 +98,7 @@ const paginationSchema = z.object({
 });
 
 export const mobileHomeDataSchema = z.object({
-  carousel: z.array(carouselItemSchema),
+  carousel: z.array(carouselItemSchema).optional(),
   "continue watch": z.array(continueWatchItemSchema),
   sections: z.array(sectionSchema),
   pagination: paginationSchema,

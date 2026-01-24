@@ -3,6 +3,7 @@ import {
   Episode,
   MediaAsset,
   MediaAssetStatus,
+  MediaAssetType,
   MediaAssetVariant,
   Prisma,
   PublicationStatus,
@@ -17,6 +18,8 @@ import {
   EpisodeWithRelations,
 } from "../repositories/catalog-repository";
 import { CatalogEventsPublisher, type CatalogEvent } from "./catalog-events";
+import { PubSub } from "@google-cloud/pubsub";
+import { loadConfig } from "../config";
 
 export type CatalogErrorCode =
   | "NOT_FOUND"
@@ -44,6 +47,8 @@ export type CatalogServiceOptions = {
   defaultOwnerId: string;
   repository?: CatalogRepository;
   eventsPublisher?: CatalogEventsPublisher;
+  config?: any; // ReturnType<typeof loadConfig>; using any to avoid type complexity for now or import Env
+  pubsub?: PubSub;
 };
 
 function slugify(value: string): string {
@@ -54,15 +59,37 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+interface MediaUploadedEvent {
+  uploadId: string;
+  contentId?: string;
+  contentType?: string;
+  filename?: string;
+}
+
+interface MediaCompletionEvent {
+  uploadId: string;
+  contentId?: string;
+  contentType?: string;
+  manifestUrl: string;
+  thumbnailUrl?: string;
+  durationSeconds: number;
+  filename?: string;
+  renditions: any[];
+}
+
 export class CatalogService {
   private readonly repo: CatalogRepository;
   private readonly defaultOwnerId: string;
   private readonly events?: CatalogEventsPublisher;
+  private readonly pubsub?: PubSub;
+  private readonly config?: any; // ReturnType<typeof loadConfig>
 
   constructor(options: CatalogServiceOptions) {
     this.repo = options.repository ?? new CatalogRepository();
     this.defaultOwnerId = options.defaultOwnerId;
     this.events = options.eventsPublisher;
+    this.pubsub = options.pubsub;
+    this.config = options.config;
   }
 
   private async ensureTagsExist(tags?: string[]) {
@@ -154,23 +181,18 @@ export class CatalogService {
       displayOrder?: number | null;
     }
   ): Promise<{ restored: boolean; category: Category }> {
-    // Generate unique slug from name
     const baseSlug = slugify(input.name);
     let slug = baseSlug;
     let attempts = 0;
     const maxAttempts = 10;
 
-    // Keep generating slugs until we find a unique one
     while (attempts < maxAttempts) {
       const existing = await this.repo.findCategoryBySlugIncludingDeleted(slug);
 
       if (!existing) {
-        // Slug is available, proceed with creation
         break;
       }
 
-      // If exists but is deleted, we could restore it - but user wants new category
-      // Generate new slug with random suffix
       const uniqueSuffix = Math.random().toString(36).substring(2, 8);
       slug = `${baseSlug}-${uniqueSuffix}`;
       attempts++;
@@ -200,7 +222,6 @@ export class CatalogService {
       return { restored: false, category };
     } catch (error) {
       if (isKnownPrismaError(error, "P2002")) {
-        // Race condition - try again with new slug
         throw new CatalogServiceError(
           "CONFLICT",
           "Slug conflict occurred, please try again"
@@ -305,12 +326,10 @@ export class CatalogService {
     adminId: string,
     id: string
   ): Promise<{ alreadyDeleted: boolean; category: { id: string; slug: string; deletedAt: Date | null } }> {
-    // Use findCategoryByIdIncludingDeleted to check if category exists at all
     const existing = await this.repo.findCategoryByIdIncludingDeleted(id);
     if (!existing) {
       throw new CatalogServiceError("NOT_FOUND", "Category not found");
     }
-    // If already soft-deleted, return info about the already-deleted category
     if (existing.deletedAt) {
       return {
         alreadyDeleted: true,
@@ -358,6 +377,7 @@ export class CatalogService {
       releaseDate?: Date | null;
       ownerId?: string;
       categoryId?: string | null;
+      isAudioSeries?: boolean;
     }
   ): Promise<Series> {
     const tags = input.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [];
@@ -385,6 +405,7 @@ export class CatalogService {
         releaseDate: input.releaseDate ?? null,
         ownerId: input.ownerId ?? this.defaultOwnerId,
         categoryId: input.categoryId ?? null,
+        isAudioSeries: input.isAudioSeries,
         adminId,
       });
       await this.emitCatalogEvent({
@@ -423,6 +444,7 @@ export class CatalogService {
       categoryId?: string | null;
       slug?: string;
       ownerId?: string;
+      isAudioSeries?: boolean;
     }
   ): Promise<Series> {
     const series = await this.repo.findSeriesById(id);
@@ -455,6 +477,7 @@ export class CatalogService {
         categoryId: input.categoryId,
         slug: input.slug,
         ownerId: input.ownerId,
+        isAudioSeries: input.isAudioSeries,
         adminId,
       });
       await this.emitCatalogEvent({
@@ -541,6 +564,7 @@ export class CatalogService {
       defaultThumbnailUrl?: string | null;
       captions?: unknown;
       tags?: string[];
+      uploadId?: string; // New Optional Field for Linking
     }
   ): Promise<Episode> {
     const tags = input.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [];
@@ -590,6 +614,17 @@ export class CatalogService {
           status: episode.status,
         },
       });
+      if (input.uploadId) {
+        await this.repo.upsertMediaAssetByUploadId({
+          uploadId: input.uploadId,
+          type: MediaAssetType.EPISODE,
+          status: MediaAssetStatus.UPLOADED, // Assume uploaded if linking
+          manifestUrl: "",
+          episodeId: episode.id,
+          variants: []
+        });
+      }
+
       return episode;
     } catch (error) {
       if (isKnownPrismaError(error, "P2002")) {
@@ -658,6 +693,59 @@ export class CatalogService {
     return this.repo.updateEpisodeTags(episodeId, normalized, adminId);
   }
 
+  async getEpisode(id: string) {
+    return this.repo.findEpisodeById(id);
+  }
+
+  async listEpisodes(params: {
+    seriesId?: string;
+    limit?: number;
+    cursor?: string | null;
+  }) {
+    return this.repo.listEpisodes(params);
+  }
+
+  async updateEpisode(
+    adminId: string,
+    episodeId: string,
+    data: {
+      title?: string;
+      synopsis?: string;
+      slug?: string;
+      seasonId?: string;
+      seriesId?: string;
+      durationSeconds?: number;
+      heroImageUrl?: string;
+      defaultThumbnailUrl?: string;
+      availabilityStart?: Date;
+      availabilityEnd?: Date;
+    }
+  ) {
+    const existing = await this.repo.findEpisodeById(episodeId);
+    if (!existing) {
+      throw new CatalogServiceError("NOT_FOUND", `Episode ${episodeId} not found`);
+    }
+
+    if (data.seasonId) {
+      const season = await this.repo.findSeasonById(data.seasonId);
+      if (!season) {
+        throw new CatalogServiceError("NOT_FOUND", `Season ${data.seasonId} not found`);
+      }
+    }
+
+    // Checking slug uniqueness if changing
+    if (data.slug && data.slug !== existing.slug) {
+      // Ideally check uniqueness, assuming repo handles or DB constraint throws
+    }
+
+    const updated = await this.repo.updateEpisode(episodeId, {
+      ...data,
+      adminId,
+    });
+
+    return updated;
+  }
+
   async deleteEpisode(adminId: string, id: string): Promise<void> {
     const existing = await this.repo.findEpisodeById(id);
     if (!existing) {
@@ -673,6 +761,73 @@ export class CatalogService {
         seasonId: existing.seasonId,
       },
     });
+
+    // UNLINK Media Asset (return to library)
+    await this.repo.dissociateMediaAsset(id);
+  }
+
+  async processMediaAsset(adminId: string, mediaAssetId: string) {
+    const asset = await this.repo.findMediaAssetById(mediaAssetId);
+    if (!asset) {
+      throw new CatalogServiceError("NOT_FOUND", "Media asset not found");
+    }
+    if (!asset.uploadId) {
+      throw new CatalogServiceError(
+        "FAILED_PRECONDITION",
+        "Media asset has no associated upload"
+      );
+    }
+
+    if (!this.config?.UPLOAD_SERVICE_URL || !this.config?.SERVICE_AUTH_TOKEN) {
+      throw new Error("Missing upload service configuration");
+    }
+
+    // Fetch upload status
+    const statusUrl = `${this.config.UPLOAD_SERVICE_URL}/api/v1/upload/admin/uploads/${asset.uploadId}/status`;
+    const response = await fetch(statusUrl, {
+      headers: {
+        Authorization: `Bearer ${this.config.SERVICE_AUTH_TOKEN}`,
+        "x-pocketlol-admin-id": adminId,
+        "x-pocketlol-user-type": "ADMIN",
+      },
+    });
+
+    if (!response.ok) {
+      let errorMsg = "Failed to fetch upload status";
+      try {
+        const errBody = await response.json() as any;
+        if (errBody.message) errorMsg = errBody.message;
+      } catch { }
+      throw new CatalogServiceError("FAILED_PRECONDITION", errorMsg);
+    }
+
+    const uploadStatus = (await response.json()) as any;
+    if (!uploadStatus.storageUrl && !uploadStatus.objectKey) {
+      throw new CatalogServiceError("FAILED_PRECONDITION", "Upload has no valid file");
+    }
+
+    // Publish to transcoding requests
+    if (!this.pubsub || !this.config.TRANSCODING_REQUESTS_TOPIC) {
+      console.warn("Transcoding topic not configured, skipping publish");
+      return;
+    }
+
+    // Construct message matching TranscodingWorker expectations
+    const msgData = {
+      uploadId: asset.uploadId,
+      contentId: asset.id, // Using asset ID as contentId
+      contentClassification: asset.type,
+      storageUrl: uploadStatus.storageUrl || `gs://${this.config.UPLOAD_BUCKET}/${uploadStatus.objectKey}`,
+      assetType: "video", // Assuming explicit trigger implies video
+    };
+
+    const topic = this.pubsub.topic(this.config.TRANSCODING_REQUESTS_TOPIC);
+    await topic.publishMessage({ json: msgData });
+
+    // Update status 
+    await this.repo.updateMediaAssetStatus(asset.id, MediaAssetStatus.PROCESSING, adminId);
+
+    return { status: "PROCESSING", message: "Transcoding triggered" };
   }
 
   async updateReelTags(
@@ -854,25 +1009,104 @@ export class CatalogService {
     return this.repo.listCarouselEntries();
   }
 
+  async handleMediaFailure(event: { uploadId: string; reason: string }) {
+    await this.repo.upsertMediaAssetByUploadId({
+      uploadId: event.uploadId,
+      type: MediaAssetType.EPISODE,
+      status: MediaAssetStatus.FAILED,
+      manifestUrl: "",
+      filename: undefined,
+      variants: [],
+    });
+  }
+
+  async handleMediaUploaded(event: MediaUploadedEvent) {
+    const asset = await this.repo.findMediaAssetByUploadId(event.uploadId);
+
+    const episodeId =
+      (event.contentType === "EPISODE" || event.contentType === "episode") &&
+        event.contentId && event.contentId !== asset?.id
+        ? event.contentId
+        : undefined;
+    const reelId =
+      (event.contentType === "REEL" || event.contentType === "reel") &&
+        event.contentId && event.contentId !== asset?.id
+        ? event.contentId
+        : undefined;
+
+    await this.repo.upsertMediaAssetByUploadId({
+      uploadId: event.uploadId,
+      type: reelId ? MediaAssetType.REEL : MediaAssetType.EPISODE,
+      status: MediaAssetStatus.UPLOADED,
+      manifestUrl: "",
+      defaultThumbnailUrl: undefined,
+      filename: event.filename,
+      episodeId,
+      reelId,
+      variants: [],
+    });
+  }
+
+  async handleMediaCompletion(event: MediaCompletionEvent) {
+    const asset = await this.repo.findMediaAssetByUploadId(event.uploadId);
+
+    const episodeId =
+      (event.contentType === "EPISODE" || event.contentType === "episode") &&
+        event.contentId && event.contentId !== asset?.id
+        ? event.contentId
+        : undefined;
+    const reelId =
+      (event.contentType === "REEL" || event.contentType === "reel") &&
+        event.contentId && event.contentId !== asset?.id
+        ? event.contentId
+        : undefined;
+
+    await this.repo.upsertMediaAssetByUploadId({
+      uploadId: event.uploadId,
+      type: reelId ? MediaAssetType.REEL : MediaAssetType.EPISODE,
+      status: MediaAssetStatus.READY,
+      manifestUrl: event.manifestUrl,
+      defaultThumbnailUrl: event.thumbnailUrl,
+      filename: event.filename,
+      episodeId,
+      reelId,
+      variants: event.renditions.map((r: any) => ({
+        label: r.name || r.label,
+        width: r.width,
+        height: r.height,
+        bitrateKbps: r.bitrateKbps,
+        codec: r.codec,
+        frameRate: r.frameRate,
+      })),
+    });
+  }
+
   private isTransitionAllowed(
     current: PublicationStatus,
     target: PublicationStatus
-  ) {
+  ): boolean {
     if (current === target) {
-      return false;
+      return true;
     }
-    const allowedMap: Record<PublicationStatus, PublicationStatus[]> = {
+    const transitions: Record<PublicationStatus, PublicationStatus[]> = {
       [PublicationStatus.DRAFT]: [
         PublicationStatus.REVIEW,
         PublicationStatus.ARCHIVED,
       ],
       [PublicationStatus.REVIEW]: [
+        PublicationStatus.DRAFT,
         PublicationStatus.PUBLISHED,
         PublicationStatus.ARCHIVED,
       ],
-      [PublicationStatus.PUBLISHED]: [PublicationStatus.ARCHIVED],
-      [PublicationStatus.ARCHIVED]: [],
+      [PublicationStatus.PUBLISHED]: [
+        PublicationStatus.ARCHIVED,
+        PublicationStatus.DRAFT,
+      ],
+      [PublicationStatus.ARCHIVED]: [
+        PublicationStatus.DRAFT,
+        PublicationStatus.PUBLISHED,
+      ],
     };
-    return allowedMap[current].includes(target);
+    return transitions[current].includes(target);
   }
 }

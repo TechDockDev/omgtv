@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { PublicationStatus, Visibility } from "@prisma/client";
 import {
   CatalogService,
   CatalogServiceError,

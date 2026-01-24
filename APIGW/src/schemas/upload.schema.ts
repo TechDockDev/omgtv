@@ -14,6 +14,7 @@ export const createUploadUrlBodySchema = z.object({
     .max(512 * 1024 * 1024),
   assetType: assetTypeEnum,
   contentId: z.string().uuid().optional(),
+  contentClassification: z.enum(["REEL", "EPISODE"]).optional(),
 });
 
 export const createUploadUrlResponseSchema = z.object({
@@ -83,6 +84,19 @@ export const uploadQuotaSuccessResponseSchema = createSuccessResponseSchema(
   uploadQuotaResponseSchema
 );
 
+export const retryUploadResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  uploadId: z.string().uuid(),
+});
+
+export type RetryUploadResponse = z.infer<typeof retryUploadResponseSchema>;
+export type RetryUploadSuccessResponse = SuccessResponse<RetryUploadResponse>;
+export const retryUploadSuccessResponseSchema = createSuccessResponseSchema(
+  retryUploadResponseSchema
+);
+
+// Exports
 export type CreateUploadUrlBody = z.infer<typeof createUploadUrlBodySchema>;
 export type CreateUploadUrlResponse = z.infer<
   typeof createUploadUrlResponseSchema
@@ -93,3 +107,4 @@ export type CreateUploadUrlSuccessResponse =
   SuccessResponse<CreateUploadUrlResponse>;
 export type UploadStatusSuccessResponse = SuccessResponse<UploadStatusResponse>;
 export type UploadQuotaSuccessResponse = SuccessResponse<UploadQuotaResponse>;
+

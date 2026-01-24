@@ -21,6 +21,7 @@ export type CreateUploadSessionInput = {
   uploadUrl: string;
   expiresAt: Date;
   formFields: Record<string, string>;
+  fileName: string;
 };
 
 export type UploadValidationResult = {
@@ -32,7 +33,7 @@ export type UploadValidationResult = {
 };
 
 export class UploadSessionService {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(private readonly prisma: PrismaClient) { }
 
   private mapAssetType(assetType: CreateUploadSessionInput["assetType"]) {
     switch (assetType) {
@@ -76,6 +77,7 @@ export class UploadSessionService {
         expiresAt: input.expiresAt,
         formFields: input.formFields,
         status: UploadStatus.REQUESTED,
+        fileName: input.fileName,
       },
     });
   }
@@ -256,6 +258,13 @@ export class UploadSessionService {
           ],
         },
       },
+    });
+  }
+
+  async updateStatus(id: string, status: UploadStatus) {
+    return this.prisma.uploadSession.update({
+      where: { id },
+      data: { status },
     });
   }
 }

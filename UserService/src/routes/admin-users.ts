@@ -1,4 +1,4 @@
-import fp from "fastify-plugin";
+// import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
 import {
   assignRole,
@@ -130,6 +130,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
     },
   });
 
+
   fastify.get("/users/:userId/context", {
     schema: {
       params: userIdParamsSchema,
@@ -212,5 +213,4 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       };
     },
   });
-
 }

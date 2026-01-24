@@ -11,6 +11,11 @@ import { loadConfig } from "./config";
 import serviceAuthPlugin from "./plugins/service-auth";
 import metricsPlugin from "./plugins/metrics";
 import globalResponsePlugin from "./plugins/global-response";
+import prismaPlugin from "./plugins/prisma";
+import pubsubPlugin from "./plugins/pubsub";
+import catalogPlugin from "./plugins/catalog";
+import mediaReadySubscriber from "./subscribers/media-ready";
+import mediaUploadedSubscriber from "./subscribers/media-uploaded";
 import internalRoutes from "./routes/internal";
 import adminRoutes from "./routes/admin";
 import viewerCatalogRoutes from "./routes/viewer/catalog";
@@ -43,8 +48,13 @@ export async function buildApp() {
   await app.register(sensible);
   await app.register(cors, { origin: false });
   await app.register(helmet, { contentSecurityPolicy: false });
+  await app.register(prismaPlugin);
   await app.register(metricsPlugin);
   await app.register(globalResponsePlugin);
+  await app.register(pubsubPlugin);
+  await app.register(catalogPlugin);
+  await app.register(mediaReadySubscriber);
+  // await app.register(mediaUploadedSubscriber); // Replaced by internal HTTP route
   await app.register(serviceAuthPlugin);
   await app.register(internalRoutes, { prefix: "/internal" });
 
