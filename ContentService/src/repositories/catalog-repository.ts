@@ -437,7 +437,6 @@ export class CatalogRepository {
       captions?: Prisma.InputJsonValue | null;
       seasonId?: string | null;
       slug?: string;
-      slug?: string;
       tags?: string[];
       episodeNumber?: number | null; // Added
       adminId?: string;
