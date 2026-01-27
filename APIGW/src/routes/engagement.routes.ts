@@ -171,21 +171,38 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     config: authenticatedConfig,
     preHandler: [fastify.authorize(["user", "admin", "guest"])],
     async handler(request) {
-      const { ids } = await reelSavedList(
+      const items = await reelSavedList(
         request.correlationId,
         request.user!,
         request.telemetrySpan
       );
-      if (ids.length === 0) {
+      if (items.length === 0) {
         return { items: [] };
       }
-      return getBatchContent({
+
+      const ids = items.map((i) => i.id);
+      const contentResponse = await getBatchContent({
         ids,
         type: "reel",
         correlationId: request.correlationId,
         user: request.user!,
         span: request.telemetrySpan,
-      }) as any;
+      });
+
+      const statsMap = new Map(items.map((i) => [i.id, i]));
+      const mergedItems = contentResponse.items.map((item: any) => {
+        const stats = statsMap.get(item.id);
+        return {
+          ...item,
+          engagement: {
+            ...item.engagement,
+            likes: stats?.likes ?? 0,
+            views: stats?.views ?? 0,
+          },
+        };
+      });
+
+      return { items: mergedItems };
     },
   });
 
@@ -260,28 +277,39 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     config: authenticatedConfig,
     preHandler: [fastify.authorize(["user", "admin", "guest"])],
     async handler(request) {
-      const result = await reelLikedList(
+      const items = await reelLikedList(
         request.correlationId,
         request.user!,
         request.telemetrySpan
       );
-      console.log("[DEBUG /reels/liked] reelLikedList raw result:", JSON.stringify(result));
-      const ids = result.ids || [];
-      console.log("[DEBUG /reels/liked] extracted ids:", ids);
-      if (ids.length === 0) {
-        console.log("[DEBUG /reels/liked] No IDs, returning empty items");
+
+      if (items.length === 0) {
         return { items: [] };
       }
-      console.log("[DEBUG /reels/liked] Calling getBatchContent with ids:", ids);
-      const batchResult = await getBatchContent({
+
+      const ids = items.map((i) => i.id);
+      const contentResponse = await getBatchContent({
         ids,
         type: "reel",
         correlationId: request.correlationId,
         user: request.user!,
         span: request.telemetrySpan,
       });
-      console.log("[DEBUG /reels/liked] getBatchContent result:", JSON.stringify(batchResult));
-      return batchResult as any;
+
+      const statsMap = new Map(items.map((i) => [i.id, i]));
+      const mergedItems = contentResponse.items.map((item: any) => {
+        const stats = statsMap.get(item.id);
+        return {
+          ...item,
+          engagement: {
+            ...item.engagement,
+            likes: stats?.likes ?? 0,
+            views: stats?.views ?? 0,
+          },
+        };
+      });
+
+      return { items: mergedItems };
     },
   });
 
@@ -413,21 +441,38 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     config: authenticatedConfig,
     preHandler: [fastify.authorize(["user", "admin", "guest"])],
     async handler(request) {
-      const { ids } = await seriesSavedList(
+      const items = await seriesSavedList(
         request.correlationId,
         request.user!,
         request.telemetrySpan
       );
-      if (ids.length === 0) {
+      if (items.length === 0) {
         return { items: [] };
       }
-      return getBatchContent({
+
+      const ids = items.map((i) => i.id);
+      const contentResponse = await getBatchContent({
         ids,
         type: "series",
         correlationId: request.correlationId,
         user: request.user!,
         span: request.telemetrySpan,
-      }) as any;
+      });
+
+      const statsMap = new Map(items.map((i) => [i.id, i]));
+      const mergedItems = contentResponse.items.map((item: any) => {
+        const stats = statsMap.get(item.id);
+        return {
+          ...item,
+          engagement: {
+            ...item.engagement,
+            likes: stats?.likes ?? 0,
+            views: stats?.views ?? 0,
+          },
+        };
+      });
+
+      return { items: mergedItems };
     },
   });
 
@@ -502,21 +547,38 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     config: authenticatedConfig,
     preHandler: [fastify.authorize(["user", "admin", "guest"])],
     async handler(request) {
-      const { ids } = await seriesLikedList(
+      const items = await seriesLikedList(
         request.correlationId,
         request.user!,
         request.telemetrySpan
       );
-      if (ids.length === 0) {
+      if (items.length === 0) {
         return { items: [] };
       }
-      return getBatchContent({
+
+      const ids = items.map((i) => i.id);
+      const contentResponse = await getBatchContent({
         ids,
         type: "series",
         correlationId: request.correlationId,
         user: request.user!,
         span: request.telemetrySpan,
-      }) as any;
+      });
+
+      const statsMap = new Map(items.map((i) => [i.id, i]));
+      const mergedItems = contentResponse.items.map((item: any) => {
+        const stats = statsMap.get(item.id);
+        return {
+          ...item,
+          engagement: {
+            ...item.engagement,
+            likes: stats?.likes ?? 0,
+            views: stats?.views ?? 0,
+          },
+        };
+      });
+
+      return { items: mergedItems };
     },
   });
 

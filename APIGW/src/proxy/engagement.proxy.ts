@@ -27,6 +27,18 @@ import { z } from "zod";
 const upstreamListSchema = z.object({
   ids: z.array(z.string().uuid()),
 });
+
+const upstreamListItemSchema = z.object({
+  id: z.string().uuid(),
+  likes: z.number().int().nonnegative(),
+  views: z.number().int().nonnegative(),
+});
+
+const upstreamListWithStatsSchema = z.object({
+  items: z.array(upstreamListItemSchema),
+});
+
+export type UpstreamListItem = z.infer<typeof upstreamListItemSchema>;
 import type { GatewayUser } from "../types";
 
 export async function publishEngagementEvent(
@@ -253,7 +265,7 @@ export function reelLikedList(
   correlationId: string,
   user: GatewayUser,
   span?: Span
-): Promise<{ ids: string[] }> {
+): Promise<UpstreamListItem[]> {
   return requestEngagement({
     path: "/internal/reels/liked",
     method: "GET",
@@ -262,11 +274,11 @@ export function reelLikedList(
     span,
     spanName: "proxy:engagement:reelLikedList",
     parse: (payload) => {
-      const parsed = upstreamListSchema.safeParse(payload);
+      const parsed = upstreamListWithStatsSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error("Invalid response from engagement service");
       }
-      return parsed.data;
+      return parsed.data.items;
     },
   });
 }
@@ -275,7 +287,7 @@ export function reelSavedList(
   correlationId: string,
   user: GatewayUser,
   span?: Span
-): Promise<{ ids: string[] }> {
+): Promise<UpstreamListItem[]> {
   return requestEngagement({
     path: "/internal/reels/saved",
     method: "GET",
@@ -284,11 +296,11 @@ export function reelSavedList(
     span,
     spanName: "proxy:engagement:reelSavedList",
     parse: (payload) => {
-      const parsed = upstreamListSchema.safeParse(payload);
+      const parsed = upstreamListWithStatsSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error("Invalid response from engagement service");
       }
-      return parsed.data;
+      return parsed.data.items;
     },
   });
 }
@@ -435,7 +447,7 @@ export function seriesLikedList(
   correlationId: string,
   user: GatewayUser,
   span?: Span
-): Promise<{ ids: string[] }> {
+): Promise<UpstreamListItem[]> {
   return requestEngagement({
     path: "/internal/series/liked",
     method: "GET",
@@ -444,11 +456,11 @@ export function seriesLikedList(
     span,
     spanName: "proxy:engagement:seriesLikedList",
     parse: (payload) => {
-      const parsed = upstreamListSchema.safeParse(payload);
+      const parsed = upstreamListWithStatsSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error("Invalid response from engagement service");
       }
-      return parsed.data;
+      return parsed.data.items;
     },
   });
 }
@@ -457,7 +469,7 @@ export function seriesSavedList(
   correlationId: string,
   user: GatewayUser,
   span?: Span
-): Promise<{ ids: string[] }> {
+): Promise<UpstreamListItem[]> {
   return requestEngagement({
     path: "/internal/series/saved",
     method: "GET",
@@ -466,11 +478,11 @@ export function seriesSavedList(
     span,
     spanName: "proxy:engagement:seriesSavedList",
     parse: (payload) => {
-      const parsed = upstreamListSchema.safeParse(payload);
+      const parsed = upstreamListWithStatsSchema.safeParse(payload);
       if (!parsed.success) {
         throw new Error("Invalid response from engagement service");
       }
-      return parsed.data;
+      return parsed.data.items;
     },
   });
 }

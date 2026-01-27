@@ -96,26 +96,59 @@ async function updateMediaAsset(data: MediaReadyEvent["data"]): Promise<void> {
     const reelId = contentType === "REEL" && contentId ? contentId : null;
 
     // Upsert using uploadId as the unique key
-    const mediaAsset = await prisma.mediaAsset.upsert({
-        where: { uploadId: uploadId },
-        create: {
-            uploadId: uploadId,
-            type: contentType,
-            episodeId: episodeId,
-            reelId: reelId,
-            sourceUploadId: uploadId, // Legacy compatibility
-            manifestUrl: manifestUrl,
-            defaultThumbnailUrl: thumbnailUrl,
-            status: "READY",
-        },
-        update: {
-            episodeId: episodeId,
-            reelId: reelId,
-            manifestUrl: manifestUrl,
-            defaultThumbnailUrl: thumbnailUrl,
-            status: "READY",
-        },
-    });
+    let mediaAsset;
+    try {
+        mediaAsset = await prisma.mediaAsset.upsert({
+            where: { uploadId: uploadId },
+            create: {
+                uploadId: uploadId,
+                type: contentType,
+                episodeId: episodeId,
+                reelId: reelId,
+                sourceUploadId: uploadId, // Legacy compatibility
+                manifestUrl: manifestUrl,
+                defaultThumbnailUrl: thumbnailUrl,
+                status: "READY",
+            },
+            update: {
+                episodeId: episodeId,
+                reelId: reelId,
+                manifestUrl: manifestUrl,
+                defaultThumbnailUrl: thumbnailUrl,
+                status: "READY",
+            },
+        });
+    } catch (err: any) {
+        if (err.code === 'P2003') {
+            logger.warn(
+                { uploadId, episodeId, reelId, error: err },
+                "Foreign key constraint failed (parent content missing). Falling back to library-only asset."
+            );
+            // Retry without linking to parent content
+            mediaAsset = await prisma.mediaAsset.upsert({
+                where: { uploadId: uploadId },
+                create: {
+                    uploadId: uploadId,
+                    type: contentType,
+                    episodeId: null, // Detach
+                    reelId: null,    // Detach
+                    sourceUploadId: uploadId,
+                    manifestUrl: manifestUrl,
+                    defaultThumbnailUrl: thumbnailUrl,
+                    status: "READY",
+                },
+                update: {
+                    episodeId: null, // Detach
+                    reelId: null,    // Detach
+                    manifestUrl: manifestUrl,
+                    defaultThumbnailUrl: thumbnailUrl,
+                    status: "READY",
+                },
+            });
+        } else {
+            throw err;
+        }
+    }
 
     // Create/update variants for each rendition
     for (const rendition of renditions) {

@@ -47,27 +47,37 @@ async function mediaStatusSubscriber(fastify: FastifyInstance) {
                 const data = JSON.parse(message.data.toString());
                 fastify.log.info({ msgId: message.id, eventType: data.eventType }, "Received media status event");
 
-                if (data.eventType === "media.ready") {
-                    const parsed = mediaReadyEventSchema.safeParse(data);
-                    if (parsed.success) {
-                        const { uploadId, manifestUrl } = parsed.data.data;
-                        await uploadSessions.updateProcessingOutcome(uploadId, {
-                            ready: true,
-                            manifestUrl,
-                        });
-                        fastify.log.info({ uploadId }, "Marked upload session as READY");
-                    } else {
-                        fastify.log.warn({ errors: parsed.error }, "Invalid media.ready event payload");
+                try {
+                    if (data.eventType === "media.ready") {
+                        const parsed = mediaReadyEventSchema.safeParse(data);
+                        if (parsed.success) {
+                            const { uploadId, manifestUrl } = parsed.data.data;
+                            await uploadSessions.updateProcessingOutcome(uploadId, {
+                                ready: true,
+                                manifestUrl,
+                            });
+                            fastify.log.info({ uploadId }, "Marked upload session as READY");
+                        } else {
+                            fastify.log.warn({ errors: parsed.error }, "Invalid media.ready event payload");
+                        }
+                    } else if (data.eventType === "media.failed") {
+                        const parsed = mediaFailedEventSchema.safeParse(data);
+                        if (parsed.success) {
+                            const { uploadId, reason } = parsed.data.data;
+                            await uploadSessions.markFailed(uploadId, reason);
+                            fastify.log.warn({ uploadId, reason }, "Marked upload session as FAILED");
+                        } else {
+                            fastify.log.warn({ errors: parsed.error }, "Invalid media.failed event payload");
+                        }
                     }
-                } else if (data.eventType === "media.failed") {
-                    const parsed = mediaFailedEventSchema.safeParse(data);
-                    if (parsed.success) {
-                        const { uploadId, reason } = parsed.data.data;
-                        await uploadSessions.markFailed(uploadId, reason);
-                        fastify.log.warn({ uploadId, reason }, "Marked upload session as FAILED");
-                    } else {
-                        fastify.log.warn({ errors: parsed.error }, "Invalid media.failed event payload");
+                } catch (err: any) {
+                    if (err.code === 'P2025') {
+                        fastify.log.warn({ err, msgId: message.id }, "Upload session record not found (P2025), ignoring event to prevent retry loop");
+                        // We must ack here to stop the loop, as retrying won't make the record appear
+                        message.ack();
+                        return;
                     }
+                    throw err; // Re-throw other errors to trigger the outer catch and nack
                 }
 
                 message.ack();
