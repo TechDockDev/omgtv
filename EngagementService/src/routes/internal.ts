@@ -261,7 +261,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get("/reels/liked", {
-    schema: { response: { 200: listResponseSchema } },
+    schema: { response: { 200: listWithStatsResponseSchema } },
     handler: async (request) => {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const ids = await listUserEntities({
@@ -270,7 +270,24 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         collection: "liked",
         userId,
       });
-      return listResponseSchema.parse({ ids });
+
+      // Fetch engagement stats for all liked reels
+      let statsMap: Record<string, { likes: number; views: number }> = {};
+      if (ids.length > 0) {
+        statsMap = await getStatsBatch({
+          redis,
+          entityType: "reel",
+          entityIds: ids,
+        });
+      }
+
+      const items = ids.map((id) => ({
+        id,
+        likes: statsMap[id]?.likes ?? 0,
+        views: statsMap[id]?.views ?? 0,
+      }));
+
+      return listWithStatsResponseSchema.parse({ items });
     },
   });
 
@@ -313,7 +330,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get("/reels/saved", {
-    schema: { response: { 200: listResponseSchema } },
+    schema: { response: { 200: listWithStatsResponseSchema } },
     handler: async (request) => {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const ids = await listUserEntities({
@@ -322,7 +339,24 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         collection: "saved",
         userId,
       });
-      return listResponseSchema.parse({ ids });
+
+      // Fetch engagement stats for all saved reels
+      let statsMap: Record<string, { likes: number; views: number }> = {};
+      if (ids.length > 0) {
+        statsMap = await getStatsBatch({
+          redis,
+          entityType: "reel",
+          entityIds: ids,
+        });
+      }
+
+      const items = ids.map((id) => ({
+        id,
+        likes: statsMap[id]?.likes ?? 0,
+        views: statsMap[id]?.views ?? 0,
+      }));
+
+      return listWithStatsResponseSchema.parse({ items });
     },
   });
 
