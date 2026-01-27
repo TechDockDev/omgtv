@@ -55,6 +55,7 @@ model Series {
   slug             String            @unique
   title            String
   synopsis         String?
+  displayOrder     Int?              // Global or Category-based display order
   heroImageUrl     String?
   bannerImageUrl   String?
   tags             String[]          @default([])
@@ -109,6 +110,7 @@ model Episode {
   seasonId           String?
   title              String
   synopsis           String?
+  episodeNumber      Int?              // Order within Season (or Series if sorting standalone)
   durationSeconds    Int
   status             PublicationStatus @default(DRAFT)
   visibility         Visibility        @default(PUBLIC)

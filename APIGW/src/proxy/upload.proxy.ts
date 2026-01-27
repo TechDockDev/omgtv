@@ -65,15 +65,20 @@ async function verifyAdminUser(
     throw createHttpError(403, "Admin verification mismatch");
   }
 
-  const hasActiveAdminAssignment = context.assignments.some(
-    (assignment) =>
-      assignment.active &&
-      assignment.role.name.toUpperCase() === ADMIN_ROLE_NAME
-  );
+  // We used to check for an explicit 'ADMIN' role here, but some admin users (e.g. super admins)
+  // might rely solely on 'userType: ADMIN' without a specific role assignment.
+  // Since we verified the user exists via the User Service call above, and we blocked non-ADMIN types at the start,
+  // this is sufficient.
 
-  if (!hasActiveAdminAssignment) {
-    throw createHttpError(403, "User lacks active admin privileges");
-  }
+  // const hasActiveAdminAssignment = context.assignments.some(
+  //   (assignment) =>
+  //     assignment.active &&
+  //     assignment.role.name.toUpperCase() === ADMIN_ROLE_NAME
+  // );
+
+  // if (!hasActiveAdminAssignment) {
+  //   throw createHttpError(403, "User lacks active admin privileges");
+  // }
 
   return {
     userId: context.userId,

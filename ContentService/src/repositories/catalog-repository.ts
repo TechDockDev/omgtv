@@ -247,6 +247,7 @@ export class CatalogRepository {
     ownerId: string;
     categoryId?: string | null;
     isAudioSeries?: boolean;
+    displayOrder?: number | null; // Added
     adminId?: string;
   }) {
     return this.prisma.series.create({
@@ -263,6 +264,7 @@ export class CatalogRepository {
         ownerId: data.ownerId,
         categoryId: data.categoryId ?? null,
         isAudioSeries: data.isAudioSeries ?? false,
+        displayOrder: data.displayOrder ?? null, // Added
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       },
@@ -284,6 +286,7 @@ export class CatalogRepository {
       slug?: string;
       ownerId?: string;
       isAudioSeries?: boolean;
+      displayOrder?: number | null; // Added
       adminId?: string;
     }
   ) {
@@ -302,6 +305,7 @@ export class CatalogRepository {
         slug: data.slug,
         ownerId: data.ownerId,
         isAudioSeries: data.isAudioSeries,
+        displayOrder: data.displayOrder, // Added
         updatedByAdminId: data.adminId,
       },
     });
@@ -387,6 +391,7 @@ export class CatalogRepository {
     defaultThumbnailUrl?: string | null;
     captions?: Prisma.InputJsonValue | null;
     tags?: string[];
+    episodeNumber?: number | null; // Added
     adminId?: string;
   }) {
     return this.prisma.episode.create({
@@ -409,6 +414,7 @@ export class CatalogRepository {
             ? undefined
             : (data.captions ?? Prisma.JsonNull),
         tags: data.tags ?? [],
+        episodeNumber: data.episodeNumber ?? null, // Added
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       },
@@ -431,7 +437,9 @@ export class CatalogRepository {
       captions?: Prisma.InputJsonValue | null;
       seasonId?: string | null;
       slug?: string;
+      slug?: string;
       tags?: string[];
+      episodeNumber?: number | null; // Added
       adminId?: string;
     }
   ) {
@@ -455,6 +463,7 @@ export class CatalogRepository {
         seasonId: data.seasonId,
         slug: data.slug,
         tags: data.tags,
+        episodeNumber: data.episodeNumber, // Added
         updatedByAdminId: data.adminId,
       },
     });
@@ -1080,7 +1089,7 @@ export class CatalogRepository {
                 },
                 season: true,
               },
-              orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+              orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
             },
           },
         },
@@ -1107,7 +1116,7 @@ export class CatalogRepository {
             },
             season: true,
           },
-          orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+          orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
         },
       },
     });
@@ -1178,7 +1187,7 @@ export class CatalogRepository {
                 },
                 season: true,
               },
-              orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+              orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
             },
           },
         },
@@ -1205,7 +1214,7 @@ export class CatalogRepository {
             },
             season: true,
           },
-          orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+          orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
         },
       },
     });
@@ -1451,7 +1460,7 @@ export class CatalogRepository {
       include: {
         category: true,
       },
-      orderBy: [{ releaseDate: "desc" }, { createdAt: "desc" }],
+      orderBy: [{ displayOrder: "asc" }, { releaseDate: "desc" }, { createdAt: "desc" }],
       take: limit + 1,
       cursor: params.cursor ? { id: params.cursor } : undefined,
       skip: params.cursor ? 1 : 0,
@@ -1488,7 +1497,7 @@ export class CatalogRepository {
       include: {
         category: true,
       },
-      orderBy: [{ releaseDate: "desc" }, { createdAt: "desc" }],
+      orderBy: [{ displayOrder: "asc" }, { releaseDate: "desc" }, { createdAt: "desc" }],
       take: limit + 1,
       cursor: params.cursor ? { id: params.cursor } : undefined,
       skip: params.cursor ? 1 : 0,
