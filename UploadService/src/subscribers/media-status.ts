@@ -52,10 +52,17 @@ async function mediaStatusSubscriber(fastify: FastifyInstance) {
                         const parsed = mediaReadyEventSchema.safeParse(data);
                         if (parsed.success) {
                             const { uploadId, manifestUrl } = parsed.data.data;
-                            await uploadSessions.updateProcessingOutcome(uploadId, {
+                            const updated = await uploadSessions.updateProcessingOutcome(uploadId, {
                                 ready: true,
                                 manifestUrl,
                             });
+
+                            if (!updated) {
+                                fastify.log.warn({ uploadId, msgId: message.id }, "Upload session record not found during processing outcome update, ignoring event");
+                                message.ack();
+                                return;
+                            }
+
                             fastify.log.info({ uploadId }, "Marked upload session as READY");
                         } else {
                             fastify.log.warn({ errors: parsed.error }, "Invalid media.ready event payload");
@@ -64,20 +71,21 @@ async function mediaStatusSubscriber(fastify: FastifyInstance) {
                         const parsed = mediaFailedEventSchema.safeParse(data);
                         if (parsed.success) {
                             const { uploadId, reason } = parsed.data.data;
-                            await uploadSessions.markFailed(uploadId, reason);
+                            const updated = await uploadSessions.markFailed(uploadId, reason);
+
+                            if (!updated) {
+                                fastify.log.warn({ uploadId, msgId: message.id }, "Upload session record not found during failure marking, ignoring event");
+                                message.ack();
+                                return;
+                            }
+
                             fastify.log.warn({ uploadId, reason }, "Marked upload session as FAILED");
                         } else {
                             fastify.log.warn({ errors: parsed.error }, "Invalid media.failed event payload");
                         }
                     }
                 } catch (err: any) {
-                    if (err.code === 'P2025') {
-                        fastify.log.warn({ err, msgId: message.id }, "Upload session record not found (P2025), ignoring event to prevent retry loop");
-                        // We must ack here to stop the loop, as retrying won't make the record appear
-                        message.ack();
-                        return;
-                    }
-                    throw err; // Re-throw other errors to trigger the outer catch and nack
+                    throw err; // Re-throw errors to trigger the outer catch and nack
                 }
 
                 message.ack();

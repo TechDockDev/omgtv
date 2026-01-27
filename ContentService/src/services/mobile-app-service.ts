@@ -1008,18 +1008,12 @@ export class MobileAppService {
       { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
     >
   > {
-    console.log("[DEBUG loadEngagementStates] engagementClient=", !!this.deps.engagementClient);
-    console.log("[DEBUG loadEngagementStates] userId=", options?.context?.userId);
-    console.log("[DEBUG loadEngagementStates] items.length=", items.length);
-
     if (!this.deps.engagementClient) {
-      console.log("[DEBUG loadEngagementStates] No engagement client, returning empty");
       return new Map();
     }
 
-    const userId = options?.context?.userId;
+    const userId = options?.context?.userId?.toLowerCase();
     if (!userId || items.length === 0) {
-      console.log("[DEBUG loadEngagementStates] No userId or empty items, returning empty");
       return new Map();
     }
 
@@ -1032,8 +1026,6 @@ export class MobileAppService {
         })),
       });
 
-      console.log("[DEBUG loadEngagementStates] states response:", JSON.stringify(states));
-
       // Convert to Map keyed by item id
       const result = new Map<
         string,
@@ -1043,20 +1035,19 @@ export class MobileAppService {
       for (const item of items) {
         const key = `${item.contentType}:${item.id}`;
         const state = states[key];
-        console.log("[DEBUG loadEngagementStates] looking for key:", key, "found:", !!state);
         if (state) {
           result.set(item.id, state);
         }
       }
 
-      console.log("[DEBUG loadEngagementStates] result map size:", result.size);
       return result;
     } catch (error) {
-      console.log("[DEBUG loadEngagementStates] ERROR:", error);
-      options?.logger?.warn?.(
-        { err: error },
-        "Failed to fetch engagement states"
+      // Log full error details for debugging 502/connection Refused
+      options?.logger?.error?.(
+        { err: error, userId, itemCount: items.length },
+        "Failed to fetch engagement states (loadEngagementStates)"
       );
+      // Return empty map to avoid crashing the whole home feed, but now we have logs
       return new Map();
     }
   }

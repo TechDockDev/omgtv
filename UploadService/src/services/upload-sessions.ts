@@ -83,17 +83,21 @@ export class UploadSessionService {
   }
 
   async markUploading(id: string) {
-    return this.prisma.uploadSession.update({
+    const { count } = await this.prisma.uploadSession.updateMany({
       where: { id },
       data: { status: UploadStatus.UPLOADING },
     });
+    if (count === 0) return null;
+    return this.prisma.uploadSession.findUnique({ where: { id } });
   }
 
   async markValidating(id: string) {
-    return this.prisma.uploadSession.update({
+    const { count } = await this.prisma.uploadSession.updateMany({
       where: { id },
       data: { status: UploadStatus.VALIDATING },
     });
+    if (count === 0) return null;
+    return this.prisma.uploadSession.findUnique({ where: { id } });
   }
 
   async completeValidation(
@@ -101,7 +105,7 @@ export class UploadSessionService {
     success: boolean,
     details: UploadValidationResult
   ) {
-    return this.prisma.uploadSession.update({
+    const { count } = await this.prisma.uploadSession.updateMany({
       where: { id },
       data: {
         status: success ? UploadStatus.PROCESSING : UploadStatus.FAILED,
@@ -115,26 +119,32 @@ export class UploadSessionService {
         failureReason: success ? undefined : details.failureReason,
       },
     });
+    if (count === 0) return null;
+    return this.prisma.uploadSession.findUnique({ where: { id } });
   }
 
   async markReady(id: string) {
-    return this.prisma.uploadSession.update({
+    const { count } = await this.prisma.uploadSession.updateMany({
       where: { id },
       data: {
         status: UploadStatus.READY,
         completedAt: new Date(),
       },
     });
+    if (count === 0) return null;
+    return this.prisma.uploadSession.findUnique({ where: { id } });
   }
 
   async markFailed(id: string, reason: string) {
-    return this.prisma.uploadSession.update({
+    const { count } = await this.prisma.uploadSession.updateMany({
       where: { id },
       data: {
         status: UploadStatus.FAILED,
         failureReason: reason,
       },
     });
+    if (count === 0) return null;
+    return this.prisma.uploadSession.findUnique({ where: { id } });
   }
 
   async updateProcessingOutcome(
@@ -187,7 +197,7 @@ export class UploadSessionService {
     const metadataPayload: Prisma.InputJsonValue | undefined =
       Object.keys(nextMeta).length > 0 ? nextMeta : undefined;
 
-    return this.prisma.uploadSession.update({
+    const { count } = await this.prisma.uploadSession.updateMany({
       where: { id },
       data: {
         status: outcome.ready ? UploadStatus.READY : UploadStatus.FAILED,
@@ -196,6 +206,8 @@ export class UploadSessionService {
         validationMeta: metadataPayload,
       },
     });
+    if (count === 0) return null;
+    return this.prisma.uploadSession.findUnique({ where: { id } });
   }
 
   async expireSessionsOlderThan(now: Date) {
@@ -218,19 +230,24 @@ export class UploadSessionService {
       return [] as UploadSession[];
     }
 
-    await this.prisma.$transaction(
-      staleSessions.map((session) =>
-        this.prisma.uploadSession.update({
-          where: { id: session.id },
-          data: {
-            status: UploadStatus.EXPIRED,
-            failureReason: "Upload session expired",
-          },
-        })
-      )
-    );
+    const { count } = await this.prisma.uploadSession.updateMany({
+      where: {
+        id: {
+          in: staleSessions.map((s) => s.id),
+        },
+      },
+      data: {
+        status: UploadStatus.EXPIRED,
+        failureReason: "Upload session expired",
+      },
+    });
 
-    return staleSessions;
+    if (count === 0) return [];
+
+    // Return the original list as "expired" (or refetch if absolutely needed, but usually redundant here)
+    // For accuracy, we could refetch, but here we just return what we intended to expire.
+    // To match original return type fully:
+    return staleSessions.map(s => ({ ...s, status: UploadStatus.EXPIRED }));
   }
 
   async getSession(id: string) {
@@ -262,9 +279,11 @@ export class UploadSessionService {
   }
 
   async updateStatus(id: string, status: UploadStatus) {
-    return this.prisma.uploadSession.update({
+    const { count } = await this.prisma.uploadSession.updateMany({
       where: { id },
       data: { status },
     });
+    if (count === 0) return null;
+    return this.prisma.uploadSession.findUnique({ where: { id } });
   }
 }

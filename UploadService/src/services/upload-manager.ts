@@ -743,6 +743,12 @@ export class UploadManager {
       failureReason: payload.failureReason,
     });
 
+    if (!updated) {
+      throw Object.assign(new Error("upload_not_found"), {
+        statusCode: 404,
+      });
+    }
+
     if (!success) {
       await this.quota.release(session.adminId);
       this.logger.warn(
@@ -839,6 +845,12 @@ export class UploadManager {
       existingMeta,
       readyMetadata,
     });
+
+    if (!updated) {
+      throw Object.assign(new Error("upload_not_found"), {
+        statusCode: 404,
+      });
+    }
 
     await this.quota.release(session.adminId);
 

@@ -52,7 +52,7 @@ import {
 function requireUserId(headers: Record<string, unknown>) {
   const value = headers["x-user-id"];
   if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
+    return value.trim().toLowerCase();
   }
   throw new Error("UNAUTHORIZED: Missing x-user-id");
 }
