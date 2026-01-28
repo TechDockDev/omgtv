@@ -12,8 +12,8 @@ RUN apk add --no-cache python3 make g++
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies for build (including devDependencies like typescript)
+RUN npm ci
 
 # Copy source and build
 COPY . .
@@ -32,9 +32,10 @@ RUN addgroup -g 1001 -S nodejs && \
 WORKDIR /app
 
 # Copy built files from builder
-COPY --from=builder --chown=worker:nodejs /app/dist ./dist
-COPY --from=builder --chown=worker:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=worker:nodejs /app/package.json ./
+COPY --from=builder /app/package*.json ./
+RUN npm ci
+
+COPY --from=builder /app/dist ./dist
 
 # Create temp directory for transcoding
 RUN mkdir -p /tmp/transcode && chown worker:nodejs /tmp/transcode
