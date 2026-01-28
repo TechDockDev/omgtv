@@ -21,6 +21,7 @@ jobs:
           - StreamingService
           - UploadService
           - SubscriptionService
+          - TranscodingWorker
     defaults:
       run:
         working-directory: ${{ matrix.service }}

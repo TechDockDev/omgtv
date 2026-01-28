@@ -134,6 +134,7 @@ jobs:
           build_push streaming-service ./StreamingService
           build_push upload-service ./UploadService
           build_push subscription-service ./SubscriptionService
+          build_push transcoding-worker ./TranscodingWorker
 
       - name: Deploy manifests (kustomize)
         run: |
@@ -152,6 +153,7 @@ jobs:
           kustomize edit set image streaming-service="${registry}/streaming-service:${TAG}"
           kustomize edit set image upload-service="${registry}/upload-service:${TAG}"
           kustomize edit set image subscription-service="${registry}/subscription-service:${TAG}"
+          kustomize edit set image transcoding-worker="${registry}/transcoding-worker:${TAG}"
 
           kubectl apply -k .
 

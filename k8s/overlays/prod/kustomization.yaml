@@ -10,3 +10,35 @@ patchesStrategicMerge:
 resources:
   - ../../base
   - managedcertificate.yaml
+
+images:
+  - name: apigw
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/apigw
+    newTag: latest
+  - name: auth-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/auth-service
+    newTag: latest
+  - name: user-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/user-service
+    newTag: latest
+  - name: content-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/content-service
+    newTag: latest
+  - name: engagement-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/engagement-service
+    newTag: latest
+  - name: search-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/search-service
+    newTag: latest
+  - name: streaming-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/streaming-service
+    newTag: latest
+  - name: upload-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/upload-service
+    newTag: latest
+  - name: subscription-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/subscription-service
+    newTag: latest
+  - name: transcoding-worker
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/transcoding-worker
+    newTag: latest
