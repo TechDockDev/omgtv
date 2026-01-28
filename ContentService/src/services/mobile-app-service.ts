@@ -159,8 +159,11 @@ export class MobileAppService {
       }),
     ]);
 
-    console.log(`[MobileAppService] Home Series fetched: ${seriesFeed.items.length}`);
-    console.log(`[MobileAppService] Recent Episodes fetched: ${episodeFeed.items.length}`);
+    options?.logger?.warn({
+      msg: "[MobileHub] Debug Stats",
+      series: seriesFeed.items.length,
+      episodes: episodeFeed.items.length
+    });
 
     const filteredItems = this.filterByTag(seriesFeed.items, parsed.tag);
     const entitlements = await this.resolveEntitlements(options);
@@ -1013,7 +1016,13 @@ export class MobileAppService {
     }
 
     const userId = options?.context?.userId?.toLowerCase();
+
     if (!userId || items.length === 0) {
+      options?.logger?.warn({
+        msg: "[MobileHub] Early Return (No Engagement)",
+        userId,
+        items: items.length
+      });
       return new Map();
     }
 
@@ -1024,6 +1033,13 @@ export class MobileAppService {
           contentType: item.contentType,
           contentId: item.id,
         })),
+      });
+
+      options?.logger?.warn({
+        msg: "[MobileHub] Engagement Response",
+        reqUserId: userId,
+        itemCount: items.length,
+        resKeys: Object.keys(states)
       });
 
       // Convert to Map keyed by item id

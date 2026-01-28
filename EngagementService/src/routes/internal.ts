@@ -30,7 +30,6 @@ import {
 import {
   applyEngagementEvent,
   getProgressEntries,
-  upsertProgress,
 } from "../services/engagement";
 import { getRedisOptional } from "../lib/redis";
 import { getPrismaOptional } from "../lib/prisma";
@@ -47,6 +46,7 @@ import {
   getReviews,
   getUserStateBatch,
   getViewProgressBatch,
+  upsertViewProgress,
 } from "../services/collection-engagement";
 
 function requireUserId(headers: Record<string, unknown>) {
@@ -203,21 +203,27 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       response: { 200: userStateResponseSchema },
     },
     handler: async (request) => {
-      const body = userStateRequestSchema.parse(request.body);
-      const userId = requireUserId(request.headers as Record<string, unknown>);
+      try {
+        const body = userStateRequestSchema.parse(request.body);
+        const userId = requireUserId(request.headers as Record<string, unknown>);
 
-      const states = await getUserStateBatch({
-        redis,
-        userId,
-        items: body.items,
-      });
+        const states = await getUserStateBatch({
+          redis,
+          prisma,
+          userId,
+          items: body.items,
+        });
 
-      request.log.info(
-        { itemCount: body.items.length },
-        "Processed user state query"
-      );
+        request.log.info(
+          { itemCount: body.items.length, userId },
+          "Processed user state query"
+        );
 
-      return userStateResponseSchema.parse({ states });
+        return userStateResponseSchema.parse({ states });
+      } catch (err) {
+        request.log.error({ err }, "Error in /user-state");
+        throw err;
+      }
     },
   });
 
@@ -448,31 +454,36 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   fastify.get("/series/liked", {
     schema: { response: { 200: listWithStatsResponseSchema } },
     handler: async (request) => {
-      const userId = requireUserId(request.headers as Record<string, unknown>);
-      const ids = await listUserEntities({
-        redis,
-        entityType: "series",
-        collection: "liked",
-        userId,
-      });
-
-      // Fetch engagement stats for all liked series
-      let statsMap: Record<string, { likes: number; views: number }> = {};
-      if (ids.length > 0) {
-        statsMap = await getStatsBatch({
+      try {
+        const userId = requireUserId(request.headers as Record<string, unknown>);
+        const ids = await listUserEntities({
           redis,
           entityType: "series",
-          entityIds: ids,
+          collection: "liked",
+          userId,
         });
+
+        // Fetch engagement stats for all liked series
+        let statsMap: Record<string, { likes: number; views: number }> = {};
+        if (ids.length > 0) {
+          statsMap = await getStatsBatch({
+            redis,
+            entityType: "series",
+            entityIds: ids,
+          });
+        }
+
+        const items = ids.map((id) => ({
+          id,
+          likes: statsMap[id]?.likes ?? 0,
+          views: statsMap[id]?.views ?? 0,
+        }));
+
+        return listWithStatsResponseSchema.parse({ items });
+      } catch (err) {
+        request.log.error({ err }, "Error in /series/liked");
+        throw err;
       }
-
-      const items = ids.map((id) => ({
-        id,
-        likes: statsMap[id]?.likes ?? 0,
-        views: statsMap[id]?.views ?? 0,
-      }));
-
-      return listWithStatsResponseSchema.parse({ items });
     },
   });
 
@@ -517,31 +528,36 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   fastify.get("/series/saved", {
     schema: { response: { 200: listWithStatsResponseSchema } },
     handler: async (request) => {
-      const userId = requireUserId(request.headers as Record<string, unknown>);
-      const ids = await listUserEntities({
-        redis,
-        entityType: "series",
-        collection: "saved",
-        userId,
-      });
-
-      // Fetch engagement stats for all saved series
-      let statsMap: Record<string, { likes: number; views: number }> = {};
-      if (ids.length > 0) {
-        statsMap = await getStatsBatch({
+      try {
+        const userId = requireUserId(request.headers as Record<string, unknown>);
+        const ids = await listUserEntities({
           redis,
           entityType: "series",
-          entityIds: ids,
+          collection: "saved",
+          userId,
         });
+
+        // Fetch engagement stats for all saved series
+        let statsMap: Record<string, { likes: number; views: number }> = {};
+        if (ids.length > 0) {
+          statsMap = await getStatsBatch({
+            redis,
+            entityType: "series",
+            entityIds: ids,
+          });
+        }
+
+        const items = ids.map((id) => ({
+          id,
+          likes: statsMap[id]?.likes ?? 0,
+          views: statsMap[id]?.views ?? 0,
+        }));
+
+        return listWithStatsResponseSchema.parse({ items });
+      } catch (err) {
+        request.log.error({ err }, "Error in /series/saved");
+        throw err;
       }
-
-      const items = ids.map((id) => ({
-        id,
-        likes: statsMap[id]?.likes ?? 0,
-        views: statsMap[id]?.views ?? 0,
-      }));
-
-      return listWithStatsResponseSchema.parse({ items });
     },
   });
 
@@ -596,28 +612,33 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       body: continueWatchUpsertSchema,
     },
     handler: async (request) => {
-      const body = continueWatchUpsertSchema.parse(request.body);
-      const entry = upsertProgress({
-        userId: body.userId,
-        episodeId: body.episodeId,
-        watchedDuration: body.watchedDuration,
-        totalDuration: body.totalDuration,
-        lastWatchedAt: body.lastWatchedAt ?? undefined,
-        isCompleted: body.isCompleted,
-      });
+      try {
+        const body = continueWatchUpsertSchema.parse(request.body);
+        const entry = await upsertViewProgress({
+          redis,
+          prisma,
+          userId: body.userId,
+          episodeId: body.episodeId,
+          progressSeconds: body.watchedDuration,
+          durationSeconds: body.totalDuration,
+        });
 
-      request.log.info(
-        { userId: body.userId, episodeId: body.episodeId },
-        "Recorded continue watch progress"
-      );
+        request.log.info(
+          { userId: body.userId, episodeId: body.episodeId },
+          "Recorded continue watch progress"
+        );
 
-      return {
-        episode_id: entry.episodeId,
-        watched_duration: entry.watchedDuration,
-        total_duration: entry.totalDuration,
-        last_watched_at: entry.lastWatchedAt,
-        is_completed: entry.isCompleted,
-      };
+        return {
+          episode_id: body.episodeId,
+          watched_duration: entry.progressSeconds,
+          total_duration: entry.durationSeconds,
+          last_watched_at: new Date().toISOString(),
+          is_completed: entry.completedAt !== null,
+        };
+      } catch (err) {
+        request.log.error({ err }, "Error in /progress");
+        throw err;
+      }
     },
   });
 

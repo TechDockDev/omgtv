@@ -41,29 +41,31 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         body: createUploadUrlBodySchema,
       },
     },
-    async (request) => {
-      const adminContext = ensureAdmin(request);
-      const body = createUploadUrlBodySchema.parse(request.body);
+    async (request, reply) => {
       try {
-        return await fastify.uploadManager.issueUpload(
+        console.log('HIT uploads/sign', request.body);
+        const adminContext = ensureAdmin(request);
+        const body = createUploadUrlBodySchema.parse(request.body);
+
+        const result = await fastify.uploadManager.issueUpload(
           body,
           adminContext.adminId,
           request.id
         );
+        return result;
       } catch (error) {
+        console.error('UPLOAD SIGN ERROR', error);
         if (
           error instanceof Error &&
           (error as { statusCode?: number }).statusCode
         ) {
           throw error;
         }
-        request.log.error(
-          { err: error, adminId: adminContext.adminId },
-          "Failed to issue signed upload URL"
-        );
-        throw fastify.httpErrors.internalServerError(
-          "Failed to issue upload URL"
-        );
+
+        reply.status(500).send({
+          message: 'Upload sign failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   );

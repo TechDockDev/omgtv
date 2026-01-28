@@ -35,7 +35,7 @@ data:
   REDIS_URL: "redis://10.117.209.35:6379"
   GCP_PROJECT_ID: "pocketlol-68ca6"
   PUBSUB_PROJECT_ID: "pocketlol-68ca6"
-  UPLOAD_BUCKET: "pocketlol-68ca6-uploads"
+  UPLOAD_BUCKET: "videos-bucket-pocketlol"
   CDN_UPLOAD_BASE_URL: "https://upload.cdn.pocketlol"
 ---
 apiVersion: v1

@@ -44,7 +44,7 @@ const envSchema = z.object({
     .transform((value) =>
       value && value.trim().length > 0 ? value : undefined
     ),
-  UPLOAD_BUCKET: z.string().default("pocketlol-uploads"),
+  UPLOAD_BUCKET: z.string().default("videos-bucket-pocketlol"),
   CDN_UPLOAD_BASE_URL: z.string().url().default("https://upload.cdn.pocketlol"),
   SIGNED_UPLOAD_TTL_SECONDS: z.coerce.number().int().positive().default(600),
   DEFAULT_TENANT_ID: z.string().min(1).default("pocketlol"),

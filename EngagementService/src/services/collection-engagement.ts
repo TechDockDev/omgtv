@@ -147,8 +147,8 @@ export async function likeEntity(params: {
   }
 
   if (prisma) {
-    void prisma.userAction
-      .upsert({
+    void prisma.$transaction([
+      prisma.userAction.upsert({
         where: {
           userId_contentType_contentId_actionType: {
             userId,
@@ -167,8 +167,25 @@ export async function likeEntity(params: {
         update: {
           isActive: true,
         },
-      })
-      .catch((err) => console.error("DB like write failed:", err));
+      }),
+      prisma.contentStats.upsert({
+        where: {
+          contentType_contentId: {
+            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+            contentId: entityId,
+          },
+        },
+        create: {
+          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+          contentId: entityId,
+          likeCount: 1,
+        },
+        update: {
+          likeCount: { increment: 1 },
+          lastSyncedAt: new Date(),
+        },
+      }),
+    ]).catch((err) => console.error("DB like write failed:", err));
   }
 
   const stats = await getStatsRedis(redis, entityType, entityId);
@@ -206,8 +223,8 @@ export async function unlikeEntity(params: {
   }
 
   if (prisma) {
-    void prisma.userAction
-      .updateMany({
+    void prisma.$transaction([
+      prisma.userAction.updateMany({
         where: {
           userId,
           contentType: entityType.toUpperCase() as "REEL" | "SERIES",
@@ -215,8 +232,20 @@ export async function unlikeEntity(params: {
           actionType: "LIKE",
         },
         data: { isActive: false },
-      })
-      .catch((err) => console.error("DB unlike write failed:", err));
+      }),
+      prisma.contentStats.update({
+        where: {
+          contentType_contentId: {
+            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+            contentId: entityId,
+          },
+        },
+        data: {
+          likeCount: { decrement: 1 },
+          lastSyncedAt: new Date(),
+        },
+      }),
+    ]).catch((err) => console.error("DB unlike write failed:", err));
   }
 
   const stats = await getStatsRedis(redis, entityType, entityId);
@@ -240,8 +269,8 @@ export async function saveEntity(params: {
   }
 
   if (prisma) {
-    void prisma.userAction
-      .upsert({
+    void prisma.$transaction([
+      prisma.userAction.upsert({
         where: {
           userId_contentType_contentId_actionType: {
             userId,
@@ -260,8 +289,25 @@ export async function saveEntity(params: {
         update: {
           isActive: true,
         },
-      })
-      .catch((err) => console.error("DB save write failed:", err));
+      }),
+      prisma.contentStats.upsert({
+        where: {
+          contentType_contentId: {
+            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+            contentId: entityId,
+          },
+        },
+        create: {
+          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+          contentId: entityId,
+          saveCount: 1,
+        },
+        update: {
+          saveCount: { increment: 1 },
+          lastSyncedAt: new Date(),
+        },
+      }),
+    ]).catch((err) => console.error("DB save write failed:", err));
   }
 
   await redis.sadd(redisUserSavedKey(entityType, userId), entityId);
@@ -285,8 +331,8 @@ export async function unsaveEntity(params: {
   }
 
   if (prisma) {
-    void prisma.userAction
-      .updateMany({
+    void prisma.$transaction([
+      prisma.userAction.updateMany({
         where: {
           userId,
           contentType: entityType.toUpperCase() as "REEL" | "SERIES",
@@ -294,8 +340,20 @@ export async function unsaveEntity(params: {
           actionType: "SAVE",
         },
         data: { isActive: false },
-      })
-      .catch((err) => console.error("DB unsave write failed:", err));
+      }),
+      prisma.contentStats.update({
+        where: {
+          contentType_contentId: {
+            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+            contentId: entityId,
+          },
+        },
+        data: {
+          saveCount: { decrement: 1 },
+          lastSyncedAt: new Date(),
+        },
+      }),
+    ]).catch((err) => console.error("DB unsave write failed:", err));
   }
 
   await redis.srem(redisUserSavedKey(entityType, userId), entityId);
@@ -568,10 +626,11 @@ export type UserStateEntry = {
 
 export async function getUserStateBatch(params: {
   redis: Redis | null;
+  prisma: PrismaClient | null;
   userId: string;
   items: Array<{ contentType: "reel" | "series"; contentId: string }>;
 }): Promise<Record<string, UserStateEntry>> {
-  const { redis, userId, items } = params;
+  const { redis, prisma, userId, items } = params;
 
   if (items.length === 0) {
     return {};
@@ -676,6 +735,55 @@ export async function getUserStateBatch(params: {
     result[`series:${id}`].isLiked = isLiked;
     result[`series:${id}`].isSaved = isSaved;
     idx += 2;
+  }
+
+  // 2. Database Fallback / Enrichment
+  if (prisma) {
+    try {
+      // Fetch stats from DB
+      const dbStats = await prisma.contentStats.findMany({
+        where: {
+          OR: items.map((item) => ({
+            contentType: item.contentType.toUpperCase() as any,
+            contentId: item.contentId,
+          })),
+        },
+      });
+
+      for (const stat of dbStats) {
+        const key = `${stat.contentType.toLowerCase()}:${stat.contentId}`;
+        const entry = result[key];
+        if (entry) {
+          // Use DB values if Redis is 0 or if we want to take the max
+          entry.likeCount = Math.max(entry.likeCount, stat.likeCount);
+          entry.viewCount = Math.max(entry.viewCount, stat.viewCount);
+        }
+      }
+
+      // Fetch user actions (liked/saved)
+      const userActions = await prisma.userAction.findMany({
+        where: {
+          userId,
+          isActive: true,
+          OR: items.map((item) => ({
+            contentType: item.contentType.toUpperCase() as any,
+            contentId: item.contentId,
+          })),
+        },
+      });
+
+      for (const action of userActions) {
+        const key = `${action.contentType.toLowerCase()}:${action.contentId}`;
+        const entry = result[key];
+        if (entry) {
+          if (action.actionType === "LIKE") entry.isLiked = true;
+          if (action.actionType === "SAVE") entry.isSaved = true;
+        }
+      }
+    } catch (dbError) {
+      // Just log it, don't fail the whole request
+      console.error("[EngagementService] DB fallback failed:", dbError);
+    }
   }
 
   return result;
