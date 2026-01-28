@@ -55,5 +55,6 @@ metadata:
   name: subscription-service-config
 data:
   REDIS_URL: "redis://10.117.209.35:6379"
-  RAZORPAY_KEY_ID: "dev"
-  RAZORPAY_KEY_SECRET: "dev"
+  RAZORPAY_KEY_ID: "rzp_test_RBSer2L2HUkTuM"
+  RAZORPAY_KEY_SECRET: "qqc0A1nLgTEBYghAQwQJr9IZ"
+  RAZORPAY_WEBHOOK_SECRET: "whsec_omgtv_68"

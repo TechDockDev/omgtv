@@ -107,35 +107,41 @@ export default fp(
     });
 
     async function verifyAuth(request: FastifyRequest, reply: FastifyReply) {
+      const token = extractTokenFromHeader(request.headers.authorization);
+
       const routeAuthConfig =
         (
           request.routeOptions.config as
           | { auth?: { public?: boolean } }
           | undefined
         )?.auth ?? {};
+
       if (routeAuthConfig && routeAuthConfig.public) {
-        return;
-      }
+        if (!token) {
+          return;
+        }
+        // Token exists, proceed to verify it
+      } else {
+        // Private route: Token is mandatory
+        const pathname = getPathname(request.url);
+        if (isKnownPublicEndpoint(pathname, request.method)) {
+          return;
+        }
 
-      const pathname = getPathname(request.url);
-      if (isKnownPublicEndpoint(pathname, request.method)) {
-        return;
-      }
-
-      const token = extractTokenFromHeader(request.headers.authorization);
-      if (!token) {
-        await fastify.publishAuditEvent({
-          type: "auth.failure",
-          correlationId: request.correlationId,
-          subject: request.headers["x-request-id"]?.toString(),
-          ip: request.ip,
-          metadata: {
-            reason: "missing_token",
-            path: request.url,
-            method: request.method,
-          },
-        });
-        throw createHttpError(401, "Authorization header missing or malformed");
+        if (!token) {
+          await fastify.publishAuditEvent({
+            type: "auth.failure",
+            correlationId: request.correlationId,
+            subject: request.headers["x-request-id"]?.toString(),
+            ip: request.ip,
+            metadata: {
+              reason: "missing_token",
+              path: request.url,
+              method: request.method,
+            },
+          });
+          throw createHttpError(401, "Authorization header missing or malformed");
+        }
       }
 
       try {

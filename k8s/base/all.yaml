@@ -334,6 +334,11 @@ data:
   FEED_CACHE_TTL_SECONDS: "60"
   SERIES_CACHE_TTL_SECONDS: "120"
   RELATED_CACHE_TTL_SECONDS: "180"
+  UPLOAD_SERVICE_URL: http://upload-service:5000
+  TRANSCODING_REQUESTS_TOPIC: transcoding-requests
+  GCP_PROJECT_ID: pocketlol-68ca6
+  UPLOAD_BUCKET: videos-bucket-pocketlol
+  MEDIA_READY_SUBSCRIPTION: projects/pocketlol-68ca6/subscriptions/streaming-audit-sub
 ---
 
 ---
@@ -604,9 +609,10 @@ data:
   CDN_BASE_URL: ""
   SIGNED_URL_TTL_SECONDS: "300"
   GCS_MANIFEST_BUCKET: ""
-  PUBSUB_UPLOAD_SUBSCRIPTION: ""
+  PUBSUB_UPLOAD_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/uploaded-media-sub"
   UPLOAD_EVENT_ACK_DEADLINE_SECONDS: "60"
   AUDIT_LOG_TOPIC: ""
+  CONTENT_SERVICE_BASE_URL: http://content-service:4600
   AUTH_SERVICE_BASE_URL: http://auth-service:4000
   AUTH_SERVICE_INTROSPECTION_PATH: /api/v1/auth/introspect
   AUTH_SERVICE_TIMEOUT_MS: "2000"
@@ -680,9 +686,13 @@ data:
   HTTP_PORT: "5000"
   LOG_LEVEL: info
   REDIS_URL: ""
-  UPLOAD_BUCKET: ""
+  UPLOAD_BUCKET: videos-bucket-pocketlol
   CDN_UPLOAD_BASE_URL: ""
   SIGNED_UPLOAD_TTL_SECONDS: "600"
+  CONTENT_SERVICE_URL: http://content-service:4600
+  GCP_PROJECT_ID: pocketlol-68ca6
+  PUBSUB_PROJECT_ID: pocketlol-68ca6
+  MEDIA_UPLOADED_TOPIC: uploaded-media
 ---
 
 ---
@@ -788,6 +798,7 @@ data:
   REDIS_URL: ""
   RAZORPAY_KEY_ID: ""
   RAZORPAY_KEY_SECRET: ""
+  RAZORPAY_WEBHOOK_SECRET: ""
 ---
 
 ---
@@ -884,3 +895,43 @@ spec:
       port: 50071
       targetPort: grpc
   type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcoding-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: transcoding-worker
+  template:
+    metadata:
+      labels:
+        app: transcoding-worker
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: transcoding-worker
+          image: transcoding-worker:latest
+          imagePullPolicy: Always
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: GCP_PROJECT_ID
+              value: "pocketlol-68ca6"
+            - name: GCS_UPLOADS_BUCKET
+              value: "videos-bucket-pocketlol"
+            - name: GCS_STREAMING_BUCKET
+              value: "videos-bucket-pocketlol"
+            - name: PUBSUB_SUBSCRIPTION
+              value: "projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub"
+            - name: PUBSUB_READY_TOPIC
+              value: "streaming-audit"
+            - name: CDN_BASE_URL
+              value: "https://storage.googleapis.com/videos-bucket-pocketlol"
+          envFrom:
+            - secretRef:
+                name: shared-secrets
