@@ -46,7 +46,7 @@ const continueWatchItemSchema = z.object({
   episode: z.number().int().nullable(),
   series_title: z.string(),
   title: z.string(),
-  thumbnail: z.string().url().nullable(),
+  thumbnail: z.string().nullable(),
   duration_seconds: z.number().int().positive(),
   streaming: streamingInfoSchema,
   progress: progressSchema,
@@ -60,7 +60,7 @@ const carouselItemSchema = z.object({
   type: z.string(),
   title: z.string(),
   subtitle: z.string().nullable(),
-  thumbnailUrl: z.string().url().nullable(),
+  thumbnailUrl: z.string().nullable(),
   videoUrl: z.string().url().nullable(),
   rating: z.number().nullable(),
   series_id: z.string().nullable(),
@@ -72,7 +72,7 @@ const sectionItemSchema = z.object({
   type: z.string(),
   title: z.string(),
   subtitle: z.string().nullable(),
-  thumbnailUrl: z.string().url().nullable(),
+  thumbnailUrl: z.string().nullable(),
   duration: z.string().nullable(),
   watchedDuration: z.string().nullable(),
   progress: z.number().min(0).max(1).nullable(),
@@ -99,6 +99,7 @@ const paginationSchema = z.object({
 
 export const mobileHomeDataSchema = z.object({
   carousel: z.array(carouselItemSchema).optional(),
+  top10: z.array(sectionItemSchema).optional(),
   "continue watch": z.array(continueWatchItemSchema),
   sections: z.array(sectionSchema),
   pagination: paginationSchema,
@@ -120,7 +121,7 @@ export const mobileTagsResponseSchema = z.object({
 
 const trailerSchema = z
   .object({
-    thumbnail: z.string().url().nullable(),
+    thumbnail: z.string().nullable(),
     duration_seconds: z.number().int().positive(),
     streaming: streamingInfoSchema,
   })
@@ -133,7 +134,7 @@ const seriesEpisodeSchema = z.object({
   season: z.number().int().nullable(),
   title: z.string(),
   description: z.string().nullable(),
-  thumbnail: z.string().url().nullable(),
+  thumbnail: z.string().nullable(),
   duration_seconds: z.number().int().positive(),
   release_date: z.string().datetime().nullable(),
   is_download_allowed: z.boolean(),
@@ -148,8 +149,8 @@ export const mobileSeriesDataSchema = z.object({
   series_id: z.string(),
   series_title: z.string(),
   synopsis: z.string().nullable(),
-  thumbnail: z.string().url().nullable(),
-  banner: z.string().url().nullable(),
+  thumbnail: z.string().nullable(),
+  banner: z.string().nullable(),
   tags: z.array(z.string()),
   category: z.string().nullable(),
   trailer: trailerSchema,
@@ -180,9 +181,23 @@ const reelItemSchema = z.object({
   description: z.string().nullable(),
   duration_seconds: z.number().int().positive(),
   rating: z.number().nullable(),
-  thumbnail: z.string().url().nullable(),
+  thumbnail: z.string().nullable(),
   streaming: streamingInfoSchema,
   engagement: engagementSchema.nullable().optional(),
+  series: z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      thumbnail: z.string().nullable(),
+    })
+    .nullable(),
+  episode: z
+    .object({
+      id: z.string(),
+      slug: z.string(),
+      episodeNumber: z.number().int().nullable(),
+    })
+    .nullable(),
 });
 
 export const mobileReelsDataSchema = z.object({

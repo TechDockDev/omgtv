@@ -49,7 +49,9 @@ export const mediaUploadedEventSchema = z.object({
   contentClassification: z.enum(["EPISODE", "REEL"]).optional().nullable(),
   fileName: z.string().optional().nullable(),
   storageUrl: z.string().optional(),
+  cdnUrl: z.string().optional(),
   assetType: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
 });
 
 export type MediaUploadedEvent = z.infer<typeof mediaUploadedEventSchema>;

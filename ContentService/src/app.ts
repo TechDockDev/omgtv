@@ -16,6 +16,7 @@ import pubsubPlugin from "./plugins/pubsub";
 import catalogPlugin from "./plugins/catalog";
 import mediaReadySubscriber from "./subscribers/media-ready";
 import mediaUploadedSubscriber from "./subscribers/media-uploaded";
+import cacheInvalidationSubscriber from "./subscribers/cache-invalidator";
 import internalRoutes from "./routes/internal";
 import adminRoutes from "./routes/admin";
 import viewerCatalogRoutes from "./routes/viewer/catalog";
@@ -54,6 +55,7 @@ export async function buildApp() {
   await app.register(pubsubPlugin);
   await app.register(catalogPlugin);
   await app.register(mediaReadySubscriber);
+  await app.register(cacheInvalidationSubscriber);
   // await app.register(mediaUploadedSubscriber); // Replaced by internal HTTP route
   await app.register(serviceAuthPlugin);
   await app.register(internalRoutes, { prefix: "/internal" });

@@ -203,3 +203,24 @@ export const mediaAssetListSuccessResponseSchema = createSuccessResponseSchema(
 
 export type MediaAssetListResponse = z.infer<typeof mediaAssetListResponseSchema>;
 export type MediaAssetListSuccessResponse = SuccessResponse<MediaAssetListResponse>;
+
+export const adminTopTenItemSchema = z.object({
+  seriesId: z.string().uuid(),
+  position: z.number().int().min(1).max(10),
+});
+
+export const adminTopTenBodySchema = z.object({
+  items: z.array(adminTopTenItemSchema).max(10),
+});
+
+export const adminTopTenSeriesSchema = z.object({
+  id: z.string().uuid(),
+  position: z.number().int().min(1).max(10),
+  seriesId: z.string().uuid(),
+  series: adminCarouselSeriesSchema,
+});
+
+export const adminTopTenResponseSchema = z.array(adminTopTenSeriesSchema);
+
+export type AdminTopTenBody = z.infer<typeof adminTopTenBodySchema>;
+export type AdminTopTenResponse = z.infer<typeof adminTopTenResponseSchema>;

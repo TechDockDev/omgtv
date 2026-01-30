@@ -148,52 +148,65 @@ export class MobileAppService {
     const parsed = mobileHomeQuerySchema.parse(query);
 
     // Fetch Series for Sections (Main Content) and Episodes for Continue Watch (Resume)
-    const [seriesFeed, episodeFeed] = await Promise.all([
+    const [seriesFeed, episodeFeed, topTen] = await Promise.all([
       this.deps.viewerCatalog.getHomeSeries({
         limit: parsed.limit ?? this.deps.config.homeFeedLimit,
         cursor: parsed.cursor,
       }),
       this.deps.viewerCatalog.getFeed({
-        limit: this.deps.config.continueWatchLimit * 2, // Fetch double to ensure enough valid candidates
-        cursor: null, // Always latest
+        limit: this.deps.config.continueWatchLimit * 2,
+        cursor: null,
       }),
+      this.deps.repository.getTopTenSeries(),
     ]);
 
     options?.logger?.warn({
       msg: "[MobileHub] Debug Stats",
       series: seriesFeed.items.length,
-      episodes: episodeFeed.items.length
+      episodes: episodeFeed.items.length,
+      topTen: topTen.length,
     });
 
     const filteredItems = this.filterByTag(seriesFeed.items, parsed.tag);
     const entitlements = await this.resolveEntitlements(options);
 
-    // Progress is mainly for Continue Watch items (Episodes)
-    // We can also check progress for Series if needed, but for now focusing on Episodes.
     const progressMap = await this.loadProgressMap(episodeFeed.items, {
       limit: this.deps.config.continueWatchLimit * 4,
       options,
     });
 
-    // Load engagement for Series (Sections)
+    // Load engagement for Series (Sections) AND Top 10
     const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
       filteredItems.map((item) => ({ id: item.id, contentType: "series" as const }));
+
+    topTen.forEach((t) => {
+      engagementItems.push({ id: t.series.id, contentType: "series" as const });
+    });
+
     const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
     const carouselItems = await this.buildCarouselItems(filteredItems, engagementStates);
 
+    const top10Items = topTen.map((t) => ({
+      id: t.series.id,
+      type: "series",
+      title: t.series.title,
+      subtitle: t.series.category?.name ?? null,
+      thumbnailUrl: t.series.heroImageUrl ?? t.series.bannerImageUrl ?? null,
+      duration: null,
+      watchedDuration: null,
+      progress: null,
+      rating: null,
+      lastWatchedAt: null,
+      series_id: t.series.id,
+      engagement: engagementStates.get(t.series.id) ?? null,
+    }));
+
     // Build Continue Watch from Episode Feed
-    // Filter episodes that have progress
     const continueWatchCandidates = episodeFeed.items.filter((item) => progressMap.has(item.id));
     const continueWatch = continueWatchCandidates
       .slice(0, this.deps.config.continueWatchLimit)
       .map((item) => {
-        // For episodes, we check engagement on the SERIES mostly? 
-        // Or episode specific? The UI likely likes the Series.
-        // But the engagement system supports both. 
-        // Let's check Series engagement for the subset of continue watch items if we want.
-        // For simplicity, passing null or we need to fetch engagement for these episodes too.
-        // Let's leave engagement null for continue watch cards for now as they are "Resume" focused.
         return {
           ...this.toContinueWatchItem(
             item,
@@ -206,7 +219,7 @@ export class MobileAppService {
 
     const sections = this.buildSections(
       filteredItems.map(item => ({
-        ...this.toSectionEntry(item, undefined), // Series cards don't use progress bar typically
+        ...this.toSectionEntry(item, undefined),
         engagement: engagementStates.get(item.id) ?? null
       })),
       continueWatch,
@@ -218,6 +231,7 @@ export class MobileAppService {
 
     const data: MobileHomeData = {
       carousel: carouselItems,
+      top10: top10Items,
       "continue watch": continueWatch,
       sections,
       pagination: {
@@ -838,6 +852,20 @@ export class MobileAppService {
       rating: null,
       thumbnail: reel.mediaAsset?.defaultThumbnailUrl ?? null,
       streaming,
+      series: reel.series
+        ? {
+          id: reel.series.id,
+          title: reel.series.title,
+          thumbnail: reel.series.heroImageUrl ?? reel.series.bannerImageUrl ?? null,
+        }
+        : null,
+      episode: reel.episode
+        ? {
+          id: reel.episode.id,
+          slug: reel.episode.slug,
+          episodeNumber: reel.episode.episodeNumber ?? null,
+        }
+        : null,
     };
   }
 

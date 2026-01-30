@@ -109,6 +109,23 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     }
   );
 
+  fastify.delete(
+    "/uploads/:uploadId",
+    {
+      schema: {
+        params: uploadIdParamSchema,
+      },
+    },
+    async (request) => {
+      const adminContext = ensureAdmin(request);
+      const params = uploadIdParamSchema.parse(request.params);
+      return await fastify.uploadManager.deleteUpload(
+        params.uploadId,
+        adminContext.adminId
+      );
+    }
+  );
+
   fastify.get(
     "/uploads/quota",
     {

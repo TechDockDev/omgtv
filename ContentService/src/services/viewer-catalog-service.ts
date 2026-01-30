@@ -137,7 +137,7 @@ export type ViewerCatalogServiceOptions = {
 };
 
 const FEED_CACHE_PREFIX = "catalog:feed";
-const SERIES_CACHE_PREFIX = "catalog:series";
+const SERIES_CACHE_PREFIX = "catalog:series:v2";
 const RELATED_CACHE_PREFIX = "catalog:related";
 
 const tracer = trace.getTracer("content-service.viewer");
@@ -433,6 +433,8 @@ export class ViewerCatalogService {
         if (!series) {
           return null;
         }
+
+        console.log(`[DEBUG] getSeriesDetail DB Hit. ID: ${series.id}, Seasons: ${series.seasons.length}, Standalone: ${series.standaloneEpisodes.length}`);
 
         span.setAttribute("series.id", series.id);
 
