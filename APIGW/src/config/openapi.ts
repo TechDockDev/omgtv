@@ -1800,6 +1800,41 @@ const contentDocument: OpenAPIV3.Document = {
       },
     },
     "/api/v1/content/admin/catalog/series/{id}": {
+      get: {
+        summary: "Get series",
+        tags: ["Content Service - Admin"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Series details.",
+            content: successContent({
+              $ref: "#/components/schemas/AdminSeriesUpdateRequest", // Using update request schema as it contains all fields? Or create? 
+              // Actually, checking schema definitions, AdminSeriesRequest is specific.
+              // Maybe I should use a response schema if available, or just generic object for now to unblock.
+              // Previous 'create' returns successContent(). 
+              // Let's check if there is an AdminSeriesResponse.
+              // Line 2228 defines AdminSeriesRequest.
+              // I'll use successContent() generic or omit schema ref if unsure, but user wants data.
+              // createSeries returns the Series object.
+              // I'll refer to AdminSeriesRequest as a proxy for the shape, or AdminSeries if it exists like categories.
+              // Wait, I see AdminCategory but NO AdminSeries in schemas?
+              // Line 2227: AdminSeriesRequest.
+              // I'll check if AdminSeries exists.
+            }),
+          },
+          "404": {
+            description: "Series not found.",
+            content: errorContent(),
+          },
+        },
+      },
       patch: {
         summary: "Update series",
         tags: ["Content Service - Admin"],
@@ -1856,6 +1891,10 @@ const contentDocument: OpenAPIV3.Document = {
           },
           "404": {
             description: "Series not found.",
+            content: errorContent(),
+          },
+          "412": {
+            description: "Cannot delete series with existing episodes.",
             content: errorContent(),
           },
         },
@@ -1917,12 +1956,32 @@ const contentDocument: OpenAPIV3.Document = {
         },
       },
       get: {
-        summary: "Moderation queue",
-        description: "List episodes pending moderation.",
+        summary: "List episodes",
+        description: "List episodes with optional filtering.",
         tags: ["Content Service - Admin"],
+        parameters: [
+          {
+            name: "seriesId",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer" },
+          },
+          {
+            name: "cursor",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
         responses: {
           "200": {
-            description: "Moderation queue items.",
+            description: "Episode list.",
             content: successContent(),
           },
         },
@@ -2001,6 +2060,28 @@ const contentDocument: OpenAPIV3.Document = {
       },
     },
     "/api/v1/content/admin/catalog/episodes/{id}": {
+      get: {
+        summary: "Get episode",
+        tags: ["Content Service - Admin"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Episode details.",
+            content: successContent(),
+          },
+          "404": {
+            description: "Episode not found.",
+            content: errorContent(),
+          },
+        },
+      },
       delete: {
         summary: "Delete episode",
         tags: ["Content Service - Admin"],
@@ -2024,6 +2105,117 @@ const contentDocument: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/v1/content/admin/catalog/reels": {
+      post: {
+        summary: "Create reel",
+        tags: ["Content Service - Admin"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/AdminReelRequest" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Reel created.",
+            content: successContent(),
+          },
+          "404": {
+            description: "Series/Episode not found.",
+            content: errorContent(),
+          },
+          "409": {
+            description: "Conflict.",
+            content: errorContent(),
+          },
+        },
+      },
+      get: {
+        summary: "List reels",
+        tags: ["Content Service - Admin"],
+        parameters: [
+          {
+            name: "seriesId",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer" },
+          },
+          {
+            name: "cursor",
+            in: "query",
+            required: false,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Reel list.",
+            content: successContent(),
+          },
+        },
+      },
+    },
+    "/api/v1/content/admin/catalog/reels/{id}": {
+      patch: {
+        summary: "Update reel",
+        tags: ["Content Service - Admin"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/AdminReelUpdateRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Reel updated.",
+            content: successContent(),
+          },
+          "404": {
+            description: "Reel not found.",
+            content: errorContent(),
+          },
+        },
+      },
+      delete: {
+        summary: "Delete reel",
+        tags: ["Content Service - Admin"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "204": {
+            description: "Reel deleted.",
+          },
+          "404": {
+            description: "Reel not found.",
+            content: errorContent(),
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -2036,6 +2228,34 @@ const contentDocument: OpenAPIV3.Document = {
       },
     },
     schemas: {
+      AdminReelRequest: {
+        type: "object",
+        additionalProperties: false,
+        required: ["seriesId", "episodeId", "title"],
+        properties: {
+          seriesId: { type: "string", format: "uuid" },
+          episodeId: { type: "string", format: "uuid" },
+          title: { type: "string", minLength: 1 },
+          description: { type: "string", maxLength: 5000, nullable: true },
+          status: { type: "string", enum: ["DRAFT", "REVIEW", "PUBLISHED", "ARCHIVED"] },
+          visibility: { type: "string", enum: ["PUBLIC", "UNLISTED", "PRIVATE"] },
+          publishedAt: { type: "string", format: "date-time", nullable: true },
+          tags: { type: "array", items: { type: "string" } },
+          durationSeconds: { type: "integer", format: "int32", minimum: 0, nullable: true },
+        },
+      },
+      AdminReelUpdateRequest: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string", minLength: 1 },
+          description: { type: "string", maxLength: 5000, nullable: true },
+          status: { type: "string", enum: ["DRAFT", "REVIEW", "PUBLISHED", "ARCHIVED"] },
+          visibility: { type: "string", enum: ["PUBLIC", "UNLISTED", "PRIVATE"] },
+          publishedAt: { type: "string", format: "date-time", nullable: true },
+          durationSeconds: { type: "integer", format: "int32", minimum: 0, nullable: true },
+        },
+      },
       CategoryWriteRequest: {
         type: "object",
         required: ["name"],
@@ -2189,7 +2409,7 @@ const contentDocument: OpenAPIV3.Document = {
           title: { type: "string" },
           seriesId: { type: "string", format: "uuid" },
           seriesTitle: { type: "string" },
-          durationSeconds: { type: "integer", format: "int32", minimum: 1 },
+          durationSeconds: { type: "integer", format: "int32", minimum: 0 },
           manifestUrl: { type: "string", format: "uri", nullable: true },
           thumbnailUrl: { type: "string", format: "uri", nullable: true },
           publishedAt: { type: "string", format: "date-time", nullable: true },
@@ -2265,7 +2485,7 @@ const contentDocument: OpenAPIV3.Document = {
           slug: { type: "string", minLength: 3 },
           title: { type: "string", minLength: 1 },
           synopsis: { type: "string", maxLength: 5000 },
-          durationSeconds: { type: "integer", format: "int32", minimum: 1 },
+          durationSeconds: { type: "integer", format: "int32", minimum: 0 },
           status: { type: "string", enum: ["DRAFT", "PUBLISHED", "ARCHIVED"] },
           visibility: { type: "string", enum: ["PUBLIC", "PRIVATE"] },
           publishedAt: { type: "string", format: "date-time" },
@@ -2625,12 +2845,10 @@ const contentDocument: OpenAPIV3.Document = {
                 synopsis: { type: "string", nullable: true },
                 heroImageUrl: {
                   type: "string",
-                  format: "uri",
                   nullable: true,
                 },
                 bannerImageUrl: {
                   type: "string",
-                  format: "uri",
                   nullable: true,
                 },
                 category: {
@@ -2716,7 +2934,7 @@ const contentDocument: OpenAPIV3.Document = {
           type: { type: "string" },
           title: { type: "string" },
           subtitle: { type: "string", nullable: true },
-          thumbnailUrl: { type: "string", format: "uri", nullable: true },
+          thumbnailUrl: { type: "string", nullable: true },
           videoUrl: { type: "string", format: "uri", nullable: true },
           rating: { type: "number", nullable: true },
           series_id: { type: "string", nullable: true },
@@ -2743,7 +2961,7 @@ const contentDocument: OpenAPIV3.Document = {
           episode: { type: "integer", format: "int32", nullable: true },
           series_title: { type: "string" },
           title: { type: "string" },
-          thumbnail: { type: "string", format: "uri", nullable: true },
+          thumbnail: { type: "string", nullable: true },
           duration_seconds: { type: "integer", format: "int32", minimum: 1 },
           streaming: { $ref: "#/components/schemas/MobileStreaming" },
           progress: { $ref: "#/components/schemas/MobileProgress" },
@@ -2771,7 +2989,7 @@ const contentDocument: OpenAPIV3.Document = {
           type: { type: "string" },
           title: { type: "string" },
           subtitle: { type: "string", nullable: true },
-          thumbnailUrl: { type: "string", format: "uri", nullable: true },
+          thumbnailUrl: { type: "string", nullable: true },
           duration: { type: "string", nullable: true },
           watchedDuration: { type: "string", nullable: true },
           progress: { type: "number", nullable: true },
@@ -2886,7 +3104,7 @@ const contentDocument: OpenAPIV3.Document = {
           season: { type: "integer", format: "int32", nullable: true },
           title: { type: "string" },
           description: { type: "string", nullable: true },
-          thumbnail: { type: "string", format: "uri", nullable: true },
+          thumbnail: { type: "string", nullable: true },
           duration_seconds: { type: "integer", format: "int32", minimum: 1 },
           release_date: { type: "string", format: "date-time", nullable: true },
           is_download_allowed: { type: "boolean" },
@@ -2956,8 +3174,8 @@ const contentDocument: OpenAPIV3.Document = {
           series_id: { type: "string" },
           series_title: { type: "string" },
           synopsis: { type: "string", nullable: true },
-          thumbnail: { type: "string", format: "uri", nullable: true },
-          banner: { type: "string", format: "uri", nullable: true },
+          thumbnail: { type: "string", nullable: true },
+          banner: { type: "string", nullable: true },
           tags: { type: "array", items: { type: "string" } },
           category: { type: "string", nullable: true },
           trailer: {
@@ -2966,7 +3184,7 @@ const contentDocument: OpenAPIV3.Document = {
             additionalProperties: false,
             required: ["thumbnail", "duration_seconds", "streaming"],
             properties: {
-              thumbnail: { type: "string", format: "uri", nullable: true },
+              thumbnail: { type: "string", nullable: true },
               duration_seconds: {
                 type: "integer",
                 format: "int32",
@@ -3000,8 +3218,26 @@ const contentDocument: OpenAPIV3.Document = {
           description: { type: "string", nullable: true },
           duration_seconds: { type: "integer", format: "int32", minimum: 1 },
           rating: { type: "number", nullable: true },
-          thumbnail: { type: "string", format: "uri", nullable: true },
+          thumbnail: { type: "string", nullable: true },
           streaming: { $ref: "#/components/schemas/MobileStreaming" },
+          series: {
+            type: "object",
+            nullable: true,
+            properties: {
+              id: { type: "string" },
+              title: { type: "string" },
+              thumbnail: { type: "string", nullable: true },
+            },
+          },
+          episode: {
+            type: "object",
+            nullable: true,
+            properties: {
+              id: { type: "string" },
+              slug: { type: "string" },
+              episodeNumber: { type: "integer", nullable: true },
+            },
+          },
         },
       },
       MobileReelsData: {

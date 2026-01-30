@@ -77,6 +77,8 @@ model Series {
   reels    Reel[]
   carouselEntries CarouselEntry[]
   mediaAssets MediaAsset[]
+  imageAssets ImageAsset[]
+  topTenEntry TopTenSeries?
 
   @@index([categoryId])
   @@index([status, visibility])
@@ -131,6 +133,7 @@ model Episode {
   season Season? @relation(fields: [seasonId], references: [id])
 
   mediaAsset MediaAsset?
+  imageAssets ImageAsset[]
   reels      Reel[]
   carouselEntries CarouselEntry[]
 
@@ -164,6 +167,7 @@ model Reel {
   episode    Episode?   @relation(fields: [episodeId], references: [id])
   series     Series?    @relation(fields: [seriesId], references: [id])
   mediaAsset MediaAsset?
+  imageAssets ImageAsset[]
 
   @@index([categoryId])
   @@index([episodeId])
@@ -213,11 +217,16 @@ model ImageAsset {
   status      MediaAssetStatus @default(PENDING)
   
   // Optional linking - can be assigned later
-  seriesId    String?
-  episodeId   String?
-  reelId      String?
+  seriesId String?
+  episodeId String?
+  reelId    String?
+
+  series  Series?  @relation(fields: [seriesId], references: [id])
+  episode Episode? @relation(fields: [episodeId], references: [id])
+  reel    Reel?    @relation(fields: [reelId], references: [id])
   
   createdByAdminId String?
+  updatedByAdminId String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   deletedAt   DateTime?
@@ -272,4 +281,17 @@ model CarouselEntry {
   episode Episode? @relation(fields: [episodeId], references: [id])
 
   @@index([position])
+}
+
+model TopTenSeries {
+  id        String   @id @default(uuid())
+  seriesId  String
+  position  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  series Series @relation(fields: [seriesId], references: [id])
+
+  @@unique([seriesId])
+  @@unique([position])
 }

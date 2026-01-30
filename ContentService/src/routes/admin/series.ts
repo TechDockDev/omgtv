@@ -8,7 +8,7 @@ import { PublicationStatus, Visibility } from "@prisma/client";
 import { loadConfig } from "../../config";
 
 const createSeriesSchema = z.object({
-  slug: z.string().min(3),
+  slug: z.string().min(3).optional(), // Optional, backend generates if missing
   title: z.string().min(1),
   synopsis: z.string().max(5000).optional(),
   heroImageUrl: z.string().url().optional(),
@@ -20,6 +20,8 @@ const createSeriesSchema = z.object({
   ownerId: z.string().uuid().optional(),
   categoryId: z.string().uuid().optional(),
   isAudioSeries: z.boolean().optional(),
+  displayOrder: z.number().int().optional(),
+  isCarousel: z.boolean().optional(),
 });
 
 const updateSeriesSchema = createSeriesSchema
@@ -41,6 +43,46 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
     }
     throw reply.server.httpErrors.badRequest("Missing x-admin-id header");
   };
+
+  fastify.get("/", {
+    schema: {
+      querystring: z.object({
+        limit: z.coerce.number().int().positive().max(100).default(20),
+        cursor: z.string().uuid().optional(),
+      }),
+    },
+    handler: async (request, reply) => {
+      const query = request.query as { limit: number; cursor?: string }; // simple cast or use Zod generic
+      // validation handled by schema above
+
+      const adminId = requireAdminId(request, reply);
+      const result = await catalog.listSeries({
+        limit: query.limit,
+        cursor: query.cursor,
+      });
+      return reply.send(result);
+    },
+  });
+
+  fastify.get<{ Params: { id: string } }>("/:id", {
+    schema: {
+      params: z.object({ id: z.string().uuid() }),
+    },
+    handler: async (request, reply) => {
+      const params = z.object({ id: z.string().uuid() }).parse(request.params);
+      try {
+        const adminId = requireAdminId(request, reply);
+        const result = await catalog.getSeries(params.id);
+        return reply.send(result);
+      } catch (error) {
+        if (error instanceof CatalogServiceError && error.code === "NOT_FOUND") {
+          return reply.status(404).send({ message: error.message });
+        }
+        request.log.error({ err: error, contentId: params.id }, "Failed to get series");
+        return reply.status(500).send({ message: "Unable to get series" });
+      }
+    },
+  });
 
   fastify.post("/", {
     schema: {
@@ -118,11 +160,13 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
         await catalog.deleteSeries(adminId, params.id);
         return reply.status(204).send();
       } catch (error) {
-        if (
-          error instanceof CatalogServiceError &&
-          error.code === "NOT_FOUND"
-        ) {
-          return reply.status(404).send({ message: error.message });
+        if (error instanceof CatalogServiceError) {
+          if (error.code === "NOT_FOUND") {
+            return reply.status(404).send({ message: error.message });
+          }
+          if (error.code === "FAILED_PRECONDITION") {
+            return reply.status(412).send({ message: error.message });
+          }
         }
         request.log.error(
           { err: error, contentId: params.id },

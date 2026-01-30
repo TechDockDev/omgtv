@@ -149,6 +149,10 @@ export default async function internalRoutes(fastify: FastifyInstance) {
           contentId: body.contentId ?? undefined,
           contentType: body.contentClassification ?? undefined,
           filename: body.fileName ?? undefined,
+          assetType: body.assetType ?? undefined,
+          storageUrl: body.storageUrl ?? undefined,
+          cdnUrl: body.cdnUrl ?? undefined,
+          sizeBytes: body.sizeBytes ?? undefined,
         });
         return reply.status(202).send({ accepted: true });
       } catch (error) {

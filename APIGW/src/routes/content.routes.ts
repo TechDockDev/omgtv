@@ -8,6 +8,10 @@ import {
   type AdminCarouselBody,
   type AdminCarouselResponse,
   type ContentResponse,
+  adminTopTenBodySchema,
+  adminTopTenResponseSchema,
+  type AdminTopTenBody,
+  type AdminTopTenResponse,
 } from "../schemas/content.schema";
 import { errorResponseSchema } from "../schemas/base.schema";
 import {
@@ -15,6 +19,8 @@ import {
   setAdminCarouselEntries,
   processMediaAsset,
   listMediaAssets,
+  getTopTenSeries,
+  updateTopTenSeries,
 } from "../proxy/content.proxy";
 import {
   mediaProcessSuccessResponseSchema,
@@ -166,6 +172,71 @@ export default fp(
           "Triggered manual transcoding"
         );
         return reply.code(200).send(result);
+      },
+    });
+
+    fastify.route<{
+      Body: AdminTopTenBody;
+      Reply: AdminTopTenResponse;
+    }>({
+      method: "POST",
+      url: "/admin/catalog/top-10",
+      schema: {
+        body: adminTopTenBodySchema,
+        response: {
+          200: adminTopTenResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          412: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const body = adminTopTenBodySchema.parse(request.body);
+        const result = await updateTopTenSeries({
+          body,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        request.log.info(
+          { adminId: request.user?.id },
+          "Updated top 10 series"
+        );
+        return reply.send(result);
+      },
+    });
+
+    fastify.route<{
+      Reply: AdminTopTenResponse;
+    }>({
+      method: "GET",
+      url: "/admin/catalog/top-10",
+      schema: {
+        response: {
+          200: adminTopTenResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const result = await getTopTenSeries({
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        return reply.send(result);
       },
     });
   },

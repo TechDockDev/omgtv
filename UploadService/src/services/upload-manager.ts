@@ -34,12 +34,12 @@ const assetPolicies: Record<
     allowedContentTypes: [/^video\//],
   },
   thumbnail: {
-    prefix: "thumbnails",
+    prefix: "images",
     maxSizeBytes: 25 * 1024 * 1024,
     allowedContentTypes: [/^image\/(jpeg|png|webp)$/],
   },
   banner: {
-    prefix: "banners",
+    prefix: "images",
     maxSizeBytes: 25 * 1024 * 1024,
     allowedContentTypes: [/^image\/(jpeg|png|webp)$/],
   },
@@ -401,6 +401,64 @@ export class UploadManager {
       validationMeta: sanitizedValidationMeta,
       processingMeta: sanitizedProcessingMeta,
     };
+  }
+
+  async deleteUpload(uploadId: string, adminId: string) {
+    const session = await this.sessions.getSession(uploadId);
+    if (!session) {
+      throw Object.assign(new Error("upload_not_found"), {
+        statusCode: 404,
+      });
+    }
+
+    // Delete source file from Upload Bucket
+    const bucket = this.storage.bucket(this.config.UPLOAD_BUCKET);
+    try {
+      await bucket.file(session.objectKey).delete();
+      this.logger.info({ uploadId, objectKey: session.objectKey }, "Deleted source file from upload bucket");
+    } catch (error) {
+      this.logger.warn({ uploadId, err: error }, "Failed to delete source file (may already be gone)");
+    }
+
+    // Delete HLS files if processed
+    const readyMetadata = this.extractReadyMetadata(session);
+    // Use bucket from metadata if available, otherwise fallback to configured UPLOAD_BUCKET (assuming same bucket as user indicated)
+    const targetBucketName = (readyMetadata && readyMetadata.bucket) ? readyMetadata.bucket : this.config.UPLOAD_BUCKET;
+    const storagePrefix = (readyMetadata && readyMetadata.storagePrefix) ? readyMetadata.storagePrefix : null;
+
+    if (targetBucketName && storagePrefix) {
+      const hlsBucket = this.storage.bucket(targetBucketName);
+      try {
+        await hlsBucket.deleteFiles({ prefix: storagePrefix });
+        this.logger.info(
+          { uploadId, bucket: targetBucketName, prefix: storagePrefix },
+          "Deleted HLS files from storage"
+        );
+      } catch (error) {
+        this.logger.warn({ uploadId, err: error }, "Failed to delete HLS files");
+      }
+    } else if (session.contentId) {
+      // Fallback: try to guess prefix if metadata missing but contentId exists
+      const contentType = this.mapSessionClassification(session.contentClassification);
+      if (contentType) {
+        const derivedPrefix = this.buildDefaultStoragePrefix(contentType, session.contentId);
+        // We now safely try to delete from the standard bucket using derived prefix
+        const hlsBucket = this.storage.bucket(this.config.UPLOAD_BUCKET);
+        try {
+          // Only delete if we are confident about the prefix (e.g. it's not root or empty)
+          if (derivedPrefix && derivedPrefix.length > 5) {
+            await hlsBucket.deleteFiles({ prefix: derivedPrefix });
+            this.logger.info({ uploadId, prefix: derivedPrefix }, "Deleted HLS files (fallback prefix)");
+          } else {
+            this.logger.warn({ uploadId, prefix: derivedPrefix }, "Skipping fallback delete: prefix too short/unsafe");
+          }
+        } catch (error) {
+          this.logger.warn({ uploadId, err: error }, "Failed to delete HLS files (fallback)");
+        }
+      }
+    }
+
+    return { message: "Upload content deleted", uploadId };
   }
 
   private async publishMediaUploaded(session: UploadSession) {

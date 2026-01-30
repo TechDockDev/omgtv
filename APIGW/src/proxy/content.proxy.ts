@@ -10,6 +10,8 @@ import {
   type ContentResponse,
   batchContentResponseSchema,
   type BatchContentResponse,
+  type AdminTopTenBody,
+  type AdminTopTenResponse,
 } from "../schemas/content.schema";
 import { performServiceRequest, UpstreamServiceError } from "../utils/http";
 import { createHttpError } from "../utils/errors";
@@ -279,4 +281,86 @@ export async function listMediaAssets({
   }
 
   return payload;
+}
+
+export interface UpdateTopTenArgs {
+  body: AdminTopTenBody;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}
+
+export async function getTopTenSeries({
+  correlationId,
+  user,
+  span,
+}: {
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}): Promise<AdminTopTenResponse> {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: "/api/v1/content/admin/catalog/top-10",
+      method: "GET",
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:getTopTen",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Failed to fetch top 10 series",
+        error.cause
+      );
+    }
+    throw error;
+  }
+  return payload as AdminTopTenResponse;
+}
+
+export async function updateTopTenSeries({
+  body,
+  correlationId,
+  user,
+  span,
+}: UpdateTopTenArgs): Promise<AdminTopTenResponse> {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: "/api/v1/content/admin/catalog/top-10",
+      method: "POST",
+      body,
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:updateTopTen",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 412) {
+        throw createHttpError(412, "Precondition failed", error.cause);
+      }
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Failed to update top 10 series",
+        error.cause
+      );
+    }
+    throw error;
+  }
+  return payload as AdminTopTenResponse;
 }

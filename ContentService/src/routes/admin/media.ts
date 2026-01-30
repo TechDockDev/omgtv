@@ -194,31 +194,31 @@ export default async function adminMediaRoutes(fastify: FastifyInstance) {
     /**
      * DELETE /admin/media/:id - Delete media asset
      */
+    /**
+     * DELETE /admin/media/:id - Delete media asset
+     */
     fastify.delete<{ Params: { id: string } }>("/:id", {
         handler: async (request, reply) => {
             const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
             const adminId = requireAdminId(request, reply);
 
-            const mediaAsset = await prisma.mediaAsset.findFirst({
-                where: { id, deletedAt: null },
-            });
-
-            if (!mediaAsset) {
-                return reply.status(404).send({ message: "MediaAsset not found" });
+            try {
+                // Now supports physical deletion via service
+                await fastify.catalogService.deleteMediaAsset(adminId, id);
+                fastify.log.info({ mediaAssetId: id, adminId }, "Deleted MediaAsset");
+                return reply.status(204).send();
+            } catch (error) {
+                if (error instanceof Error) {
+                    if (error.message.includes("Media asset not found") || (error as any).code === "NOT_FOUND") {
+                        return reply.status(404).send({ message: error.message });
+                    }
+                    if (error.message.includes("assigned to content") || (error as any).code === "FAILED_PRECONDITION") {
+                        return reply.status(412).send({ message: error.message });
+                    }
+                }
+                fastify.log.error({ err: error }, "Error deleting media asset");
+                return reply.status(500).send({ message: "Internal Server Error" });
             }
-
-            // In a real scenario, we might want to check if it's assigned to an existing episode/reel
-            // and prevent deletion if so, or force unassign.
-            // For now, simplistically delete it.
-            await prisma.mediaAsset.delete({
-                where: { id }
-            });
-            // Alternatively use CatalogService.deleteMediaAsset if wired up, 
-            // but accessing prisma directly here matches the file style.
-
-            fastify.log.info({ mediaAssetId: id, adminId }, "Deleted MediaAsset");
-
-            return reply.status(204).send();
         },
     });
 }
