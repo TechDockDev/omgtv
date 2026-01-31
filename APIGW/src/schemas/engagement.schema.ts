@@ -28,6 +28,7 @@ export const engagementIdParamsSchema = z.object({
 export const engagementStatsDataSchema = z.object({
   likes: z.number().int().nonnegative(),
   views: z.number().int().nonnegative(),
+  saves: z.number().int().nonnegative(),
 });
 
 export const engagementLikeDataSchema = engagementStatsDataSchema.extend({
@@ -123,6 +124,7 @@ export const batchActionResultSchema = z.object({
       saved: z.boolean().optional(),
       likes: z.number().int().nonnegative().optional(),
       views: z.number().int().nonnegative().optional(),
+      saves: z.number().int().nonnegative().optional(),
     })
     .optional(),
   error: z.string().optional(),
@@ -164,3 +166,23 @@ export const progressResponseSchema = z.object({
 
 export type SaveProgressBody = z.infer<typeof saveProgressBodySchema>;
 export type ProgressResponse = z.infer<typeof progressResponseSchema>;
+
+// Reviews
+export const addReviewBodySchema = z.object({
+  user_name: z.string().min(1).optional(),
+  rating: z.coerce.number().min(1).max(5),
+  comment: z.string().min(1).max(2000),
+});
+
+export const addReviewResponseSchema = z.object({
+  review_id: z.string(),
+});
+
+export const addReviewSuccessResponseSchema = createSuccessResponseSchema(
+  addReviewResponseSchema
+);
+
+export type AddReviewBody = z.infer<typeof addReviewBodySchema>;
+export type AddReviewResponse = z.infer<typeof addReviewResponseSchema>;
+
+

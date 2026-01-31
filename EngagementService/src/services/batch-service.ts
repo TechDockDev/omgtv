@@ -24,12 +24,22 @@ function redisViewsKey(entityType: EntityType, entityId: string) {
     return `eng:${entityType}:${entityId}:views`;
 }
 
+function redisSavesKey(entityType: EntityType, entityId: string) {
+    return `eng:${entityType}:${entityId}:saves`;
+}
+
 function redisUserLikedKey(entityType: EntityType, userId: string) {
     return `eng:user:${userId}:${entityType}:liked`;
 }
 
 function redisUserSavedKey(entityType: EntityType, userId: string) {
     return `eng:user:${userId}:${entityType}:saved`;
+}
+
+const DIRTY_STATS_SET = "stats:dirty_set";
+
+async function markDirty(redis: Redis, entityType: EntityType, entityId: string) {
+    await redis.sadd(DIRTY_STATS_SET, `${entityType}:${entityId}`);
 }
 
 /**
@@ -88,10 +98,10 @@ async function handleLike(
         const added = await redis.sadd(redisUserLikedKey(entityType, userId), contentId);
         if (added === 1) {
             await redis.incr(redisLikesKey(entityType, contentId));
+            await markDirty(redis, entityType, contentId);
         }
     }
 
-    // DB: async write-through (fire and forget)
     if (prisma) {
         void prisma.userAction
             .upsert({
@@ -132,6 +142,7 @@ async function handleUnlike(
             if (newCount < 0) {
                 await redis.set(redisLikesKey(entityType, contentId), "0");
             }
+            await markDirty(redis, entityType, contentId);
         }
     }
 
@@ -158,7 +169,11 @@ async function handleSave(
     contentId: string
 ): Promise<void> {
     if (redis) {
-        await redis.sadd(redisUserSavedKey(entityType, userId), contentId);
+        const added = await redis.sadd(redisUserSavedKey(entityType, userId), contentId);
+        if (added === 1) {
+            await redis.incr(redisSavesKey(entityType, contentId));
+            await markDirty(redis, entityType, contentId);
+        }
     }
 
     if (prisma) {
@@ -195,7 +210,14 @@ async function handleUnsave(
     contentId: string
 ): Promise<void> {
     if (redis) {
-        await redis.srem(redisUserSavedKey(entityType, userId), contentId);
+        const removed = await redis.srem(redisUserSavedKey(entityType, userId), contentId);
+        if (removed === 1) {
+            const newCount = await redis.decr(redisSavesKey(entityType, contentId));
+            if (newCount < 0) {
+                await redis.set(redisSavesKey(entityType, contentId), "0");
+            }
+            await markDirty(redis, entityType, contentId);
+        }
     }
 
     if (prisma) {
@@ -221,29 +243,7 @@ async function handleView(
 ): Promise<void> {
     if (redis) {
         await redis.incr(redisViewsKey(entityType, contentId));
-    }
-
-    // For views, we update the aggregate stats table (not per-user action)
-    if (prisma) {
-        void prisma.contentStats
-            .upsert({
-                where: {
-                    contentType_contentId: {
-                        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-                        contentId,
-                    },
-                },
-                create: {
-                    contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-                    contentId,
-                    viewCount: 1,
-                },
-                update: {
-                    viewCount: { increment: 1 },
-                    lastSyncedAt: new Date(),
-                },
-            })
-            .catch((err) => console.error("DB view write failed:", err));
+        await markDirty(redis, entityType, contentId);
     }
 }
 
@@ -255,9 +255,9 @@ export async function getUserStates(
     deps: BatchServiceDeps,
     userId: string,
     items: Array<{ contentType: ContentType; contentId: string }>
-): Promise<Record<string, { isLiked: boolean; isSaved: boolean; likeCount: number; viewCount: number }>> {
+): Promise<Record<string, { isLiked: boolean; isSaved: boolean; likeCount: number; viewCount: number; saveCount: number }>> {
     const { redis, prisma } = deps;
-    const result: Record<string, { isLiked: boolean; isSaved: boolean; likeCount: number; viewCount: number }> = {};
+    const result: Record<string, { isLiked: boolean; isSaved: boolean; likeCount: number; viewCount: number; saveCount: number }> = {};
 
     if (items.length === 0) {
         return result;
@@ -291,6 +291,7 @@ export async function getUserStates(
     for (const item of items) {
         countKeys.push(redisLikesKey(item.contentType as EntityType, item.contentId));
         countKeys.push(redisViewsKey(item.contentType as EntityType, item.contentId));
+        countKeys.push(redisSavesKey(item.contentType as EntityType, item.contentId));
     }
 
     let countValues: (string | null)[] = [];
@@ -302,8 +303,9 @@ export async function getUserStates(
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const key = `${item.contentType}:${item.contentId}`;
-        const likeCount = parseInt(countValues[i * 2] ?? "0", 10) || 0;
-        const viewCount = parseInt(countValues[i * 2 + 1] ?? "0", 10) || 0;
+        const likeCount = parseInt(countValues[i * 3] ?? "0", 10) || 0;
+        const viewCount = parseInt(countValues[i * 3 + 1] ?? "0", 10) || 0;
+        const saveCount = parseInt(countValues[i * 3 + 2] ?? "0", 10) || 0;
 
         let isLiked = false;
         let isSaved = false;
@@ -316,7 +318,7 @@ export async function getUserStates(
             isSaved = seriesSavedSet.has(item.contentId);
         }
 
-        result[key] = { isLiked, isSaved, likeCount, viewCount };
+        result[key] = { isLiked, isSaved, likeCount, viewCount, saveCount };
     }
 
     // Fallback to DB if Redis is not available
@@ -360,6 +362,7 @@ export async function getUserStates(
                 isSaved,
                 likeCount: stat?.likeCount ?? 0,
                 viewCount: stat?.viewCount ?? 0,
+                saveCount: stat?.saveCount ?? 0,
             };
         }
     }

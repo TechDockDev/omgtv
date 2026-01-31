@@ -82,6 +82,8 @@ type CarouselEntryView = {
     viewCount: number;
     isLiked: boolean;
     isSaved: boolean;
+    averageRating: number;
+    reviewCount: number;
   } | null;
 };
 
@@ -187,20 +189,23 @@ export class MobileAppService {
 
     const carouselItems = await this.buildCarouselItems(filteredItems, engagementStates);
 
-    const top10Items = topTen.map((t) => ({
-      id: t.series.id,
-      type: "series",
-      title: t.series.title,
-      subtitle: t.series.category?.name ?? null,
-      thumbnailUrl: t.series.heroImageUrl ?? t.series.bannerImageUrl ?? null,
-      duration: null,
-      watchedDuration: null,
-      progress: null,
-      rating: null,
-      lastWatchedAt: null,
-      series_id: t.series.id,
-      engagement: engagementStates.get(t.series.id) ?? null,
-    }));
+    const top10Items = topTen.map((t) => {
+      const engagement = engagementStates.get(t.series.id);
+      return {
+        id: t.series.id,
+        type: "series",
+        title: t.series.title,
+        subtitle: t.series.category?.name ?? null,
+        thumbnailUrl: t.series.heroImageUrl ?? t.series.bannerImageUrl ?? null,
+        duration: null,
+        watchedDuration: null,
+        progress: null,
+        rating: engagement?.averageRating ?? null,
+        lastWatchedAt: null,
+        series_id: t.series.id,
+        engagement: engagement ?? null,
+      };
+    });
 
     // Build Continue Watch from Episode Feed
     const continueWatchCandidates = episodeFeed.items.filter((item) => progressMap.has(item.id));
@@ -218,10 +223,13 @@ export class MobileAppService {
       });
 
     const sections = this.buildSections(
-      filteredItems.map(item => ({
-        ...this.toSectionEntry(item, undefined),
-        engagement: engagementStates.get(item.id) ?? null
-      })),
+      filteredItems.map(item => {
+        const engagement = engagementStates.get(item.id);
+        return {
+          ...this.toSectionEntry(item, undefined, engagement?.averageRating),
+          engagement: engagement ?? null
+        };
+      }),
       continueWatch,
       parsed.tag
     );
@@ -271,10 +279,13 @@ export class MobileAppService {
     const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
     const sections = this.buildSections(
-      filteredItems.map(item => ({
-        ...this.toSectionEntry(item, undefined),
-        engagement: engagementStates.get(item.id) ?? null
-      })),
+      filteredItems.map(item => {
+        const engagement = engagementStates.get(item.id);
+        return {
+          ...this.toSectionEntry(item, undefined, engagement?.averageRating),
+          engagement: engagement ?? null
+        };
+      }),
       [], // No continue watch for now
       parsed.tag
     );
@@ -330,10 +341,29 @@ export class MobileAppService {
     ];
     const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
+    // Fetch user reviews list
+    const reviewsData = await this.deps.engagementClient?.getReviews({
+      seriesId: detail.series.id,
+      limit: 20
+    }).catch(err => {
+      options?.logger?.error({ err, seriesId: detail.series.id }, "Failed to fetch reviews");
+      return {
+        summary: { average_rating: 0, total_reviews: 0 },
+        user_reviews: [],
+        next_cursor: null
+      };
+    }) ?? {
+      summary: { average_rating: 0, total_reviews: 0 },
+      user_reviews: [],
+      next_cursor: null
+    };
+
     const data = this.buildSeriesPayload(detail, {
       entitlements,
       progressMap,
       engagementStates,
+      reviews: reviewsData,
+      logger: options?.logger
     });
     return mobileSeriesDataSchema.parse(data);
   }
@@ -357,8 +387,8 @@ export class MobileAppService {
     );
 
     const items = result.items.map((reel) => {
-      const item = this.toReelItem(reel, entitlements.reel);
       const engagement = engagementStates.get(reel.id);
+      const item = this.toReelItem(reel, entitlements.reel, engagement?.averageRating);
       return {
         ...item,
         engagement: engagement ?? null,
@@ -385,7 +415,7 @@ export class MobileAppService {
     feedItems: ViewerFeedItem[],
     engagementStates?: Map<
       string,
-      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
     >
   ): Promise<CarouselEntryView[]> {
     const limit = this.deps.config.carouselLimit;
@@ -409,7 +439,7 @@ export class MobileAppService {
     entries: CarouselEntryWithContent[],
     engagementStates?: Map<
       string,
-      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
     >
   ): CarouselEntryView[] {
     const items: CarouselEntryView[] = [];
@@ -422,7 +452,7 @@ export class MobileAppService {
         );
         const engagement = engagementStates?.get(feedItem.series.id);
         items.push({
-          ...this.toCarouselItem(feedItem, entry.position),
+          ...this.toCarouselItem(feedItem, entry.position, engagement?.averageRating),
           engagement: engagement ?? null,
         });
         continue;
@@ -430,7 +460,7 @@ export class MobileAppService {
       if (entry.series) {
         const engagement = engagementStates?.get(entry.series.id);
         items.push({
-          ...this.toSeriesCarouselItem(entry.series, entry.position),
+          ...this.toSeriesCarouselItem(entry.series, entry.position, engagement?.averageRating),
           engagement: engagement ?? null,
         });
       }
@@ -440,7 +470,8 @@ export class MobileAppService {
 
   private toSeriesCarouselItem(
     series: NonNullable<CarouselEntryWithContent["series"]>,
-    priority: number
+    priority: number,
+    engagementRating?: number | null
   ): CarouselEntryView {
     return {
       id: series.id,
@@ -450,7 +481,7 @@ export class MobileAppService {
       subtitle: series.category?.name ?? null,
       thumbnailUrl: series.heroImageUrl ?? series.bannerImageUrl ?? null,
       videoUrl: null,
-      rating: null,
+      rating: engagementRating ?? null,
       series_id: series.id,
     } satisfies CarouselEntryView;
   }
@@ -474,6 +505,7 @@ export class MobileAppService {
   private toCarouselItem(
     item: ViewerFeedItem,
     priority: number,
+    engagementRating?: number | null,
     type = "featured"
   ): CarouselEntryView {
     return {
@@ -484,7 +516,7 @@ export class MobileAppService {
       subtitle: this.buildSubtitle(item),
       thumbnailUrl: item.heroImageUrl ?? item.defaultThumbnailUrl,
       videoUrl: item.playback.manifestUrl,
-      rating: item.ratings.average,
+      rating: engagementRating ?? item.ratings.average,
       series_id: item.series.id,
     } satisfies CarouselEntryView;
   }
@@ -531,7 +563,11 @@ export class MobileAppService {
     };
   }
 
-  private toSectionEntry(item: ViewerFeedItem, progress?: ContinueWatchEntry) {
+  private toSectionEntry(
+    item: ViewerFeedItem,
+    progress?: ContinueWatchEntry,
+    engagementRating?: number | null
+  ) {
     const watchedSeconds = progress
       ? Math.min(progress.watched_duration, item.durationSeconds)
       : 0;
@@ -551,7 +587,7 @@ export class MobileAppService {
       duration: this.formatDuration(item.durationSeconds),
       watchedDuration: this.formatDuration(watchedSeconds),
       progress: progressRatio,
-      rating: item.ratings.average,
+      rating: engagementRating ?? item.ratings.average,
       lastWatchedAt: progress?.last_watched_at ?? null,
       series_id: item.series.id,
       // Internal fields for grouping
@@ -682,8 +718,10 @@ export class MobileAppService {
       progressMap: Map<string, ContinueWatchEntry>;
       engagementStates?: Map<
         string,
-        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
       >;
+      logger: LoggerLike | undefined;
+      reviews: { summary: any; user_reviews: any[] } | null;
     }
   ): MobileSeriesData {
     const episodes = this.flattenEpisodes(detail, options);
@@ -719,13 +757,24 @@ export class MobileAppService {
         }
         : null,
       episodes,
+      rating: seriesEngagement?.averageRating ?? null,
       engagement: seriesEngagement ?? null,
       reviews: {
         summary: {
-          average_rating: averageRating,
-          total_reviews: ratings.length,
+          average_rating: options.reviews?.summary.average_rating ?? averageRating,
+          total_reviews: options.reviews?.summary.total_reviews ?? ratings.length,
         },
-        user_reviews: [],
+        user_reviews:
+          options.reviews?.user_reviews.map((r) => ({
+            review_id: r.review_id,
+            user_id: r.user_id,
+            user_name: r.user_name,
+            user_phone: r.user_phone,
+            rating: r.rating,
+            comment: r.comment,
+            created_at: r.created_at,
+            title: null,
+          })) ?? [],
       },
     };
   }
@@ -737,10 +786,10 @@ export class MobileAppService {
       progressMap: Map<string, ContinueWatchEntry>;
       engagementStates?: Map<
         string,
-        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
       >;
     }
-  ) {
+  ): MobileSeriesData["episodes"] {
     const entries: MobileSeriesData["episodes"] = [];
 
     detail.seasons.forEach((season) => {
@@ -752,7 +801,8 @@ export class MobileAppService {
             season.sequenceNumber,
             idx + 1,
             options.entitlements.episode,
-            options.progressMap.get(episode.id)
+            options.progressMap.get(episode.id),
+            engagement?.averageRating
           ),
           engagement: engagement ?? null,
         });
@@ -767,7 +817,8 @@ export class MobileAppService {
           null,
           idx + 1,
           options.entitlements.episode,
-          options.progressMap.get(episode.id)
+          options.progressMap.get(episode.id),
+          engagement?.averageRating
         ),
         engagement: engagement ?? null,
       });
@@ -781,7 +832,8 @@ export class MobileAppService {
     seasonNumber: number | null,
     episodeIndex: number,
     entitlement: EntitlementSnapshot,
-    progress?: ContinueWatchEntry
+    progress?: ContinueWatchEntry,
+    engagementRating?: number | null
   ) {
     const streaming = this.buildStreamingInfo(
       episode.playback,
@@ -809,7 +861,7 @@ export class MobileAppService {
       duration_seconds: episode.durationSeconds,
       release_date: episode.publishedAt,
       is_download_allowed: episode.playback.status === MediaAssetStatus.READY,
-      rating: episode.ratings.average,
+      rating: engagementRating ?? episode.ratings.average,
       views: null,
       streaming,
       progress: {
@@ -824,7 +876,8 @@ export class MobileAppService {
 
   private toReelItem(
     reel: ReelWithRelations,
-    entitlement: EntitlementSnapshot
+    entitlement: EntitlementSnapshot,
+    engagementRating?: number | null
   ) {
     const streaming = this.buildStreamingInfo(
       {
@@ -849,7 +902,7 @@ export class MobileAppService {
       title: reel.title,
       description: reel.description ?? null,
       duration_seconds: reel.durationSeconds,
-      rating: null,
+      rating: engagementRating ?? null,
       thumbnail: reel.mediaAsset?.defaultThumbnailUrl ?? null,
       streaming,
       series: reel.series
@@ -892,6 +945,7 @@ export class MobileAppService {
     durationSeconds: number,
     entitlement?: EntitlementSnapshot
   ) {
+
     const assetReady =
       playback.status === MediaAssetStatus.READY &&
       Boolean(playback.manifestUrl);
@@ -1036,7 +1090,7 @@ export class MobileAppService {
   ): Promise<
     Map<
       string,
-      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
     >
   > {
     if (!this.deps.engagementClient) {
@@ -1073,7 +1127,7 @@ export class MobileAppService {
       // Convert to Map keyed by item id
       const result = new Map<
         string,
-        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean }
+        { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
       >();
 
       for (const item of items) {

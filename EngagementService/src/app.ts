@@ -15,6 +15,7 @@ import internalRoutes from "./routes/internal";
 import batchRoutes from "./routes/batch";
 import clientRoutes from "./routes/client";
 import { startProgressSyncWorker } from "./workers/progress-sync";
+import { startStatsSyncWorker } from "./workers/stats-sync";
 
 export async function buildApp() {
   const config = loadConfig();
@@ -54,6 +55,7 @@ export async function buildApp() {
 
   // Start background workers
   startProgressSyncWorker();
+  startStatsSyncWorker();
 
   return app;
 }

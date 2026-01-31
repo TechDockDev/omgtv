@@ -38,6 +38,8 @@ const engagementSchema = z.object({
   viewCount: z.number().int().nonnegative(),
   isLiked: z.boolean(),
   isSaved: z.boolean(),
+  averageRating: z.number().nullable().optional(),
+  reviewCount: z.number().int().nonnegative().optional(),
 });
 
 const continueWatchItemSchema = z.object({
@@ -155,6 +157,7 @@ export const mobileSeriesDataSchema = z.object({
   category: z.string().nullable(),
   trailer: trailerSchema,
   episodes: z.array(seriesEpisodeSchema),
+  rating: z.number().nullable().optional(),
   engagement: engagementSchema.nullable().optional(),
   reviews: z.object({
     summary: z.object({

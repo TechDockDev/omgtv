@@ -476,6 +476,7 @@ export class CatalogService {
   async listSeries(params: {
     limit?: number;
     cursor?: string | null;
+    isAudioSeries?: boolean;
   }) {
     const result = await this.repo.listSeries(params);
     return {
@@ -790,7 +791,8 @@ export class CatalogService {
       defaultThumbnailUrl?: string | null;
       captions?: unknown;
       tags?: string[];
-      uploadId?: string; // New Optional Field for Linking
+      mediaAssetId?: string; // Support direct linking by ID
+      uploadId?: string;
     }
   ): Promise<Episode> {
     const tags = input.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [];
@@ -810,19 +812,16 @@ export class CatalogService {
       }
     }
 
-    // Verify MediaAsset if uploadId provided
+    // Verify MediaAsset: Check mediaAssetId FIRST, then uploadId
     let mediaAsset: MediaAsset | null = null;
-    if (input.uploadId) {
+    if (input.mediaAssetId) {
+      mediaAsset = await this.repo.findMediaAssetById(input.mediaAssetId);
+      if (!mediaAsset) {
+        throw new CatalogServiceError("FAILED_PRECONDITION", `MediaAsset not found for id: ${input.mediaAssetId}`);
+      }
+    } else if (input.uploadId) {
       mediaAsset = await this.repo.findMediaAssetByUploadId(input.uploadId);
       if (!mediaAsset) {
-        // If not found, we might need to wait for async processing or it's invalid.
-        // But user implies they pass manifest URL details?
-        // Actually, if they pass uploadId, we expect a record.
-        // If they pass manifest URL manually, they might be using a different flow.
-        // Assuming uploadId flow for now.
-        // For flexibility, if no media asset found, we don't block creation but warn?
-        // User said "cant empty the video... has to be link".
-        // Let's enforce finding it if uploadId is passed.
         throw new CatalogServiceError("FAILED_PRECONDITION", `MediaAsset not found for uploadId: ${input.uploadId}`);
       }
     }
@@ -888,9 +887,10 @@ export class CatalogService {
         adminId,
       });
 
-      // Link MediaAsset if exists
-      if (input.uploadId) {
-        await this.repo.assignMediaAssetToEpisode(input.uploadId, episode.id);
+      // Link MediaAsset if resolved
+      if (mediaAsset) {
+        // Use ID based assignment since we resolved the asset
+        await this.repo.assignMediaAssetToEpisodeById(mediaAsset.id, episode.id);
       }
 
       await this.emitCatalogEvent({
@@ -1007,11 +1007,12 @@ export class CatalogService {
       defaultThumbnailUrl?: string | null; // Allow null to clear
       availabilityStart?: Date;
       availabilityEnd?: Date;
+      mediaAssetId?: string | null;
       uploadId?: string | null; // For replacing video
       episodeNumber?: number | null;
     }
   ) {
-    const existing = await this.repo.findEpisodeById(episodeId);
+    const existing = await this.repo.findEpisodeById(episodeId, true); // Include relations to get current media asset
     if (!existing) {
       throw new CatalogServiceError("NOT_FOUND", `Episode ${episodeId} not found`);
     }
@@ -1043,8 +1044,8 @@ export class CatalogService {
     }
 
     // Handle Video Change
-    if (data.uploadId === null) {
-      // Unlink Video
+    if (data.mediaAssetId === null || data.uploadId === null) {
+      // Explicit unlink requested
       await this.repo.dissociateMediaAsset(episodeId);
 
       // Cascade Delete Reel
@@ -1052,44 +1053,47 @@ export class CatalogService {
       if (reel) {
         await this.repo.softDeleteReel(reel.id, adminId);
       }
-    } else if (data.uploadId) {
-      const newMediaAsset = await this.repo.findMediaAssetByUploadId(data.uploadId);
-      if (!newMediaAsset) {
-        throw new CatalogServiceError("NOT_FOUND", `MediaAsset ${data.uploadId} not found`);
-      }
-      // Unlink any existing video first (to avoid UNIQUE constraint violation on episodeId)
-      await this.repo.dissociateMediaAsset(episodeId);
-
-      // Link new video
-      await this.repo.assignMediaAssetToEpisode(data.uploadId, episodeId);
-
-      // If this Episode has a linked Reel, update the new MediaAsset to link to that Reel too
-      const linkedReel = await this.repo.findReelByEpisodeId(episodeId);
-      if (linkedReel) {
-        // Find existing SeriesId because assignMediaAssetToReel needs it
-        // We can get it from the Episode (existing variable)
-        await this.repo.assignMediaAssetToReel(data.uploadId ?? null, linkedReel.id, existing.seriesId);
+    } else {
+      // Check if we are linking a new video
+      let newMediaAsset: MediaAsset | null = null;
+      if (data.mediaAssetId) {
+        newMediaAsset = await this.repo.findMediaAssetById(data.mediaAssetId);
+        if (!newMediaAsset) throw new CatalogServiceError("NOT_FOUND", `MediaAsset ${data.mediaAssetId} not found`);
+      } else if (data.uploadId) {
+        newMediaAsset = await this.repo.findMediaAssetByUploadId(data.uploadId);
+        if (!newMediaAsset) throw new CatalogServiceError("NOT_FOUND", `MediaAsset ${data.uploadId} not found`);
       }
 
-      // If we change video, maybe we should auto-update thumbnail if current one is null or from old video?
-      // Logic below handles thumbnail.
+      if (newMediaAsset) {
+        // Unlink any existing video first
+        await this.repo.dissociateMediaAsset(episodeId);
+
+        // Link new video using ID
+        await this.repo.assignMediaAssetToEpisodeById(newMediaAsset.id, episodeId);
+
+        // If this Episode has a linked Reel, update the new MediaAsset to link to that Reel too
+        const linkedReel = await this.repo.findReelByEpisodeId(episodeId);
+        if (linkedReel) {
+          await this.repo.assignMediaAssetToReelById(newMediaAsset.id, linkedReel.id, existing.seriesId);
+        }
+      }
     }
 
     // Handle Thumbnail Logic
     let newThumbnailUrl = data.defaultThumbnailUrl;
 
-    // If explicitly clearing (null) or not provided but we changed video?
-    // If passed undefined, we keep existing. 
-    // BUT user said "if unlinked, transcoding video default thumbnail will come up".
-    // This implies if we set it to null, we fallback.
-
     if (newThumbnailUrl === null) {
       // Fallback to video thumbnail
       // Need to know current media asset.
       // If we just updated it, we should use the new one.
-      const activeMediaAsset = data.uploadId
-        ? await this.repo.findMediaAssetByUploadId(data.uploadId)
-        : existing.mediaAsset; // ensure repo returns this!
+      let activeMediaAsset = existing.mediaAsset;
+
+      // If we just changed it, try to resolve again (or use the one we just fetched)
+      // Re-fetching to be safe if `mediaAsset` var isn't in scope easily above
+      if (data.mediaAssetId || data.uploadId) {
+        if (data.mediaAssetId) activeMediaAsset = await this.repo.findMediaAssetById(data.mediaAssetId) as any;
+        else if (data.uploadId) activeMediaAsset = await this.repo.findMediaAssetByUploadId(data.uploadId!) as any;
+      }
 
       newThumbnailUrl = activeMediaAsset?.defaultThumbnailUrl ?? null;
     }
@@ -1098,6 +1102,7 @@ export class CatalogService {
     // We filter out undefined from data spread
     const updatePayload: any = { ...data };
     delete updatePayload.uploadId; // Not a field on Episode
+    delete updatePayload.mediaAssetId;
     if (newThumbnailUrl !== undefined) {
       updatePayload.defaultThumbnailUrl = newThumbnailUrl;
     }
@@ -1426,6 +1431,32 @@ export class CatalogService {
     return this.repo.listCarouselEntries();
   }
 
+  async getCarouselEntries() {
+    return this.repo.listCarouselEntries();
+  }
+
+  async addCarouselSeries(adminId: string, seriesId: string) {
+    const series = await this.repo.findSeriesById(seriesId);
+    if (!series) {
+      throw new CatalogServiceError("NOT_FOUND", "Series not found");
+    }
+
+    this.ensureCarouselSeriesSelectable(series);
+
+    return this.repo.upsertCarouselEntry({
+      seriesId: series.id,
+      adminId
+    });
+  }
+
+  async removeCarouselSeries(adminId: string, seriesId: string) {
+    // Check if series exists just to provide better error? 
+    // Or just delete. Ideally idempotent is fine.
+    // But let's check validation if needed.
+    // Actually, just deleting is fine.
+    return this.repo.deleteCarouselEntriesBySeriesId(seriesId);
+  }
+
   async handleMediaFailure(event: { uploadId: string; reason: string }) {
     await this.repo.upsertMediaAssetByUploadId({
       uploadId: event.uploadId,
@@ -1643,6 +1674,8 @@ export class CatalogService {
       publishedAt?: Date | null;
       tags?: string[];
       durationSeconds?: number;
+      uploadId?: string;
+      mediaAssetId?: string;
     }
   ) {
     const series = await this.repo.findSeriesById(input.seriesId);
@@ -1658,10 +1691,23 @@ export class CatalogService {
       );
     }
 
-    if (!episode.mediaAsset) {
+    // Resolve Media Asset: explicit ID > uploadId > episode's asset
+    let targetMediaAssetId: string | null = null;
+
+    if (input.mediaAssetId) {
+      const asset = await this.repo.findMediaAssetById(input.mediaAssetId);
+      if (!asset) throw new CatalogServiceError("FAILED_PRECONDITION", `MediaAsset not found: ${input.mediaAssetId}`);
+      targetMediaAssetId = asset.id;
+    } else if (input.uploadId) {
+      const asset = await this.repo.findMediaAssetByUploadId(input.uploadId);
+      if (!asset) throw new CatalogServiceError("FAILED_PRECONDITION", `MediaAsset not found for uploadId: ${input.uploadId}`);
+      targetMediaAssetId = asset.id;
+    } else if (episode.mediaAsset) {
+      targetMediaAssetId = episode.mediaAsset.id;
+    } else {
       throw new CatalogServiceError(
         "FAILED_PRECONDITION",
-        "Episode does not have a linked video/media asset"
+        "No media asset provided (id/uploadId) and linked episode has no media asset"
       );
     }
 
@@ -1707,10 +1753,10 @@ export class CatalogService {
       adminId,
     });
 
-    // Link the Episode's MediaAsset to this Reel and Series
-    if (episode.mediaAsset?.uploadId) {
-      await this.repo.assignMediaAssetToReel(
-        episode.mediaAsset.uploadId,
+    // Link the MediaAsset to this Reel and Series
+    if (targetMediaAssetId) {
+      await this.repo.assignMediaAssetToReelById(
+        targetMediaAssetId,
         reel.id,
         input.seriesId
       );
@@ -1726,7 +1772,7 @@ export class CatalogService {
     // Unlink Media Asset (if any)
     const mediaAsset = await this.repo.findMediaAssetByReelId(id);
     if (mediaAsset) {
-      await this.repo.assignMediaAssetToReel(mediaAsset.uploadId, null, null);
+      await this.repo.assignMediaAssetToReelById(mediaAsset.id, null, null);
     }
 
     await this.repo.softDeleteReel(id, adminId);

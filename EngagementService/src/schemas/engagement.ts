@@ -57,6 +57,9 @@ export const seriesIdParamsSchema = z.object({
 export const statsSchema = z.object({
   likes: z.number().int().nonnegative(),
   views: z.number().int().nonnegative(),
+  saves: z.number().int().nonnegative(),
+  averageRating: z.number().nonnegative().optional().default(0),
+  reviewCount: z.number().int().nonnegative().optional().default(0),
 });
 
 export const saveResponseSchema = z.object({
@@ -67,6 +70,7 @@ export const likeResponseSchema = z.object({
   liked: z.boolean(),
   likes: z.number().int().nonnegative(),
   views: z.number().int().nonnegative(),
+  saves: z.number().int().nonnegative(),
 });
 
 export const viewResponseSchema = z.object({
@@ -81,6 +85,7 @@ export const listItemWithStatsSchema = z.object({
   id: z.string().uuid(),
   likes: z.number().int().nonnegative(),
   views: z.number().int().nonnegative(),
+  saves: z.number().int().nonnegative(),
 });
 
 export const listWithStatsResponseSchema = z.object({
@@ -137,6 +142,7 @@ export const batchActionResultSchema = z.object({
       saved: z.boolean().optional(),
       likes: z.number().int().nonnegative().optional(),
       views: z.number().int().nonnegative().optional(),
+      saves: z.number().int().nonnegative().optional(),
     })
     .optional(),
   error: z.string().optional(),
@@ -166,8 +172,11 @@ export const userStateRequestSchema = z.object({
 export const userStateEntrySchema = z.object({
   likeCount: z.number().int().nonnegative(),
   viewCount: z.number().int().nonnegative(),
+  saveCount: z.number().int().nonnegative(),
   isLiked: z.boolean(),
   isSaved: z.boolean(),
+  averageRating: z.number().optional().default(0),
+  reviewCount: z.number().int().nonnegative().optional().default(0),
 });
 
 export const userStateResponseSchema = z.object({

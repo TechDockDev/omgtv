@@ -1,4 +1,5 @@
 import fp from "fastify-plugin";
+import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import {
   adminCarouselBodySchema,
@@ -21,10 +22,17 @@ import {
   listMediaAssets,
   getTopTenSeries,
   updateTopTenSeries,
+  getAdminCarouselEntries,
+  reorderAdminCarouselEntries,
+  addAdminCarouselSeries,
+  removeAdminCarouselSeries,
+  getSeriesReviews,
 } from "../proxy/content.proxy";
 import {
   mediaProcessSuccessResponseSchema,
   mediaAssetListSuccessResponseSchema,
+  adminCarouselActionSuccessResponseSchema,
+  type AdminCarouselActionResponse,
 } from "../schemas/content.schema";
 import { getCachedJson, setCachedJson } from "../utils/cache";
 import { getContentCacheTtlSeconds } from "../config";
@@ -136,6 +144,135 @@ export default fp(
       },
     });
 
+    // New Carousel APIs
+    fastify.route<{
+      Reply: AdminCarouselResponse;
+    }>({
+      method: "GET",
+      url: "/admin/catalog/carousel",
+      schema: {
+        response: {
+          200: adminCarouselSuccessResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const result = await getAdminCarouselEntries({
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        return reply.send(result);
+      },
+    });
+
+    fastify.route<{
+      Body: AdminCarouselBody;
+      Reply: AdminCarouselResponse;
+    }>({
+      method: "POST",
+      url: "/admin/catalog/carousel/reorder",
+      schema: {
+        // reorder uses same body as set
+        body: adminCarouselBodySchema,
+        response: {
+          200: adminCarouselSuccessResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          412: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const body = adminCarouselBodySchema.parse(request.body);
+        const result = await reorderAdminCarouselEntries({
+          body,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        return reply.send(result);
+      },
+    });
+
+    fastify.route<{
+      Params: { seriesId: string };
+      Reply: AdminCarouselActionResponse;
+    }>({
+      method: "POST",
+      url: "/admin/catalog/carousel/series/:seriesId",
+      schema: {
+        params: z.object({ seriesId: z.string().uuid() }),
+        response: {
+          200: adminCarouselActionSuccessResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          404: errorResponseSchema,
+          412: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const { seriesId } = request.params;
+        const result = await addAdminCarouselSeries({
+          seriesId,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        return reply.send(result as AdminCarouselActionResponse);
+      },
+    });
+
+    fastify.route<{
+      Params: { seriesId: string };
+      Reply: AdminCarouselActionResponse;
+    }>({
+      method: "DELETE",
+      url: "/admin/catalog/carousel/series/:seriesId",
+      schema: {
+        params: z.object({ seriesId: z.string().uuid() }),
+        response: {
+          200: adminCarouselActionSuccessResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const { seriesId } = request.params;
+        const result = await removeAdminCarouselSeries({
+          seriesId,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        return reply.send(result as AdminCarouselActionResponse);
+      },
+    });
+
     fastify.route<{
       Params: { id: string };
     }>({
@@ -232,6 +369,39 @@ export default fp(
       preHandler: [fastify.authorize(["admin"])],
       async handler(request, reply) {
         const result = await getTopTenSeries({
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        return reply.send(result);
+      },
+    });
+
+    fastify.route<{
+      Params: { seriesId: string };
+      Querystring: { limit?: number; cursor?: string };
+    }>({
+      method: "GET",
+      url: "/admin/catalog/series/:seriesId/reviews",
+      schema: {
+        params: z.object({ seriesId: z.string().uuid() }),
+        querystring: z.object({
+          limit: z.coerce.number().int().min(1).max(100).optional(),
+          cursor: z.string().optional(),
+        }),
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const { seriesId } = request.params;
+        const { limit, cursor } = request.query;
+        const result = await getSeriesReviews({
+          seriesId,
+          limit,
+          cursor,
           correlationId: request.correlationId,
           user: request.user!,
           span: request.telemetrySpan,

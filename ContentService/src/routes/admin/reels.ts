@@ -4,6 +4,7 @@ import {
   CatalogService,
   CatalogServiceError,
 } from "../../services/catalog-service";
+import { EngagementClient } from "../../clients/engagement-client";
 import { PublicationStatus, Visibility } from "@prisma/client";
 import { loadConfig } from "../../config";
 
@@ -17,6 +18,8 @@ const createReelSchema = z.object({
   publishedAt: z.coerce.date().optional(),
   tags: z.array(z.string()).optional(),
   durationSeconds: z.number().int().positive().optional(),
+  uploadId: z.string().optional(),
+  mediaAssetId: z.string().uuid().optional(),
 });
 
 const updateReelTagsSchema = z.object({
@@ -94,7 +97,35 @@ export default async function adminReelRoutes(fastify: FastifyInstance) {
       try {
         requireAdminId(request, reply);
         const result = await catalog.listReels(query);
-        return reply.send(result);
+
+        // Federation: Fetch engagement stats
+        try {
+          const engagementClient = new EngagementClient({
+            baseUrl: config.ENGAGEMENT_SERVICE_URL,
+            timeoutMs: config.SERVICE_REQUEST_TIMEOUT_MS,
+          });
+
+          const ids = result.items.map((r) => r.id);
+          const statsMap = await engagementClient.getStatsBatch({
+            type: "reel",
+            ids,
+          });
+
+
+          const itemsWithStats = result.items.map((item) => ({
+            ...item,
+            stats: statsMap[item.id] ?? { likes: 0, views: 0, saves: 0 },
+          }));
+
+          return reply.send({ ...result, items: itemsWithStats });
+        } catch (err) {
+          request.log.warn({ err }, "Failed to fetch engagement stats for reels list");
+          const itemsWithStats = result.items.map((item) => ({
+            ...item,
+            stats: { likes: 0, views: 0, saves: 0 },
+          }));
+          return reply.send({ ...result, items: itemsWithStats });
+        }
       } catch (error) {
         request.log.error({ err: error, query }, "Failed to list reels");
         return reply.status(500).send({ message: "Unable to list reels" });

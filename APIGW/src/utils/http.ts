@@ -71,6 +71,10 @@ function buildHeaders(options: ServiceRequestOptions, config: AppConfig) {
     headers["x-user-id"] = options.user.id;
     headers["x-user-roles"] = options.user.roles.join(",");
     headers["x-user-type"] = options.user.userType;
+    if (options.user.name) headers["x-user-name"] = String(options.user.name);
+    if (options.user.phone) headers["x-user-phone"] = String(options.user.phone);
+    if (options.user.userName) headers["x-user-name"] = String(options.user.userName);
+    if (options.user.phoneNumber) headers["x-user-phone"] = String(options.user.phoneNumber);
   }
 
   if (config.SERVICE_AUTH_TOKEN) {
