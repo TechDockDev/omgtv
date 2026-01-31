@@ -268,7 +268,6 @@ export default async function adminRoutes(app: FastifyInstance) {
 
 
   const trialPlanBodySchema = z.object({
-    targetPlanId: z.string().uuid(),
     trialPricePaise: z.number().int().nonnegative(),
     durationDays: z.number().int().positive(),
     reminderDays: z.number().int().nonnegative(),
@@ -284,12 +283,18 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const body = trialPlanBodySchema.parse(request.body);
-      const targetPlan = await prisma.subscriptionPlan.findUnique({
-        where: { id: body.targetPlanId },
-      });
-      if (!targetPlan) {
-        return reply.status(404).send({ message: "Target plan not found" });
+
+      if (body.isActive) {
+        const existingActive = await prisma.trialPlan.findFirst({
+          where: { isActive: true }
+        });
+        if (existingActive) {
+          return reply.badRequest("An active trial plan already exists. Please modify the existing one or deactivate it first.");
+        }
       }
+
+
+
       const trialPlan = await prisma.trialPlan.create({ data: body });
       return reply.code(201).send({
         success: true,
@@ -304,7 +309,6 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get("/custom-trials", async () => {
     const data = await prisma.trialPlan.findMany({
       orderBy: { createdAt: "desc" },
-      include: { targetPlan: true },
     });
     return {
       success: true,
@@ -332,12 +336,21 @@ export default async function adminRoutes(app: FastifyInstance) {
         return reply.status(404).send({ message: "Trial plan not found" });
       }
 
-      if (body.targetPlanId) {
-        const targetPlan = await prisma.subscriptionPlan.findUnique({
-          where: { id: body.targetPlanId }
+      if (body.isActive === true) {
+        // If attempting to activate, check if another one is already active (excluding self)
+        const existingActive = await prisma.trialPlan.findFirst({
+          where: {
+            isActive: true,
+            id: { not: id }
+          }
         });
-        if (!targetPlan) return reply.status(404).send({ message: "Target plan not found" });
+        if (existingActive) {
+          return reply.badRequest("Another trial plan is already active. Only one active trial plan is allowed.");
+        }
       }
+
+
+
 
       const updated = await prisma.trialPlan.update({
         where: { id },

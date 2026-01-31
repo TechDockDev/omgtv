@@ -6,7 +6,9 @@ if [ -z "${DATABASE_URL:-}" ]; then
 	exit 1
 fi
 
-if [ -d "./prisma/migrations" ] && [ "$(ls -A ./prisma/migrations)" ]; then
+if [ "${SKIP_MIGRATION:-false}" = "true" ]; then
+	echo "Skipping Prisma migrations (SKIP_MIGRATION=true)..."
+elif [ -d "./prisma/migrations" ] && [ "$(ls -A ./prisma/migrations)" ]; then
 	echo "Running Prisma migrations..."
 	npx prisma migrate deploy --schema="prisma/schema.prisma"
 else

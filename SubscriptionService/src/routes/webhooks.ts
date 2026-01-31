@@ -62,7 +62,10 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 // Transaction.razorpayOrderId = subscription.id
 
                 const transaction = await prisma.transaction.findFirst({
-                    where: { razorpayOrderId: subscriptionId, status: "PENDING" }
+                    where: {
+                        subscriptionId: subscriptionId,
+                        status: "PENDING"
+                    }
                 });
 
                 if (transaction) {
@@ -96,7 +99,17 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     // Handle renewal logic here: find existing UserSubscription and update endsAt + create new Transaction
 
                     const existingSub = await prisma.userSubscription.findFirst({
-                        where: { razorpayOrderId: subscriptionId }
+                        where: {
+                            OR: [
+                                { razorpayOrderId: subscriptionId },
+                                // In new schema, we might store subscriptionId explicitly if we had a field, 
+                                // but UserSubscription mainly has razorpayOrderId as the external ID.
+                                // Let's check if we need to migrate this look up.
+                                // UserSubscription schema: razorpayOrderId String?
+                                // So we keep checking razorpayOrderId here as that's where we store the sub ID in UserSubscription table.
+                                { razorpayOrderId: subscriptionId }
+                            ]
+                        }
                     });
 
                     if (existingSub) {
@@ -116,7 +129,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 amountPaise: payment.amount,
                                 currency: payment.currency,
                                 status: "SUCCESS",
-                                razorpayOrderId: subscriptionId,
+                                subscriptionId: subscriptionId, // Was razorpayOrderId
                                 razorpayPaymentId: paymentId,
                                 createdAt: new Date(),
                             }
