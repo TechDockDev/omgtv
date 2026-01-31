@@ -54,7 +54,6 @@ model SubscriptionPlan {
 
   subscriptions UserSubscription[]
   transactions  Transaction[]
-  trialPlans    TrialPlan[]
 }
 
 model TrialPlan {
@@ -65,10 +64,8 @@ model TrialPlan {
   isAutoDebit     Boolean          @default(true)
   isActive        Boolean          @default(true)
   
-  targetPlanId    String?
-  targetPlan      SubscriptionPlan? @relation(fields: [targetPlanId], references: [id])
-  
   subscriptions   UserSubscription[]
+  transactions    Transaction[]
 
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -115,20 +112,22 @@ model Transaction {
   amountPaise        Int
   currency           String             @default("INR")
   status             TransactionStatus  @default(PENDING)
-  razorpayOrderId    String?
+  razorpayPlanId     String?
   razorpayPaymentId  String?
   razorpaySignature  String?
   subscriptionId     String?
+  trialPlanId        String?  // New field to filter trial transactions
   failureReason      String?
   metadata           Json?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
   plan           SubscriptionPlan? @relation(fields: [planId], references: [id])
+  trialPlan      TrialPlan?        @relation(fields: [trialPlanId], references: [id])
   subscriptions UserSubscription[] @relation("TransactionUserSubscriptions")
 
   @@index([userId, status])
-  @@index([razorpayOrderId])
+  @@index([razorpayPlanId])
   @@index([subscriptionId])
   @@index([razorpayPaymentId])
 }

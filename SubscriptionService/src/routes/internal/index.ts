@@ -16,7 +16,11 @@ export default async function internalRoutes(app: FastifyInstance) {
     const { userId, contentType } = request.body as z.infer<typeof entitlementRequest>;
 
     const subscription = await prisma.userSubscription.findFirst({
-      where: { userId, status: "ACTIVE" },
+      where: {
+        userId,
+        status: "ACTIVE",
+        endsAt: { gt: new Date() } // Ensure subscription hasn't expired
+      },
       orderBy: { startsAt: "desc" },
       include: { plan: true },
     });

@@ -27,7 +27,7 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     // Fetch global trial plan (not tied to any specific plan)
     const globalTrialPlan = await prisma.trialPlan.findFirst({
-      where: { targetPlanId: null, isActive: true }
+      where: { isActive: true }
     });
 
     const plans = await prisma.subscriptionPlan.findMany({
@@ -55,12 +55,12 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Plans retrieved successfully",
       developerMessage: "Public plans retrieved",
-      trialPlan: globalTrialPlan ? {
+      trialPlan: (globalTrialPlan && !hasUsedTrial) ? {
         id: globalTrialPlan.id,
         trialPricePaise: globalTrialPlan.trialPricePaise,
         durationDays: globalTrialPlan.durationDays,
         isAutoDebit: globalTrialPlan.isAutoDebit,
-        isEligible: !hasUsedTrial
+        isEligible: true
       } : null,
       data: formattedPlans,
     };
@@ -80,9 +80,18 @@ export default async function customerRoutes(app: FastifyInstance) {
       hasUsedTrial = !!trialSub;
     }
 
+    if (hasUsedTrial) {
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "Trial plans retrieved successfully",
+        developerMessage: "User has already used a trial, returning empty list",
+        data: [],
+      };
+    }
+
     const trialPlans = await prisma.trialPlan.findMany({
       where: { isActive: true },
-      include: { targetPlan: true },
       orderBy: { createdAt: 'desc' }
     });
 
@@ -92,16 +101,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       durationDays: tp.durationDays,
       reminderDays: tp.reminderDays,
       isAutoDebit: tp.isAutoDebit,
-      isEligible: !hasUsedTrial, // Eligible if they haven't used a trial yet
-      targetPlan: tp.targetPlan ? {
-        id: tp.targetPlan.id,
-        name: tp.targetPlan.name,
-        description: tp.targetPlan.description,
-        pricePaise: tp.targetPlan.pricePaise,
-        currency: tp.targetPlan.currency,
-        features: tp.targetPlan.features,
-        icon: tp.targetPlan.icon
-      } : null
+      isEligible: true
     }));
 
     return {
@@ -158,10 +158,10 @@ export default async function customerRoutes(app: FastifyInstance) {
     const formattedData = data.map(t => ({
       ...t,
       // If we have a subscriptionId in DB, use it. 
-      // Fallback: If razorpayOrderId looks like a subscription (starts with sub_), use that as subscriptionId (migration support)
-      subscriptionId: t.subscriptionId || (t.razorpayOrderId?.startsWith("sub_") ? t.razorpayOrderId : null),
-      // If razorpayOrderId looks like a subscription, hide it from the orderId field to avoid confusion
-      razorpayOrderId: t.razorpayOrderId?.startsWith("sub_") ? null : t.razorpayOrderId
+      // Fallback: If razorpayPlanId has legacy data (starts with sub_), use it
+      subscriptionId: t.subscriptionId || (t.razorpayPlanId?.startsWith("sub_") ? t.razorpayPlanId : null),
+      razorpayPlanId: t.razorpayPlanId,
+      // razorpayOrderId is no longer available on Transaction
     }));
     return {
       success: true,
@@ -192,24 +192,14 @@ export default async function customerRoutes(app: FastifyInstance) {
     let trialPlan: any = null;
 
     if (plan && isTrial) {
-      // User explicitly requested a trial for this plan
+      // User explicitly requested a trial for this plan.
+      // Fetch the universal active trial plan
       trialPlan = await prisma.trialPlan.findFirst({
-        where: { targetPlanId: plan.id, isActive: true }
+        where: { isActive: true }
       });
 
       if (!trialPlan) {
-        return reply.badRequest("No active trial available for this plan");
-      }
-    } else if (!plan) {
-      // Fallback: Check if the ID provided is actually a TrialPlan ID (legacy / direct trial ID support)
-      // This supports the previous implementation where frontend might send trialPlanId directly
-      trialPlan = await prisma.trialPlan.findUnique({
-        where: { id: planId },
-        include: { targetPlan: true }
-      });
-
-      if (trialPlan) {
-        plan = trialPlan.targetPlan;
+        return reply.badRequest("No active trial available");
       }
     }
 
@@ -225,19 +215,13 @@ export default async function customerRoutes(app: FastifyInstance) {
       });
 
       if (existingTrial) {
-        return reply.code(403).send({
-          success: false,
-          statusCode: 403,
-          code: "TRIAL_ALREADY_USED",
-          userMessage: "You have already used a trial plan.",
-          developerMessage: "User has already consumed a trial."
-        });
+        // User has already used a trial. 
+        // Fallback to standard plan: ensure plan is set, then disable trial.
+        // Fallback to standard plan: ensure plan is set, then disable trial.
+        trialPlan = null;
       }
+      // If eligible, we simply proceed with both plan (target) and trialPlan set.
 
-      // Ensure we are working with the target plan for Razorpay
-      if (!plan && trialPlan.targetPlan) {
-        plan = trialPlan.targetPlan;
-      }
     }
 
     if (!plan || !plan.isActive) {
@@ -293,7 +277,8 @@ export default async function customerRoutes(app: FastifyInstance) {
           amountPaise: trialPlan ? trialPlan.trialPricePaise : plan.pricePaise,
           currency: plan.currency,
           subscriptionId: subscription.id,
-          razorpayOrderId: null, // Explicitly null for subscriptions
+          razorpayPlanId: plan.razorpayPlanId, // Storing the Razorpay Plan ID for reference
+          trialPlanId: trialPlan ? trialPlan.id : null,
           metadata: {
             deviceId,
             subscriptionId: subscription.id,
@@ -351,8 +336,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     const transaction = await prisma.transaction.findFirst({
       where: {
         OR: [
-          { subscriptionId },
-          { razorpayOrderId: subscriptionId }
+          { subscriptionId }
         ],
         status: "PENDING"
       }
@@ -363,8 +347,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       const existing = await prisma.transaction.findFirst({
         where: {
           OR: [
-            { subscriptionId },
-            { razorpayOrderId: subscriptionId }
+            { subscriptionId }
           ],
           status: "SUCCESS"
         }
