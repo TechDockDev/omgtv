@@ -21,6 +21,11 @@ import {
   type EngagementViewData,
   type BatchActionRequest,
   type BatchActionResponseData,
+  addReviewBodySchema,
+  addReviewResponseSchema,
+  addReviewSuccessResponseSchema,
+  type AddReviewBody,
+  type AddReviewResponse,
 } from "../schemas/engagement.schema";
 import { errorResponseSchema } from "../schemas/base.schema";
 import {
@@ -44,6 +49,7 @@ import {
   processBatchActions,
   saveProgress,
   getProgress,
+  addReviewProxy,
 } from "../proxy/engagement.proxy";
 import { getBatchContent } from "../proxy/content.proxy";
 import {
@@ -717,6 +723,39 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
       const { episodeId } = getProgressParamsSchema.parse(request.params);
       return getProgress(
         episodeId,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // Reviews
+  fastify.route<{
+    Params: { id: string };
+    Body: AddReviewBody;
+    Reply: AddReviewResponse;
+  }>({
+    method: "POST",
+    url: "/client/reviews/:id",
+    schema: {
+      params: engagementIdParamsSchema,
+      body: addReviewBodySchema,
+      response: {
+        200: addReviewSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      const body = addReviewBodySchema.parse(request.body);
+      return addReviewProxy(
+        id,
+        body,
         request.correlationId,
         request.user!,
         request.telemetrySpan

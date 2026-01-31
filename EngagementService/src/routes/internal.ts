@@ -112,6 +112,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                 liked: likeResult.liked,
                 likes: likeResult.likes,
                 views: likeResult.views,
+                saves: likeResult.saves,
               };
               break;
             }
@@ -127,6 +128,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                 liked: unlikeResult.liked,
                 likes: unlikeResult.likes,
                 views: unlikeResult.views,
+                saves: unlikeResult.saves,
               };
               break;
             }
@@ -278,10 +280,11 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       });
 
       // Fetch engagement stats for all liked reels
-      let statsMap: Record<string, { likes: number; views: number }> = {};
+      let statsMap: Record<string, { likes: number; views: number; saves: number }> = {};
       if (ids.length > 0) {
         statsMap = await getStatsBatch({
           redis,
+          prisma,
           entityType: "reel",
           entityIds: ids,
         });
@@ -291,6 +294,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         id,
         likes: statsMap[id]?.likes ?? 0,
         views: statsMap[id]?.views ?? 0,
+        saves: statsMap[id]?.saves ?? 0,
       }));
 
       return listWithStatsResponseSchema.parse({ items });
@@ -347,10 +351,11 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       });
 
       // Fetch engagement stats for all saved reels
-      let statsMap: Record<string, { likes: number; views: number }> = {};
+      let statsMap: Record<string, { likes: number; views: number; saves: number }> = {};
       if (ids.length > 0) {
         statsMap = await getStatsBatch({
           redis,
+          prisma,
           entityType: "reel",
           entityIds: ids,
         });
@@ -360,6 +365,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         id,
         likes: statsMap[id]?.likes ?? 0,
         views: statsMap[id]?.views ?? 0,
+        saves: statsMap[id]?.saves ?? 0,
       }));
 
       return listWithStatsResponseSchema.parse({ items });
@@ -389,6 +395,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const { reelId } = reelIdParamsSchema.parse(request.params);
       const stats = await getStats({
         redis,
+        prisma,
         entityType: "reel",
         entityId: reelId,
       });
@@ -405,6 +412,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const body = statsBatchRequestSchema.parse(request.body);
       const stats = await getStatsBatch({
         redis,
+        prisma,
         entityType: "reel",
         entityIds: body.ids,
       });
@@ -464,10 +472,11 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         });
 
         // Fetch engagement stats for all liked series
-        let statsMap: Record<string, { likes: number; views: number }> = {};
+        let statsMap: Record<string, { likes: number; views: number; saves: number }> = {};
         if (ids.length > 0) {
           statsMap = await getStatsBatch({
             redis,
+            prisma,
             entityType: "series",
             entityIds: ids,
           });
@@ -477,6 +486,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
           id,
           likes: statsMap[id]?.likes ?? 0,
           views: statsMap[id]?.views ?? 0,
+          saves: statsMap[id]?.saves ?? 0,
         }));
 
         return listWithStatsResponseSchema.parse({ items });
@@ -538,10 +548,11 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         });
 
         // Fetch engagement stats for all saved series
-        let statsMap: Record<string, { likes: number; views: number }> = {};
+        let statsMap: Record<string, { likes: number; views: number; saves: number }> = {};
         if (ids.length > 0) {
           statsMap = await getStatsBatch({
             redis,
+            prisma,
             entityType: "series",
             entityIds: ids,
           });
@@ -551,6 +562,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
           id,
           likes: statsMap[id]?.likes ?? 0,
           views: statsMap[id]?.views ?? 0,
+          saves: statsMap[id]?.saves ?? 0,
         }));
 
         return listWithStatsResponseSchema.parse({ items });
@@ -584,6 +596,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const { seriesId } = seriesIdParamsSchema.parse(request.params);
       const stats = await getStats({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
       });
@@ -600,6 +613,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const body = statsBatchRequestSchema.parse(request.body);
       const stats = await getStatsBatch({
         redis,
+        prisma,
         entityType: "series",
         entityIds: body.ids,
       });
@@ -678,14 +692,18 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const body = addReviewBodySchema.parse(request.body);
       const userId = requireUserId(request.headers as Record<string, unknown>);
 
+      const userName = body.user_name ?? (request.headers["x-user-name"] as string) ?? "User";
+      const userPhone = request.headers["x-user-phone"] as string | undefined;
+
       const result = await addReview({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         userId,
-        userName: body.user_name,
+        userName,
+        userPhone,
         rating: body.rating,
-        title: body.title,
         comment: body.comment,
       });
 
@@ -705,6 +723,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
 
       const result = await getReviews({
         redis,
+        prisma,
         entityType: "series",
         entityId: seriesId,
         limit: query.limit,

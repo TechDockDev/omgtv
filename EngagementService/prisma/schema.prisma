@@ -64,3 +64,19 @@ model ViewProgress {
   @@unique([userId, episodeId])
   @@index([userId, updatedAt])
 }
+
+model Review {
+  id          String      @id @default(uuid())
+  userId      String
+  userName    String
+  userPhone   String?
+  contentType ContentType
+  contentId   String
+  rating      Int
+  comment     String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([contentId, contentType])
+  @@index([userId])
+}

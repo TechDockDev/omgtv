@@ -1,9 +1,11 @@
 
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { upsertViewProgress, getViewProgress } from "../services/collection-engagement";
+import { upsertViewProgress, getViewProgress, addReview } from "../services/collection-engagement";
 import { getRedisOptional } from "../lib/redis";
 import { getPrismaOptional } from "../lib/prisma";
+import { seriesIdParamsSchema } from "../schemas/engagement";
+import { addReviewBodySchema } from "../schemas/review";
 
 // Schemas
 const saveProgressSchema = z.object({
@@ -81,6 +83,34 @@ export default async function clientRoutes(fastify: FastifyInstance) {
             }
 
             return result;
+        },
+    });
+
+    // Add review
+    fastify.post("/reviews/:seriesId", {
+        schema: {
+            params: seriesIdParamsSchema,
+            body: addReviewBodySchema,
+        },
+        handler: async (request) => {
+            const userId = requireUserId(request.headers as Record<string, unknown>);
+            const { seriesId } = seriesIdParamsSchema.parse(request.params);
+            const body = addReviewBodySchema.parse(request.body);
+
+            const userName = body.user_name ?? (request.headers["x-user-name"] as string) ?? "User";
+
+            const result = await addReview({
+                redis,
+                prisma,
+                entityType: "series",
+                entityId: seriesId,
+                userId,
+                userName,
+                rating: body.rating,
+                comment: body.comment,
+            });
+
+            return { review_id: result.reviewId };
         },
     });
 }

@@ -833,12 +833,7 @@ export class CatalogRepository {
     });
   }
 
-  async findMediaAssetById(id: string) {
-    return this.prisma.mediaAsset.findUnique({
-      where: { id },
-      include: { variants: true },
-    });
-  }
+
 
   async updateMediaAssetStatus(
     id: string,
@@ -1690,6 +1685,7 @@ export class CatalogRepository {
   async listSeries(params: {
     limit?: number;
     cursor?: string | null;
+    isAudioSeries?: boolean; // Added filter
   }): Promise<
     PaginatedResult<
       Series & { category: Category | null; _count: { episodes: number } }
@@ -1697,10 +1693,15 @@ export class CatalogRepository {
   > {
     const limit = normalizeLimit(params.limit);
 
+    const where: Prisma.SeriesWhereInput = {
+      deletedAt: null,
+    };
+    if (params.isAudioSeries !== undefined) {
+      where.isAudioSeries = params.isAudioSeries;
+    }
+
     const rows = await this.prisma.series.findMany({
-      where: {
-        deletedAt: null,
-      },
+      where,
       include: {
         category: true,
         _count: {
@@ -1998,6 +1999,37 @@ export class CatalogRepository {
     });
   }
 
+  async assignMediaAssetToReelById(mediaAssetId: string, reelId: string | null, seriesId: string | null) {
+    return this.prisma.mediaAsset.update({
+      where: { id: mediaAssetId },
+      data: {
+        reelId,
+        seriesId,
+        type: reelId ? MediaAssetType.REEL : undefined,
+      },
+    });
+  }
+
+  async assignMediaAssetToEpisodeById(mediaAssetId: string, episodeId: string | null) {
+    return this.prisma.mediaAsset.update({
+      where: { id: mediaAssetId },
+      data: {
+        episodeId,
+      },
+    });
+  }
+
+  async findMediaAssetById(id: string) {
+    return this.prisma.mediaAsset.findUnique({
+      where: { id },
+      include: {
+        episode: true,
+        reel: true,
+        variants: true,
+      },
+    });
+  }
+
   async findMediaAssetByReelId(reelId: string) {
     return this.prisma.mediaAsset.findUnique({
       where: { reelId },
@@ -2049,6 +2081,7 @@ export class CatalogRepository {
       cursor: params.cursor ? { id: params.cursor } : undefined,
       orderBy: { createdAt: "desc" },
       include: {
+        mediaAsset: true,
         episode: { include: { mediaAsset: true, series: true } }
       }
     });

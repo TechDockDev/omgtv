@@ -28,6 +28,7 @@ const createEpisodeSchema = z.object({
   captions: z.record(z.string(), z.unknown()).optional(),
   tags: z.array(z.string()).optional(),
   uploadId: z.string().optional(),
+  mediaAssetId: z.string().uuid().optional(), // Added support for Media Asset ID
   displayOrder: z.number().int().optional(),
   episodeNumber: z.number().int().optional(),
 });
@@ -108,7 +109,8 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
         const result = await catalog.createEpisode(adminId, {
           ...body,
           episodeNumber: body.episodeNumber ?? body.displayOrder, // Map either to episodeNumber
-          uploadId: body.uploadId
+          uploadId: body.uploadId,
+          mediaAssetId: body.mediaAssetId
         });
         return reply.status(201).send(result);
       } catch (error) {
@@ -187,6 +189,7 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
     captions: z.record(z.string(), z.unknown()).optional(),
     seasonId: z.string().uuid().optional(),
     uploadId: z.union([z.string(), z.null()]).optional(),
+    mediaAssetId: z.union([z.string().uuid(), z.null()]).optional(), // Added support for Media Asset ID
     displayOrder: z.number().int().optional(),
     episodeNumber: z.number().int().optional(),
   });

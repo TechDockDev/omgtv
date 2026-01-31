@@ -4,6 +4,7 @@ import {
   CatalogService,
   CatalogServiceError,
 } from "../../services/catalog-service";
+import { EngagementClient } from "../../clients/engagement-client";
 import { PublicationStatus, Visibility } from "@prisma/client";
 import { loadConfig } from "../../config";
 
@@ -49,18 +50,49 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
       querystring: z.object({
         limit: z.coerce.number().int().positive().max(100).default(20),
         cursor: z.string().uuid().optional(),
+        isAudioSeries: z.enum(["true", "false"]).optional(),
       }),
     },
     handler: async (request, reply) => {
-      const query = request.query as { limit: number; cursor?: string }; // simple cast or use Zod generic
-      // validation handled by schema above
+      const query = request.query as { limit: number; cursor?: string; isAudioSeries?: string };
+      // Note: isAudioSeries comes as string "true"/"false" from query usually
+      const isAudioSeries = query.isAudioSeries === 'true' ? true : query.isAudioSeries === 'false' ? false : undefined;
 
       const adminId = requireAdminId(request, reply);
       const result = await catalog.listSeries({
         limit: query.limit,
         cursor: query.cursor,
+        isAudioSeries,
       });
-      return reply.send(result);
+
+      // Federation: Fetch engagement stats
+      try {
+        const engagementClient = new EngagementClient({
+          baseUrl: config.ENGAGEMENT_SERVICE_URL,
+          timeoutMs: config.SERVICE_REQUEST_TIMEOUT_MS,
+        });
+
+        const ids = result.items.map((s) => s.id);
+        const statsMap = await engagementClient.getStatsBatch({
+          type: "series",
+          ids,
+        });
+
+        const itemsWithStats = result.items.map((item) => ({
+          ...item,
+          stats: statsMap[item.id] ?? { likes: 0, views: 0, saves: 0 },
+        }));
+
+        return reply.send({ ...result, items: itemsWithStats });
+
+      } catch (err) {
+        request.log.warn({ err }, "Failed to fetch engagement stats for series list");
+        const itemsWithStats = result.items.map((item) => ({
+          ...item,
+          stats: { likes: 0, views: 0, saves: 0 },
+        }));
+        return reply.send({ ...result, items: itemsWithStats });
+      }
     },
   });
 
@@ -73,13 +105,70 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
       try {
         const adminId = requireAdminId(request, reply);
         const result = await catalog.getSeries(params.id);
-        return reply.send(result);
+
+        // Fetch reviews
+        try {
+          const engagementClient = new EngagementClient({
+            baseUrl: config.ENGAGEMENT_SERVICE_URL,
+            timeoutMs: config.SERVICE_REQUEST_TIMEOUT_MS,
+          });
+
+          const reviews = await engagementClient.getReviews({
+            seriesId: params.id,
+            limit: 50 // reasonable limit for admin view
+          });
+
+          return reply.send({ ...result, reviews });
+        } catch (err) {
+          request.log.warn({ err, seriesId: params.id }, "Failed to fetch reviews for admin series detail");
+          return reply.send({ ...result, reviews: null });
+        }
       } catch (error) {
         if (error instanceof CatalogServiceError && error.code === "NOT_FOUND") {
           return reply.status(404).send({ message: error.message });
         }
         request.log.error({ err: error, contentId: params.id }, "Failed to get series");
         return reply.status(500).send({ message: "Unable to get series" });
+      }
+    },
+  });
+
+  fastify.get<{ Params: { id: string } }>("/:id/reviews", {
+    schema: {
+      params: z.object({ id: z.string().uuid() }),
+      querystring: z.object({
+        limit: z.coerce.number().int().positive().max(100).default(50),
+        cursor: z.string().optional(),
+      }),
+    },
+    handler: async (request, reply) => {
+      const params = z.object({ id: z.string().uuid() }).parse(request.params);
+      const query = request.query as { limit: number; cursor?: string };
+
+      try {
+        const adminId = requireAdminId(request, reply);
+
+        // Verify series exists first
+        await catalog.getSeries(params.id);
+
+        const engagementClient = new EngagementClient({
+          baseUrl: config.ENGAGEMENT_SERVICE_URL,
+          timeoutMs: config.SERVICE_REQUEST_TIMEOUT_MS,
+        });
+
+        const result = await engagementClient.getReviews({
+          seriesId: params.id,
+          limit: query.limit,
+          cursor: query.cursor,
+        });
+
+        return reply.send(result);
+      } catch (error) {
+        if (error instanceof CatalogServiceError && error.code === "NOT_FOUND") {
+          return reply.status(404).send({ message: error.message });
+        }
+        request.log.error({ err: error, seriesId: params.id }, "Failed to get series reviews");
+        return reply.status(500).send({ message: "Unable to get series reviews" });
       }
     },
   });

@@ -40,6 +40,7 @@ export const userStateEntrySchema = z.object({
     isSaved: z.boolean(),
     likeCount: z.number().int().nonnegative(),
     viewCount: z.number().int().nonnegative(),
+    saveCount: z.number().int().nonnegative(),
 });
 
 export const userStateResponseSchema = z.object({

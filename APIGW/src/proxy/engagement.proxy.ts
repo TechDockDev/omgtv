@@ -21,8 +21,17 @@ import {
   batchActionResponseDataSchema,
   type BatchActionRequest,
   type BatchActionResponseData,
+  saveProgressBodySchema,
+  progressResponseSchema,
+  type SaveProgressBody,
+  type ProgressResponse,
+  addReviewBodySchema,
+  addReviewResponseSchema,
+  type AddReviewBody,
+  type AddReviewResponse,
 } from "../schemas/engagement.schema";
 import { z } from "zod";
+
 
 const upstreamListSchema = z.object({
   ids: z.array(z.string().uuid()),
@@ -32,6 +41,7 @@ const upstreamListItemSchema = z.object({
   id: z.string().uuid(),
   likes: z.number().int().nonnegative(),
   views: z.number().int().nonnegative(),
+  saves: z.number().int().nonnegative(),
 });
 
 const upstreamListWithStatsSchema = z.object({
@@ -586,13 +596,6 @@ export async function processBatchActions(
 }
 
 // View Progress
-import {
-  saveProgressBodySchema,
-  progressResponseSchema,
-  type SaveProgressBody,
-  type ProgressResponse,
-} from "../schemas/engagement.schema";
-
 export async function saveProgress(
   body: SaveProgressBody,
   correlationId: string,
@@ -679,3 +682,47 @@ export async function getProgress(
   }
   return parsed.data;
 }
+
+export async function addReviewProxy(
+  seriesId: string,
+  body: AddReviewBody,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<AddReviewResponse> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const validatedBody = addReviewBodySchema.parse(body);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<AddReviewResponse>({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/client/reviews/${seriesId}`,
+      method: "POST",
+      correlationId,
+      user,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:engagement:addReview",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to add review",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = addReviewResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+  return parsed.data;
+}
+

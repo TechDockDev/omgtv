@@ -5,15 +5,13 @@ export const reviewSchema = z.object({
     user_id: z.string().uuid(),
     user_name: z.string().min(1),
     rating: z.number().int().min(1).max(5),
-    title: z.string().min(1).max(100),
     comment: z.string().min(1).max(2000),
     created_at: z.string().datetime(),
 });
 
 export const addReviewBodySchema = z.object({
-    user_name: z.string().min(1),
+    user_name: z.string().min(1).optional(),
     rating: z.number().int().min(1).max(5),
-    title: z.string().min(1).max(100),
     comment: z.string().min(1).max(2000),
 });
 

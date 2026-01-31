@@ -132,6 +132,155 @@ export async function setAdminCarouselEntries({
   return parsed.data;
 }
 
+export async function getAdminCarouselEntries({
+  correlationId,
+  user,
+  span,
+}: {
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}): Promise<AdminCarouselResponse> {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: "/api/v1/content/admin/catalog/carousel",
+      method: "GET",
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:getCarousel",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Failed to get carousel entries",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const parsed = adminCarouselResponseSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error("Invalid response from content service");
+  }
+  return parsed.data;
+}
+
+export async function reorderAdminCarouselEntries(args: SetCarouselArgs) {
+  // Alias to setAdminCarouselEntries but potentially different path if we wanted, 
+  // but existing setAdminCarouselEntries maps to /.../carousel POST which is what we want for now?
+  // Wait, user asked for specific routes.
+  // The downstream route is /reorder.
+  const baseUrl = resolveServiceUrl("content");
+  adminCarouselBodySchema.parse(args.body);
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: "/api/v1/content/admin/catalog/carousel/reorder",
+      method: "POST",
+      body: args.body,
+      correlationId: args.correlationId,
+      user: args.user,
+      headers: { "x-admin-id": args.user.id },
+      parentSpan: args.span,
+      spanName: "proxy:content:reorderCarousel",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 412) throw createHttpError(412, "Precondition failed", error.cause);
+      if (error.statusCode === 404) throw createHttpError(404, "Not found", error.cause);
+      throw createHttpError(Math.min(error.statusCode, 502), "Failed to reorder carousel", error.cause);
+    }
+    throw error;
+  }
+  const parsed = adminCarouselResponseSchema.safeParse(payload);
+  if (!parsed.success) throw new Error("Invalid response");
+  return parsed.data;
+}
+
+export async function addAdminCarouselSeries({
+  seriesId,
+  correlationId,
+  user,
+  span,
+}: {
+  seriesId: string;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}) {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: `/api/v1/content/admin/catalog/carousel/series/${seriesId}`,
+      method: "POST",
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:addCarouselSeries",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 412) throw createHttpError(412, "Precondition failed", error.cause);
+      if (error.statusCode === 404) throw createHttpError(404, "Not found", error.cause);
+      throw createHttpError(Math.min(error.statusCode, 502), "Failed to add series to carousel", error.cause);
+    }
+    throw error;
+  }
+  return payload;
+}
+
+export async function removeAdminCarouselSeries({
+  seriesId,
+  correlationId,
+  user,
+  span,
+}: {
+  seriesId: string;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}) {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: `/api/v1/content/admin/catalog/carousel/series/${seriesId}`,
+      method: "DELETE",
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:removeCarouselSeries",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(Math.min(error.statusCode, 502), "Failed to remove series from carousel", error.cause);
+    }
+    throw error;
+  }
+  return payload;
+}
+
 export async function getBatchContent({
   ids,
   type,
@@ -363,4 +512,56 @@ export async function updateTopTenSeries({
     throw error;
   }
   return payload as AdminTopTenResponse;
+}
+
+export async function getSeriesReviews({
+  seriesId,
+  limit,
+  cursor,
+  correlationId,
+  user,
+  span,
+}: {
+  seriesId: string;
+  limit?: number;
+  cursor?: string;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}) {
+  const baseUrl = resolveServiceUrl("content");
+
+  const query = new URLSearchParams();
+  if (limit) query.set("limit", limit.toString());
+  if (cursor) query.set("cursor", cursor);
+
+  const queryString = query.toString();
+  const path = `/api/v1/content/admin/catalog/series/${seriesId}/reviews${queryString ? `?${queryString}` : ""}`;
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path,
+      method: "GET",
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:getSeriesReviews",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 404) throw createHttpError(404, "Series not found", error.cause);
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Failed to fetch series reviews",
+        error.cause
+      );
+    }
+    throw error;
+  }
+  return payload;
 }

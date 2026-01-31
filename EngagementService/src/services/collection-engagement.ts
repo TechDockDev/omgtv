@@ -6,17 +6,22 @@ type EntityType = "reel" | "series";
 type Stats = {
   likes: number;
   views: number;
+  saves: number;
+  reviewCount?: number;
+  averageRating?: number;
 };
 
 type InMemoryState = {
   likes: Map<string, number>;
   views: Map<string, number>;
+  saves: Map<string, number>;
   userLiked: Map<string, Set<string>>;
   userSaved: Map<string, Set<string>>;
   reviews: Map<string, Array<{
     id: string;
     userId: string;
     userName: string;
+    userPhone?: string;
     rating: number;
     title: string;
     comment: string;
@@ -28,6 +33,7 @@ const memory: Record<EntityType, InMemoryState> = {
   reel: {
     likes: new Map(),
     views: new Map(),
+    saves: new Map(),
     userLiked: new Map(),
     userSaved: new Map(),
     reviews: new Map(),
@@ -35,6 +41,7 @@ const memory: Record<EntityType, InMemoryState> = {
   series: {
     likes: new Map(),
     views: new Map(),
+    saves: new Map(),
     userLiked: new Map(),
     userSaved: new Map(),
     reviews: new Map(),
@@ -51,6 +58,10 @@ function redisLikesKey(entityType: EntityType, entityId: string) {
 
 function redisViewsKey(entityType: EntityType, entityId: string) {
   return `eng:${entityType}:${entityId}:views`;
+}
+
+function redisSavesKey(entityType: EntityType, entityId: string) {
+  return `eng:${entityType}:${entityId}:saves`;
 }
 
 function redisUserLikedKey(entityType: EntityType, userId: string) {
@@ -83,6 +94,8 @@ function parseRedisInt(value: string | null) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+const DIRTY_STATS_SET = "stats:dirty_set";
+
 function getOrCreateSet(map: Map<string, Set<string>>, userId: string) {
   const existing = map.get(userId);
   if (existing) return existing;
@@ -91,30 +104,70 @@ function getOrCreateSet(map: Map<string, Set<string>>, userId: string) {
   return created;
 }
 
+async function markDirty(redis: Redis, entityType: EntityType, entityId: string) {
+  await redis.sadd(DIRTY_STATS_SET, `${entityType}:${entityId}`);
+}
+
 async function getStatsRedis(
   redis: Redis,
   entityType: EntityType,
-  entityId: string
+  entityId: string,
+  prisma?: PrismaClient | null
 ): Promise<Stats> {
-  const [likesRaw, viewsRaw] = await redis.mget(
+  const keys = [
     redisLikesKey(entityType, entityId),
-    redisViewsKey(entityType, entityId)
-  );
+    redisViewsKey(entityType, entityId),
+    redisSavesKey(entityType, entityId),
+  ];
+  const [likesRaw, viewsRaw, savesRaw] = await redis.mget(...keys);
+
+  // Warm-up logic: if ANY keys are missing from Redis, try loading from DB
+  if (prisma && (likesRaw === null || viewsRaw === null || savesRaw === null)) {
+    const dbStat = await prisma.contentStats.findUnique({
+      where: {
+        contentType_contentId: {
+          contentType: entityType.toUpperCase() as any,
+          contentId: entityId,
+        },
+      },
+    });
+
+    if (dbStat) {
+      const stats = {
+        likes: dbStat.likeCount,
+        views: dbStat.viewCount,
+        saves: dbStat.saveCount,
+      };
+      // Populate Redis
+      await redis.pipeline()
+        .set(keys[0], stats.likes)
+        .set(keys[1], stats.views)
+        .set(keys[2], stats.saves)
+        .exec();
+      return stats;
+    }
+  }
+
   return {
     likes: clampNonNegative(parseRedisInt(likesRaw)),
     views: clampNonNegative(parseRedisInt(viewsRaw)),
+    saves: clampNonNegative(parseRedisInt(savesRaw)),
+    // Review stats not fetched here yet for single entity, defaulting to optional
   };
 }
 
 function getStatsMemory(entityType: EntityType, entityId: string): Stats {
   const state = memory[entityType];
+  const key = entityKey(entityType, entityId);
+  const reviews = state.reviews.get(key) ?? [];
   return {
-    likes: clampNonNegative(
-      state.likes.get(entityKey(entityType, entityId)) ?? 0
-    ),
-    views: clampNonNegative(
-      state.views.get(entityKey(entityType, entityId)) ?? 0
-    ),
+    likes: clampNonNegative(state.likes.get(key) ?? 0),
+    views: clampNonNegative(state.views.get(key) ?? 0),
+    saves: clampNonNegative(state.saves.get(key) ?? 0),
+    reviewCount: reviews.length,
+    averageRating: reviews.length > 0
+      ? Number((reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length).toFixed(1))
+      : 0,
   };
 }
 
@@ -144,51 +197,34 @@ export async function likeEntity(params: {
   const added = await redis.sadd(userKey, entityId);
   if (added === 1) {
     await redis.incr(redisLikesKey(entityType, entityId));
+    await markDirty(redis, entityType, entityId);
   }
 
   if (prisma) {
-    void prisma.$transaction([
-      prisma.userAction.upsert({
-        where: {
-          userId_contentType_contentId_actionType: {
-            userId,
-            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-            contentId: entityId,
-            actionType: "LIKE",
-          },
-        },
-        create: {
+    // Immediate per-user state (critical for UI)
+    void prisma.userAction.upsert({
+      where: {
+        userId_contentType_contentId_actionType: {
           userId,
           contentType: entityType.toUpperCase() as "REEL" | "SERIES",
           contentId: entityId,
           actionType: "LIKE",
-          isActive: true,
         },
-        update: {
-          isActive: true,
-        },
-      }),
-      prisma.contentStats.upsert({
-        where: {
-          contentType_contentId: {
-            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-            contentId: entityId,
-          },
-        },
-        create: {
-          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-          contentId: entityId,
-          likeCount: 1,
-        },
-        update: {
-          likeCount: { increment: 1 },
-          lastSyncedAt: new Date(),
-        },
-      }),
-    ]).catch((err) => console.error("DB like write failed:", err));
+      },
+      create: {
+        userId,
+        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+        contentId: entityId,
+        actionType: "LIKE",
+        isActive: true,
+      },
+      update: {
+        isActive: true,
+      },
+    }).catch((err) => console.error("DB like user-action failed:", err));
   }
 
-  const stats = await getStatsRedis(redis, entityType, entityId);
+  const stats = await getStatsRedis(redis, entityType, entityId, prisma);
   return { ...stats, liked: true };
 }
 
@@ -220,35 +256,22 @@ export async function unlikeEntity(params: {
     if (newCount < 0) {
       await redis.set(redisLikesKey(entityType, entityId), "0");
     }
+    await markDirty(redis, entityType, entityId);
   }
 
   if (prisma) {
-    void prisma.$transaction([
-      prisma.userAction.updateMany({
-        where: {
-          userId,
-          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-          contentId: entityId,
-          actionType: "LIKE",
-        },
-        data: { isActive: false },
-      }),
-      prisma.contentStats.update({
-        where: {
-          contentType_contentId: {
-            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-            contentId: entityId,
-          },
-        },
-        data: {
-          likeCount: { decrement: 1 },
-          lastSyncedAt: new Date(),
-        },
-      }),
-    ]).catch((err) => console.error("DB unlike write failed:", err));
+    void prisma.userAction.updateMany({
+      where: {
+        userId,
+        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+        contentId: entityId,
+        actionType: "LIKE",
+      },
+      data: { isActive: false },
+    }).catch((err) => console.error("DB unlike user-action failed:", err));
   }
 
-  const stats = await getStatsRedis(redis, entityType, entityId);
+  const stats = await getStatsRedis(redis, entityType, entityId, prisma);
   return { ...stats, liked: false };
 }
 
@@ -264,53 +287,41 @@ export async function saveEntity(params: {
   if (!redis) {
     const state = memory[entityType];
     const savedSet = getOrCreateSet(state.userSaved, userId);
-    savedSet.add(entityId);
+    const already = savedSet.has(entityId);
+    if (!already) {
+      savedSet.add(entityId);
+      const key = entityKey(entityType, entityId);
+      state.saves.set(key, (state.saves.get(key) ?? 0) + 1);
+    }
     return { saved: true };
   }
 
   if (prisma) {
-    void prisma.$transaction([
-      prisma.userAction.upsert({
-        where: {
-          userId_contentType_contentId_actionType: {
-            userId,
-            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-            contentId: entityId,
-            actionType: "SAVE",
-          },
-        },
-        create: {
+    void prisma.userAction.upsert({
+      where: {
+        userId_contentType_contentId_actionType: {
           userId,
           contentType: entityType.toUpperCase() as "REEL" | "SERIES",
           contentId: entityId,
           actionType: "SAVE",
-          isActive: true,
         },
-        update: {
-          isActive: true,
-        },
-      }),
-      prisma.contentStats.upsert({
-        where: {
-          contentType_contentId: {
-            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-            contentId: entityId,
-          },
-        },
-        create: {
-          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-          contentId: entityId,
-          saveCount: 1,
-        },
-        update: {
-          saveCount: { increment: 1 },
-          lastSyncedAt: new Date(),
-        },
-      }),
-    ]).catch((err) => console.error("DB save write failed:", err));
+      },
+      create: {
+        userId,
+        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+        contentId: entityId,
+        actionType: "SAVE",
+        isActive: true,
+      },
+      update: {
+        isActive: true,
+      },
+    }).catch((err) => console.error("DB save user-action failed:", err));
   }
 
   await redis.sadd(redisUserSavedKey(entityType, userId), entityId);
+  await redis.incr(redisSavesKey(entityType, entityId));
+  await markDirty(redis, entityType, entityId);
   return { saved: true };
 }
 
@@ -326,37 +337,34 @@ export async function unsaveEntity(params: {
   if (!redis) {
     const state = memory[entityType];
     const savedSet = getOrCreateSet(state.userSaved, userId);
-    savedSet.delete(entityId);
+    const removed = savedSet.delete(entityId);
+    if (removed) {
+      const key = entityKey(entityType, entityId);
+      state.saves.set(key, Math.max(0, (state.saves.get(key) ?? 0) - 1));
+    }
     return { saved: false };
   }
 
   if (prisma) {
-    void prisma.$transaction([
-      prisma.userAction.updateMany({
-        where: {
-          userId,
-          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-          contentId: entityId,
-          actionType: "SAVE",
-        },
-        data: { isActive: false },
-      }),
-      prisma.contentStats.update({
-        where: {
-          contentType_contentId: {
-            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-            contentId: entityId,
-          },
-        },
-        data: {
-          saveCount: { decrement: 1 },
-          lastSyncedAt: new Date(),
-        },
-      }),
-    ]).catch((err) => console.error("DB unsave write failed:", err));
+    void prisma.userAction.updateMany({
+      where: {
+        userId,
+        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+        contentId: entityId,
+        actionType: "SAVE",
+      },
+      data: { isActive: false },
+    }).catch((err) => console.error("DB unsave user-action failed:", err));
   }
 
-  await redis.srem(redisUserSavedKey(entityType, userId), entityId);
+  const removedCount = await redis.srem(redisUserSavedKey(entityType, userId), entityId);
+  if (removedCount === 1) {
+    const newCount = await redis.decr(redisSavesKey(entityType, entityId));
+    if (newCount < 0) {
+      await redis.set(redisSavesKey(entityType, entityId), "0");
+    }
+    await markDirty(redis, entityType, entityId);
+  }
   return { saved: false };
 }
 
@@ -375,42 +383,22 @@ export async function addView(params: {
     return { views: getStatsMemory(entityType, entityId).views };
   }
 
-  if (prisma) {
-    void prisma.contentStats
-      .upsert({
-        where: {
-          contentType_contentId: {
-            contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-            contentId: entityId,
-          },
-        },
-        create: {
-          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-          contentId: entityId,
-          viewCount: 1,
-        },
-        update: {
-          viewCount: { increment: 1 },
-          lastSyncedAt: new Date(),
-        },
-      })
-      .catch((err) => console.error("DB view write failed:", err));
-  }
-
   const views = await redis.incr(redisViewsKey(entityType, entityId));
+  await markDirty(redis, entityType, entityId);
   return { views: clampNonNegative(views) };
 }
 
 export async function getStats(params: {
   redis: Redis | null;
+  prisma?: PrismaClient | null;
   entityType: EntityType;
   entityId: string;
 }): Promise<Stats> {
-  const { redis, entityType, entityId } = params;
+  const { redis, prisma, entityType, entityId } = params;
   if (!redis) {
     return getStatsMemory(entityType, entityId);
   }
-  return getStatsRedis(redis, entityType, entityId);
+  return getStatsRedis(redis, entityType, entityId, prisma);
 }
 
 export async function listUserEntities(params: {
@@ -445,6 +433,7 @@ export async function listUserEntities(params: {
 
 export async function getStatsBatch(params: {
   redis: Redis | null;
+  prisma?: PrismaClient | null;
   entityType: EntityType;
   entityIds: string[];
 }): Promise<Record<string, Stats>> {
@@ -462,95 +451,145 @@ export async function getStatsBatch(params: {
   }
 
   const keys: string[] = [];
-  entityIds.forEach((id) => {
-    keys.push(redisLikesKey(entityType, id));
-    keys.push(redisViewsKey(entityType, id));
-  });
+  // We won't use mget for mixed types (string + hash) efficiently without pipeline, 
+  // and we already have a pipeline implementation below.
+  // So removing this old block.
 
-  const values = await redis.mget(keys);
+  const pipeline = redis.pipeline();
+  for (const id of entityIds) {
+    pipeline.get(redisLikesKey(entityType, id));
+    pipeline.get(redisViewsKey(entityType, id));
+    pipeline.get(redisSavesKey(entityType, id));
+    pipeline.hgetall(redisReviewStatsKey(entityType, id));
+  }
 
+  const pipelineResults = await pipeline.exec();
   const result: Record<string, Stats> = {};
-  for (let i = 0; i < entityIds.length; i += 1) {
-    const likesRaw = values[i * 2] ?? null;
-    const viewsRaw = values[i * 2 + 1] ?? null;
-    result[entityIds[i]] = {
-      likes: clampNonNegative(parseRedisInt(likesRaw)),
-      views: clampNonNegative(parseRedisInt(viewsRaw)),
-    };
+
+  if (!pipelineResults) return {};
+
+  for (let i = 0; i < entityIds.length; i++) {
+    // Pipeline results structure: [[error, result], [error, result], ...]
+    // 4 commands per entity
+    const likesRaw = pipelineResults[i * 4]?.[1] as string | null;
+    const viewsRaw = pipelineResults[i * 4 + 1]?.[1] as string | null;
+    const savesRaw = pipelineResults[i * 4 + 2]?.[1] as string | null;
+    const reviewStatsRaw = pipelineResults[i * 4 + 3]?.[1] as Record<string, string> | null;
+
+    if (likesRaw === null || viewsRaw === null || savesRaw === null) {
+      result[entityIds[i]] = await getStatsRedis(redis, entityType, entityIds[i], params.prisma);
+    } else {
+      const count = reviewStatsRaw ? parseInt(reviewStatsRaw.count ?? "0", 10) : 0;
+      const sum = reviewStatsRaw ? parseFloat(reviewStatsRaw.sum ?? "0") : 0;
+      const avg = count > 0 ? sum / count : 0;
+
+      result[entityIds[i]] = {
+        likes: clampNonNegative(parseRedisInt(likesRaw)),
+        views: clampNonNegative(parseRedisInt(viewsRaw)),
+        saves: clampNonNegative(parseRedisInt(savesRaw)),
+        reviewCount: count,
+        averageRating: avg
+      };
+    }
   }
 
   return result;
 }
 
+
 export async function addReview(params: {
   redis: Redis | null;
+  prisma?: PrismaClient | null;
   entityType: EntityType;
   entityId: string;
   userId: string;
   userName: string;
+  userPhone?: string;
   rating: number;
-  title: string;
   comment: string;
 }): Promise<{ reviewId: string }> {
   const {
     redis,
+    prisma,
     entityType,
     entityId,
     userId,
     userName,
+    userPhone,
     rating,
-    title,
     comment,
   } = params;
-  const reviewId = crypto.randomUUID();
-  const createdAt = new Date().toISOString();
 
-  const reviewData = {
-    review_id: reviewId,
-    user_id: userId,
-    user_name: userName,
-    rating,
-    title,
-    comment,
-    created_at: createdAt,
-  };
+  // Persist to DB
+  let reviewId: string = crypto.randomUUID();
+  let createdAt = new Date().toISOString();
 
-  if (!redis) {
+  if (prisma) {
+    const review = await prisma.review.create({
+      data: {
+        userId,
+        userName,
+        userPhone,
+        contentType: entityType.toUpperCase() as any, // "SERIES" | "REEL"
+        contentId: entityId,
+        rating,
+        comment,
+      },
+    });
+    reviewId = review.id;
+    createdAt = review.createdAt.toISOString();
+  } else {
+    console.warn("Prisma instance missing in addReview, review will not be persisted to DB");
+  }
+
+  // Update Redis (cache) if available
+  if (redis) {
+    const reviewData = {
+      review_id: reviewId,
+      user_id: userId,
+      user_name: userName,
+      user_phone: userPhone,
+      rating,
+      comment, // no title
+      created_at: createdAt,
+    };
+
+    // Use a transaction to update list and stats
+    const multi = redis.multi();
+    const listKey = redisReviewListKey(entityType, entityId);
+    const statsKey = redisReviewStatsKey(entityType, entityId);
+
+    // Push to front of list
+    multi.lpush(listKey, JSON.stringify(reviewData));
+
+    // Update stats
+    multi.hincrby(statsKey, "count", 1);
+    multi.hincrby(statsKey, "sum", rating);
+
+    await multi.exec();
+  } else {
+    // Memory fallback
     const state = memory[entityType];
     const reviews = state.reviews.get(entityKey(entityType, entityId)) ?? [];
     reviews.unshift({
       id: reviewId,
       userId,
       userName,
+      userPhone,
       rating,
-      title,
+      title: "",
       comment,
       createdAt,
     });
     state.reviews.set(entityKey(entityType, entityId), reviews);
-    return { reviewId };
   }
-
-  // Use a transaction to update list and stats
-  const multi = redis.multi();
-  const listKey = redisReviewListKey(entityType, entityId);
-  const statsKey = redisReviewStatsKey(entityType, entityId);
-
-  // Push to front of list
-  multi.lpush(listKey, JSON.stringify(reviewData));
-
-  // Update stats
-  // We store total_count and sum_ratings in a hash
-  multi.hincrby(statsKey, "count", 1);
-  multi.hincrby(statsKey, "sum", rating);
-
-  await multi.exec();
 
   return { reviewId };
 }
 
 export async function getReviews(params: {
   redis: Redis | null;
+  prisma?: PrismaClient | null;
   entityType: EntityType;
   entityId: string;
   limit?: number;
@@ -561,9 +600,62 @@ export async function getReviews(params: {
   totalReviews: number;
   nextCursor: string | null;
 }> {
-  const { redis, entityType, entityId, limit = 20 } = params;
+  const { redis, prisma, entityType, entityId, limit = 20 } = params;
 
+  // Prefer DB for single source of truth, but Redis for speed?
+  // User asked for reliability on reviews usually. 
+  // Let's implement DB fetch primarily since Redis might lose data if not persistent.
+  // But we still return stats from Redis if available for performance? 
+  // Let's align with "warm up" strategy: if Redis missing, fetch DB.
+
+  if (prisma) {
+    // DB Implementation
+    const where = {
+      contentType: entityType.toUpperCase() as any,
+      contentId: entityId
+    };
+
+    // Get stats (agg)
+    const agg = await prisma.review.aggregate({
+      where,
+      _avg: { rating: true },
+      _count: { rating: true }
+    });
+
+    const averageRating = agg._avg.rating ?? 0;
+    const totalReviews = agg._count.rating ?? 0;
+
+    // Get list
+    const reviews = await prisma.review.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      ...(params.cursor ? { cursor: { id: params.cursor }, skip: 1 } : {})
+    });
+
+    const mappedReviews = reviews.map(r => ({
+      review_id: r.id,
+      user_id: r.userId,
+      user_name: r.userName,
+      user_phone: r.userPhone,
+      rating: r.rating,
+      comment: r.comment,
+      created_at: r.createdAt.toISOString()
+    }));
+
+    const nextCursor = reviews.length === limit ? reviews[reviews.length - 1].id : null;
+
+    return {
+      reviews: mappedReviews,
+      averageRating,
+      totalReviews,
+      nextCursor
+    };
+  }
+
+  // Fallback to Redis/Memory if Prisma not available (shouldn't happen in prod with DB)
   if (!redis) {
+    // ... memory logic same as before ...
     const state = memory[entityType];
     const allReviews = state.reviews.get(entityKey(entityType, entityId)) ?? [];
 
@@ -578,8 +670,8 @@ export async function getReviews(params: {
       review_id: r.id,
       user_id: r.userId,
       user_name: r.userName,
+      user_phone: r.userPhone,
       rating: r.rating,
-      title: r.title,
       comment: r.comment,
       created_at: r.createdAt
     }));
@@ -620,8 +712,11 @@ export async function getReviews(params: {
 export type UserStateEntry = {
   likeCount: number;
   viewCount: number;
+  saveCount: number;
   isLiked: boolean;
   isSaved: boolean;
+  averageRating: number;
+  reviewCount: number;
 };
 
 export async function getUserStateBatch(params: {
@@ -657,20 +752,26 @@ export async function getUserStateBatch(params: {
     const userSavedSeries = seriesState.userSaved.get(userId) ?? new Set();
 
     for (const id of reelIds) {
+      const stats = getStatsMemory("reel", id);
       result[`reel:${id}`] = {
-        ...getStatsMemory("reel", id),
-        likeCount: getStatsMemory("reel", id).likes,
-        viewCount: getStatsMemory("reel", id).views,
+        likeCount: stats.likes,
+        viewCount: stats.views,
+        saveCount: stats.saves,
+        averageRating: stats.averageRating ?? 0,
+        reviewCount: stats.reviewCount ?? 0,
         isLiked: userLikedReels.has(id),
         isSaved: userSavedReels.has(id),
       };
     }
 
     for (const id of seriesIds) {
+      const stats = getStatsMemory("series", id);
       result[`series:${id}`] = {
-        ...getStatsMemory("series", id),
-        likeCount: getStatsMemory("series", id).likes,
-        viewCount: getStatsMemory("series", id).views,
+        likeCount: stats.likes,
+        viewCount: stats.views,
+        saveCount: stats.saves,
+        averageRating: stats.averageRating ?? 0,
+        reviewCount: stats.reviewCount ?? 0,
         isLiked: userLikedSeries.has(id),
         isSaved: userSavedSeries.has(id),
       };
@@ -686,6 +787,8 @@ export async function getUserStateBatch(params: {
   for (const item of items) {
     pipeline.get(redisLikesKey(item.contentType, item.contentId));
     pipeline.get(redisViewsKey(item.contentType, item.contentId));
+    pipeline.get(redisSavesKey(item.contentType, item.contentId));
+    pipeline.hgetall(redisReviewStatsKey(item.contentType, item.contentId));
   }
 
   // Check if user liked/saved each item
@@ -710,13 +813,23 @@ export async function getUserStateBatch(params: {
   for (const item of items) {
     const likesRaw = results[idx]?.[1] as string | null;
     const viewsRaw = results[idx + 1]?.[1] as string | null;
+    const savesRaw = results[idx + 2]?.[1] as string | null;
+    const reviewStatsRaw = results[idx + 3]?.[1] as Record<string, string> | null;
+
+    const count = reviewStatsRaw ? parseInt(reviewStatsRaw.count ?? "0", 10) : 0;
+    const sum = reviewStatsRaw ? parseFloat(reviewStatsRaw.sum ?? "0") : 0;
+    const avg = count > 0 ? sum / count : 0;
+
     result[`${item.contentType}:${item.contentId}`] = {
       likeCount: clampNonNegative(parseRedisInt(likesRaw)),
       viewCount: clampNonNegative(parseRedisInt(viewsRaw)),
+      saveCount: clampNonNegative(parseRedisInt(savesRaw)),
+      averageRating: Number(avg.toFixed(1)),
+      reviewCount: count,
       isLiked: false,
       isSaved: false,
     };
-    idx += 2;
+    idx += 4;
   }
 
   // Parse isLiked/isSaved for reels
@@ -757,6 +870,7 @@ export async function getUserStateBatch(params: {
           // Use DB values if Redis is 0 or if we want to take the max
           entry.likeCount = Math.max(entry.likeCount, stat.likeCount);
           entry.viewCount = Math.max(entry.viewCount, stat.viewCount);
+          entry.saveCount = Math.max(entry.saveCount, stat.saveCount);
         }
       }
 
@@ -778,6 +892,31 @@ export async function getUserStateBatch(params: {
         if (entry) {
           if (action.actionType === "LIKE") entry.isLiked = true;
           if (action.actionType === "SAVE") entry.isSaved = true;
+        }
+      }
+
+      // Fetch rating summaries from DB
+      const ratings = await prisma.review.groupBy({
+        by: ['contentType', 'contentId'],
+        where: {
+          OR: items.map(item => ({
+            contentType: item.contentType.toUpperCase() as any,
+            contentId: item.contentId
+          }))
+        },
+        _count: { _all: true },
+        _avg: { rating: true }
+      });
+
+      for (const rating of ratings) {
+        const key = `${rating.contentType.toLowerCase()}:${rating.contentId}`;
+        const entry = result[key];
+        if (entry) {
+          entry.reviewCount = Math.max(entry.reviewCount ?? 0, rating._count._all);
+          const dbAvg = rating._avg.rating ?? 0;
+          if (dbAvg > 0) {
+            entry.averageRating = Number(dbAvg.toFixed(1));
+          }
         }
       }
     } catch (dbError) {

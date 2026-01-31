@@ -33,6 +33,9 @@ const userStateEntrySchema = z.object({
   isSaved: z.boolean(),
   likeCount: z.number().int().nonnegative(),
   viewCount: z.number().int().nonnegative(),
+  saveCount: z.number().int().nonnegative(),
+  averageRating: z.number().optional().default(0),
+  reviewCount: z.number().optional().default(0),
 });
 
 const userStateResponseSchema = z.object({
@@ -65,7 +68,9 @@ export class EngagementClient {
       }
     );
 
-    const parsed = continueWatchResponseSchema.safeParse(response.payload);
+    // Unwrap data envelope if present
+    const data = (response.payload as any)?.data ?? response.payload;
+    const parsed = continueWatchResponseSchema.safeParse(data);
     if (!parsed.success) {
       throw new Error("Invalid response from EngagementService");
     }
@@ -96,7 +101,9 @@ export class EngagementClient {
       spanName: "client:engagement:getUserStates",
     });
 
-    const parsed = userStateResponseSchema.safeParse(response.payload);
+    // Unwrap data envelope if present
+    const data = (response.payload as any)?.data ?? response.payload;
+    const parsed = userStateResponseSchema.safeParse(data);
     if (!parsed.success) {
       console.error("Invalid user state response:", parsed.error);
       return {};
@@ -115,8 +122,8 @@ export class EngagementClient {
       review_id: string;
       user_id: string;
       user_name: string;
+      user_phone?: string;
       rating: number;
-      title: string;
       comment: string;
       created_at: string;
     }>;
@@ -139,8 +146,8 @@ export class EngagementClient {
       review_id: z.string().uuid(),
       user_id: z.string().uuid(),
       user_name: z.string(),
+      user_phone: z.string().optional(),
       rating: z.number(),
-      title: z.string(),
       comment: z.string(),
       created_at: z.string(),
     });
@@ -154,9 +161,56 @@ export class EngagementClient {
       next_cursor: z.string().nullable(),
     });
 
-    const parsed = reviewsResponseSchema.safeParse(response.payload);
+    // Unwrap data envelope if present
+    const data = (response.payload as any)?.data ?? response.payload;
+    const parsed = reviewsResponseSchema.safeParse(data);
     if (!parsed.success) {
       throw new Error("Invalid response from EngagementService (reviews)");
+    }
+    return parsed.data;
+  }
+
+  async addReview(params: {
+    seriesId: string;
+    userId: string;
+    userName: string;
+    rating: number;
+    comment: string;
+  }): Promise<{ review_id: string }> {
+    const body = {
+      user_name: params.userName,
+      rating: params.rating,
+      comment: params.comment
+    };
+
+    const response: ServiceRequestResult<unknown> = await performServiceRequest({
+      serviceName: "engagement",
+      baseUrl: this.options.baseUrl,
+
+      // I implemented it in `routes/client.ts` but `ContentService` usually calls `internal` routes?
+      // No, `EngagementClient` in ContentService is backend-to-backend.
+      // But I exposed it in `client.ts` (public). 
+      // `internal.ts` ALSO has `addReview`.
+      // I should use internal route if possible or client route if I want to simulate client.
+      // `internal.ts` route: POST /series/:seriesId/reviews
+      // `client.ts` route: POST /reviews/:seriesId
+      // Let's use internal route since we are a service.
+      // Internal route implementation in `internal.ts` calls `addReview`.
+      // Wait, I updated `internal.ts` to pass `title`? No, I removed `title`.
+      // So I can use internal route.
+      path: `/internal/series/${params.seriesId}/reviews`,
+      method: "POST",
+      body,
+      headers: { "x-user-id": params.userId },
+      timeoutMs: this.options.timeoutMs,
+      spanName: "client:engagement:addReview"
+    });
+
+    const resultSchema = z.object({ review_id: z.string() });
+    const data = (response.payload as any)?.data ?? response.payload;
+    const parsed = resultSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new Error("Invalid response from EngagementService (addReview)");
     }
     return parsed.data;
   }
@@ -164,17 +218,7 @@ export class EngagementClient {
   async getUserState(params: {
     userId: string;
     items: Array<{ contentType: "reel" | "series"; contentId: string }>;
-  }): Promise<
-    Record<
-      string,
-      {
-        likeCount: number;
-        viewCount: number;
-        isLiked: boolean;
-        isSaved: boolean;
-      }
-    >
-  > {
+  }): Promise<Record<string, UserStateEntry>> {
     if (params.items.length === 0) {
       return {};
     }
@@ -186,17 +230,6 @@ export class EngagementClient {
           contentId: z.string().uuid(),
         })
       ),
-    });
-
-    const userStateEntrySchema = z.object({
-      likeCount: z.number().int().nonnegative(),
-      viewCount: z.number().int().nonnegative(),
-      isLiked: z.boolean(),
-      isSaved: z.boolean(),
-    });
-
-    const userStateResponseSchema = z.object({
-      states: z.record(userStateEntrySchema),
     });
 
     const body = userStateRequestSchema.parse({ items: params.items });
@@ -227,6 +260,81 @@ export class EngagementClient {
     }
 
     return parsed.data.states;
+  }
+
+
+  async getStatsBatch(params: {
+    type: "reel" | "series";
+    ids: string[];
+  }): Promise<Record<string, { likes: number; views: number; saves: number; averageRating: number; reviewCount: number }>> {
+    if (params.ids.length === 0) {
+      return {};
+    }
+
+    const statsBatchRequestSchema = z.object({
+      ids: z.array(z.string().uuid()).min(1).max(200),
+    });
+
+    const statsSchema = z.object({
+      likes: z.number().int().nonnegative(),
+      views: z.number().int().nonnegative(),
+      saves: z.number().int().nonnegative(),
+      averageRating: z.number().optional().default(0),
+      reviewCount: z.number().optional().default(0),
+    });
+
+    const statsBatchResponseSchema = z.object({
+      stats: z.record(statsSchema),
+    });
+
+    // Chunking to respect max batch size if needed, but for now assuming caller respects it or we implement chunking here.
+    // Let's implement simple chunking to be safe (200 is max).
+    const results: Record<string, { likes: number; views: number; saves: number; averageRating: number; reviewCount: number }> = {};
+    const chunkSize = 200;
+
+    for (let i = 0; i < params.ids.length; i += chunkSize) {
+      const chunk = params.ids.slice(i, i + chunkSize);
+
+      try {
+        const body = statsBatchRequestSchema.parse({ ids: chunk });
+
+        const response: ServiceRequestResult<unknown> = await performServiceRequest({
+          serviceName: "engagement",
+          baseUrl: this.options.baseUrl,
+          path: `/internal/${params.type === 'series' ? 'series' : 'reels'}/stats`,
+          method: "POST",
+          body,
+          timeoutMs: this.options.timeoutMs,
+          spanName: `client:engagement:getStatsBatch:${params.type}`,
+        });
+
+        // Unwrap data envelope if present
+        const data = (response.payload as any)?.data ?? response.payload;
+        const parsed = statsBatchResponseSchema.safeParse(data);
+        if (parsed.success) {
+          // Create object with defaults
+          const statsWithDefaults = Object.entries(parsed.data.stats).reduce((acc, [key, stat]) => {
+            acc[key] = {
+              likes: stat.likes,
+              views: stat.views,
+              saves: stat.saves,
+              averageRating: stat.averageRating ?? 0,
+              reviewCount: stat.reviewCount ?? 0,
+            };
+            return acc;
+          }, {} as Record<string, { likes: number; views: number; saves: number; averageRating: number; reviewCount: number }>);
+
+          Object.assign(results, statsWithDefaults);
+        } else {
+          console.error(`Invalid stats batch response for ${params.type}:`, parsed.error);
+        }
+      } catch (error) {
+        // Fallback for partial failures? Or just log.
+        console.error(`Failed to fetch stats batch for ${params.type} chunk`, error);
+      }
+    }
+
+    return results;
   }
 }
 
