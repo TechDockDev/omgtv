@@ -306,6 +306,113 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+
+  app.get(
+    "/stats",
+    async (_request, reply) => {
+      const [revenueAgg, trialUsers, totalSubscribers] = await Promise.all([
+        // 1. Total Revenue
+        prisma.transaction.aggregate({
+          _sum: { amountPaise: true },
+          where: { status: "SUCCESS" },
+        }),
+        // 2. Conversion Rate Base (Total uniquely ever on trial)
+        prisma.userSubscription.findMany({
+          where: { trialPlanId: { not: null } },
+          select: { userId: true },
+          distinct: ["userId"],
+        }),
+        // 3. Total Subscribers (Active Paid Users)
+        prisma.userSubscription.count({
+          where: { status: "ACTIVE", trialPlanId: null },
+        }),
+      ]);
+
+      const totalRevenue = revenueAgg._sum.amountPaise || 0;
+      const trialUserIds = trialUsers.map((u) => u.userId);
+
+      let conversionRate = 0;
+      let convertedCount = 0;
+
+      if (trialUserIds.length > 0) {
+        // Find how many of these users have bought a regular plan
+        const convertedUsers = await prisma.transaction.findMany({
+          where: {
+            userId: { in: trialUserIds },
+            planId: { not: null }, // Regular plan
+            status: "SUCCESS",
+          },
+          select: { userId: true },
+          distinct: ["userId"],
+        });
+        convertedCount = convertedUsers.length;
+        conversionRate = (convertedCount / trialUserIds.length) * 100;
+      }
+
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "Stats retrieved successfully",
+        developerMessage: "Transaction stats including revenue, conversion rate, subscribers, and trials",
+        data: {
+          totalRevenue,
+          conversionRate,
+          trialUsersCount: trialUserIds.length,
+          convertedUsersCount: convertedCount,
+          totalSubscribers,
+        },
+      };
+    }
+  );
+
+  app.get<{ Querystring: { page?: number; limit?: number } }>(
+    "/trial-users",
+    {
+      schema: {
+        querystring: z.object({
+          page: z.coerce.number().min(1).default(1),
+          limit: z.coerce.number().min(1).max(100).default(10),
+        }),
+      },
+    },
+    async (request) => {
+      const { page = 1, limit = 10 } = request.query;
+      const skip = (page - 1) * limit;
+
+      const [total, data] = await Promise.all([
+        prisma.userSubscription.count({
+          where: { trialPlanId: { not: null } },
+        }),
+        prisma.userSubscription.findMany({
+          where: { trialPlanId: { not: null } },
+          include: {
+            trialPlan: true,
+            plan: true,
+          },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit,
+        }),
+      ]);
+
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "Trial users retrieved successfully",
+        developerMessage: "Paginated list of trial users",
+        data: {
+          items: data,
+          pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+          },
+        },
+      };
+    }
+  );
+
   app.get("/custom-trials", async () => {
     const data = await prisma.trialPlan.findMany({
       orderBy: { createdAt: "desc" },
