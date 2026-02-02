@@ -4227,6 +4227,48 @@ const subscriptionDocument: OpenAPIV3.Document = {
         },
       },
     },
+    "/admin/trial-users": {
+      get: {
+        summary: "List trial users",
+        description: "Returns a paginated list of users with trial subscriptions.",
+        tags: ["Subscription Service - Admin"],
+        parameters: [
+          {
+            name: "page",
+            in: "query",
+            schema: { type: "integer", default: 1 },
+          },
+          {
+            name: "limit",
+            in: "query",
+            schema: { type: "integer", default: 10 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "List of trial users.",
+            content: successContent({
+              $ref: "#/components/schemas/ListTrialUsersResponse"
+            }),
+          },
+        },
+      },
+    },
+    "/admin/stats": {
+      get: {
+        summary: "Get transaction stats",
+        description: "Returns total revenue and conversion rate metrics.",
+        tags: ["Subscription Service - Admin"],
+        responses: {
+          "200": {
+            description: "Stats metrics returned.",
+            content: successContent({
+              $ref: "#/components/schemas/StatsResponse"
+            }),
+          },
+        },
+      },
+    },
     "/admin/transactions": {
       get: {
         summary: "List recent transactions",
@@ -4739,6 +4781,7 @@ const subscriptionDocument: OpenAPIV3.Document = {
           id: { type: "string", format: "uuid" },
           userId: { type: "string" },
           planId: { type: "string", format: "uuid", nullable: true },
+          trialPlanId: { type: "string", format: "uuid", nullable: true },
           status: {
             type: "string",
             enum: ["PENDING", "ACTIVE", "EXPIRED", "CANCELED"],
@@ -4778,6 +4821,53 @@ const subscriptionDocument: OpenAPIV3.Document = {
             },
           },
         ],
+      },
+      UserSubscriptionWithTrial: {
+        allOf: [
+          { $ref: "#/components/schemas/UserSubscriptionWithPlan" },
+          {
+            type: "object",
+            properties: {
+              trialPlan: {
+                $ref: "#/components/schemas/TrialPlan",
+                nullable: true,
+              },
+            },
+          },
+        ],
+      },
+      ListTrialUsersResponse: {
+        type: "object",
+        additionalProperties: false,
+        required: ["items", "pagination"],
+        properties: {
+          items: {
+            type: "array",
+            items: { $ref: "#/components/schemas/UserSubscriptionWithTrial" },
+          },
+          pagination: {
+            type: "object",
+            required: ["total", "page", "limit", "totalPages"],
+            properties: {
+              total: { type: "integer" },
+              page: { type: "integer" },
+              limit: { type: "integer" },
+              totalPages: { type: "integer" },
+            },
+          },
+        },
+      },
+      StatsResponse: {
+        type: "object",
+        additionalProperties: false,
+        required: ["totalRevenue", "conversionRate", "trialUsersCount", "convertedUsersCount", "totalSubscribers"],
+        properties: {
+          totalRevenue: { type: "integer", format: "int64", description: "Total revenue in paise from successful transactions." },
+          conversionRate: { type: "number", format: "float", description: "Percentage of trial users who have purchased a plan." },
+          trialUsersCount: { type: "integer", description: "Total number of unique users who have used a trial plan." },
+          convertedUsersCount: { type: "integer", description: "Total number of trial users who converted to a paid plan." },
+          totalSubscribers: { type: "integer", description: "Current number of users on an active paid plan." },
+        },
       },
       PurchaseIntentRequest: {
         type: "object",
