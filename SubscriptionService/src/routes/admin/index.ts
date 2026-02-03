@@ -336,10 +336,12 @@ export default async function adminRoutes(app: FastifyInstance) {
 
       if (trialUserIds.length > 0) {
         // Find how many of these users have bought a regular plan
+        // A regular plan transaction must NOT have a trialPlanId
         const convertedUsers = await prisma.transaction.findMany({
           where: {
             userId: { in: trialUserIds },
-            planId: { not: null }, // Regular plan
+            planId: { not: null },
+            trialPlanId: null, // Crucial: Ensure this is not a trial purchase
             status: "SUCCESS",
           },
           select: { userId: true },
@@ -401,7 +403,16 @@ export default async function adminRoutes(app: FastifyInstance) {
         userMessage: "Trial users retrieved successfully",
         developerMessage: "Paginated list of trial users",
         data: {
-          items: data,
+          items: data.map(sub => ({
+            id: sub.id,
+            userId: sub.userId,
+            trialPlanId: sub.trialPlanId,
+            status: sub.status,
+            startsAt: sub.startsAt,
+            endsAt: sub.endsAt,
+            // Include flattened trial plan info if needed, or just omit based on request
+            // User specifically asked to remove certain fields, assuming they just want the list of users
+          })),
           pagination: {
             total,
             page,
