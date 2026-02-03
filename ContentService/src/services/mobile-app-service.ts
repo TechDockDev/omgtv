@@ -85,6 +85,7 @@ type CarouselEntryView = {
     averageRating: number;
     reviewCount: number;
   } | null;
+  is_audio_series?: boolean;
 };
 
 export type MobileAppConfig = {
@@ -150,32 +151,53 @@ export class MobileAppService {
     const parsed = mobileHomeQuerySchema.parse(query);
 
     // Fetch Series for Sections (Main Content) and Episodes for Continue Watch (Resume)
-    const [seriesFeed, episodeFeed, topTen] = await Promise.all([
+    const [seriesFeed, topTen] = await Promise.all([
       this.deps.viewerCatalog.getHomeSeries({
         limit: parsed.limit ?? this.deps.config.homeFeedLimit,
         cursor: parsed.cursor,
       }),
-      this.deps.viewerCatalog.getFeed({
-        limit: this.deps.config.continueWatchLimit * 2,
-        cursor: null,
-      }),
       this.deps.repository.getTopTenSeries(),
     ]);
+
+    // Fetch Continue Watching (Recent Progress)
+    let continueWatchEpisodes: ViewerFeedItem[] = [];
+    const progressMap = new Map<string, ContinueWatchEntry>();
+    const userId = options?.context?.userId;
+
+    if (userId && this.deps.engagementClient) {
+      try {
+        const progressList = await this.deps.engagementClient.getUserProgressList({
+          userId,
+          limit: this.deps.config.continueWatchLimit || 10,
+        });
+
+        const episodeIds = progressList.map((p) => p.episode_id);
+        if (episodeIds.length > 0) {
+          continueWatchEpisodes = await this.deps.viewerCatalog.getEpisodesBatch(episodeIds);
+
+          // Populate progress map only for found episodes (validity check)
+          const validIds = new Set(continueWatchEpisodes.map((e) => e.id));
+          progressList.forEach((p) => {
+            if (validIds.has(p.episode_id)) {
+              progressMap.set(p.episode_id, p);
+            }
+          });
+        }
+      } catch (err) {
+        options?.logger?.error({ err }, "Failed to load continue watching list");
+      }
+    }
 
     options?.logger?.warn({
       msg: "[MobileHub] Debug Stats",
       series: seriesFeed.items.length,
-      episodes: episodeFeed.items.length,
       topTen: topTen.length,
     });
 
     const filteredItems = this.filterByTag(seriesFeed.items, parsed.tag);
     const entitlements = await this.resolveEntitlements(options);
 
-    const progressMap = await this.loadProgressMap(episodeFeed.items, {
-      limit: this.deps.config.continueWatchLimit * 4,
-      options,
-    });
+    // Old progress map logic removed
 
     // Load engagement for Series (Sections) AND Top 10
     const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
@@ -204,21 +226,44 @@ export class MobileAppService {
         lastWatchedAt: null,
         series_id: t.series.id,
         engagement: engagement ?? null,
+        is_audio_series: t.series.isAudioSeries || t.series.tags.some((tag: string) => tag.toLowerCase().includes("audio")) || t.series.category?.slug.includes("audio") || false
       };
     });
 
-    // Build Continue Watch from Episode Feed
-    const continueWatchCandidates = episodeFeed.items.filter((item) => progressMap.has(item.id));
-    const continueWatch = continueWatchCandidates
+    // Build Continue Watch from Targeted Episodes
+    const continueWatchCandidates = continueWatchEpisodes;
+    // Load Engagement for Continue Watch Episodes
+    const cwEngagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
+      continueWatchEpisodes.map((item) => ({ id: item.id, contentType: "reel" as const })); // Episodes treat as reel/video for engagement? Or series?
+    // Wait, episodes don't typically have engagement (likes/saves) in this app context, usually it's the series.
+    // User asked for "series object with progress and engagement data".
+    // ViewerFeedItem usually has `series: { id, title }`.
+    // Let's assume we want engagement for the EPISODE (if supported) or SERIES?
+    // User said "series object with progress and engagement data".
+    // This implies fetching engagement for the SERIES of the episode.
+
+    const cwSeriesEngagementItems: Array<{ id: string; contentType: "series" }> = [];
+    continueWatchEpisodes.forEach(ep => {
+      if (ep.series?.id) {
+        cwSeriesEngagementItems.push({ id: ep.series.id, contentType: "series" });
+      }
+    });
+
+    const cwEngagementStates = await this.loadEngagementStates(cwSeriesEngagementItems, options);
+
+    const continueWatch = continueWatchEpisodes
       .slice(0, this.deps.config.continueWatchLimit)
       .map((item) => {
+        const seriesId = item.series?.id;
+        const engagement = seriesId ? cwEngagementStates.get(seriesId) : null;
+
         return {
           ...this.toContinueWatchItem(
             item,
             entitlements.episode,
             progressMap.get(item.id)
           ),
-          engagement: null,
+          engagement: engagement ?? null,
         };
       });
 
@@ -269,10 +314,66 @@ export class MobileAppService {
     });
 
     const filteredItems = this.filterByTag(seriesFeed.items, parsed.tag);
-    // Audio series don't usually have "continue watch" episodes in the same way, 
-    // or maybe they do? For now, let's keep it simple and just show the series list.
-    // If we want continue watch for audio, we'd need to fetch episodes. 
-    // Let's assume audio series behave like normal series for now.
+
+    // Fetch Continue Watching for Audio
+    // For now, we reuse the same list but we might want to filter for Audio-only if possible?
+    // Since we can't easily distinguish 'Audio Series' on the Episode without extra properties,
+    // we will show the users progress regardless. 
+    // Ideally, we should check `episode.series` properties if we had `isAudioSeries` there.
+
+    let continueWatchEpisodes: ViewerFeedItem[] = [];
+    const progressMap = new Map<string, ContinueWatchEntry>();
+    const userId = options?.context?.userId;
+    const entitlements = await this.resolveEntitlements(options); // Need entitlements for streaming info
+
+    if (userId && this.deps.engagementClient) {
+      try {
+        const progressList = await this.deps.engagementClient.getUserProgressList({
+          userId,
+          limit: 10,
+        });
+
+        const episodeIds = progressList.map((p) => p.episode_id);
+        if (episodeIds.length > 0) {
+          // Optimization: If we could filter by category/type here it would be better.
+          continueWatchEpisodes = await this.deps.viewerCatalog.getEpisodesBatch(episodeIds);
+
+          // Populate progress map
+          const validIds = new Set(continueWatchEpisodes.map((e) => e.id));
+          progressList.forEach((p) => {
+            if (validIds.has(p.episode_id)) {
+              progressMap.set(p.episode_id, p);
+            }
+          });
+        }
+      } catch (err) {
+        options?.logger?.error({ err }, "Failed to load audio continue watching list");
+      }
+    }
+
+    // Load Engagement for Audio Continue Watch (Series Level)
+    const cwSeriesEngagementItems: Array<{ id: string; contentType: "series" }> = [];
+    continueWatchEpisodes.forEach(ep => {
+      if (ep.series?.id) {
+        cwSeriesEngagementItems.push({ id: ep.series.id, contentType: "series" });
+      }
+    });
+
+    const cwEngagementStates = await this.loadEngagementStates(cwSeriesEngagementItems, options);
+
+    const continueWatch = continueWatchEpisodes.map((item) => {
+      const seriesId = item.series?.id;
+      const engagement = seriesId ? cwEngagementStates.get(seriesId) : null;
+
+      return {
+        ...this.toContinueWatchItem(
+          item,
+          entitlements.episode,
+          progressMap.get(item.id)
+        ),
+        engagement: engagement ?? null,
+      };
+    });
 
     const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
       filteredItems.map((item) => ({ id: item.id, contentType: "series" as const }));
@@ -286,7 +387,7 @@ export class MobileAppService {
           engagement: engagement ?? null
         };
       }),
-      [], // No continue watch for now
+      continueWatch,
       parsed.tag
     );
 
@@ -295,7 +396,7 @@ export class MobileAppService {
 
     const data: MobileHomeData = {
       // carousel: undefined, // Removed for audio experience
-      "continue watch": [],
+      "continue watch": continueWatch,
       sections,
       pagination: {
         currentPage,
@@ -518,6 +619,7 @@ export class MobileAppService {
       videoUrl: item.playback.manifestUrl,
       rating: engagementRating ?? item.ratings.average,
       series_id: item.series.id,
+      is_audio_series: item.tags.some((t: string) => t.toLowerCase().includes("audio")) || item.series.category?.slug.includes("audio") || false
     } satisfies CarouselEntryView;
   }
 
@@ -560,6 +662,7 @@ export class MobileAppService {
         is_completed: progress?.is_completed ?? false,
       },
       rating: item.ratings.average,
+      is_audio_series: item.tags.some((t: string) => t.toLowerCase().includes("audio")) || item.series.category?.slug.includes("audio") || false,
     };
   }
 

@@ -288,7 +288,7 @@ export async function createApp(): Promise<FastifyInstance> {
   // Engagement routes registered via plugin
   await app.register(engagementRoutes, { prefix: "/api/v1/engagement" });
 
-  await app.register(searchRoutes, { prefix: "/api/v1/search" });
+  await app.register(searchRoutes, { prefix: "/api/v1" });
   await app.register(streamingRoutes, { prefix: "/api/v1/streams" });
 
   app.get(

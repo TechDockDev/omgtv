@@ -72,6 +72,7 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       access: "public",
       rateLimitPolicy: "anonymous",
       internalBasePath: SEARCH_BASE_PATH,
+      exposeViaProxy: false,
     },
     {
       name: "subscription",

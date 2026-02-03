@@ -46,6 +46,8 @@ export type ViewerFeedItem = {
       slug: string;
       name: string;
     } | null;
+    isAudioSeries: boolean;
+    tags: string[];
   };
   playback: {
     status: MediaAssetStatus;
@@ -249,6 +251,8 @@ export function buildFeedItem(
           name: episode.series.category.name,
         }
         : null,
+      isAudioSeries: episode.series.isAudioSeries,
+      tags: episode.series.tags,
     },
     playback: {
       status: asset?.status ?? MediaAssetStatus.PENDING,
@@ -843,6 +847,8 @@ export class ViewerCatalogService {
                   name: series.category.name,
                 }
                 : null,
+              isAudioSeries: series.isAudioSeries,
+              tags: series.tags,
             },
             playback: {
               status: MediaAssetStatus.READY, // Assume ready for series container
@@ -941,6 +947,8 @@ export class ViewerCatalogService {
                   name: series.category.name,
                 }
                 : null,
+              isAudioSeries: series.isAudioSeries,
+              tags: series.tags,
             },
             playback: {
               status: MediaAssetStatus.READY,

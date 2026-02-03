@@ -78,6 +78,30 @@ export class EngagementClient {
     return parsed.data.entries;
   }
 
+  async getUserProgressList(params: {
+    userId: string;
+    limit?: number;
+  }): Promise<ContinueWatchEntry[]> {
+    const response: ServiceRequestResult<unknown> = await performServiceRequest({
+      serviceName: "engagement",
+      baseUrl: this.options.baseUrl,
+      path: `/internal/progress/user/${params.userId}`,
+      method: "GET",
+      query: { limit: params.limit },
+      timeoutMs: this.options.timeoutMs,
+      spanName: "client:engagement:getUserProgressList",
+    });
+
+    // Unwrap data envelope if present
+    const data = (response.payload as any)?.data ?? response.payload;
+    const parsed = continueWatchResponseSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new Error("Invalid response from EngagementService (getUserProgressList)");
+    }
+
+    return parsed.data.entries;
+  }
+
   /**
    * Get user state for multiple content items.
    * Returns like/save state and engagement counts for each item.

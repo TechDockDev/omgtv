@@ -20,12 +20,12 @@ export async function buildApp() {
       transport:
         config.NODE_ENV === "development"
           ? {
-              target: "pino-pretty",
-              options: {
-                colorize: true,
-                translateTime: "SYS:standard",
-              },
-            }
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              translateTime: "SYS:standard",
+            },
+          }
           : undefined,
     },
     trustProxy: true,
@@ -40,6 +40,14 @@ export async function buildApp() {
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(serviceAuthPlugin);
   await app.register(internalRoutes, { prefix: "/internal" });
+
+  try {
+    const { initMeilisearch } = await import("./lib/meilisearch");
+    await initMeilisearch();
+  } catch (err) {
+    app.log.error({ err }, "Failed to initialize Meilisearch index");
+    // We don't exit process, we let it run so health checks can report status
+  }
 
   app.get("/health", async () => ({ status: "ok" }));
 

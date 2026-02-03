@@ -27,6 +27,7 @@ import {
   getReviewsQuerySchema,
   reviewsResponseSchema,
 } from "../schemas/review";
+import { z } from "zod";
 import {
   applyEngagementEvent,
   getProgressEntries,
@@ -47,6 +48,7 @@ import {
   getUserStateBatch,
   getViewProgressBatch,
   upsertViewProgress,
+  getUserProgressList,
 } from "../services/collection-engagement";
 
 function requireUserId(headers: Record<string, unknown>) {
@@ -274,6 +276,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const ids = await listUserEntities({
         redis,
+        prisma,
         entityType: "reel",
         collection: "liked",
         userId,
@@ -345,6 +348,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const userId = requireUserId(request.headers as Record<string, unknown>);
       const ids = await listUserEntities({
         redis,
+        prisma,
         entityType: "reel",
         collection: "saved",
         userId,
@@ -466,6 +470,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         const userId = requireUserId(request.headers as Record<string, unknown>);
         const ids = await listUserEntities({
           redis,
+          prisma,
           entityType: "series",
           collection: "liked",
           userId,
@@ -542,6 +547,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         const userId = requireUserId(request.headers as Record<string, unknown>);
         const ids = await listUserEntities({
           redis,
+          prisma,
           entityType: "series",
           collection: "saved",
           userId,
@@ -682,6 +688,38 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       return continueWatchResponseSchema.parse(payload);
     },
   });
+
+  // Internal: Get user progress list (e.g. for "Continue Watching" row)
+  fastify.get("/progress/user/:userId", {
+    schema: {
+      params: z.object({ userId: z.string().uuid() }),
+      querystring: z.object({ limit: z.union([z.string(), z.number()]).pipe(z.coerce.number().positive().max(100)).optional() }),
+      response: { 200: continueWatchResponseSchema },
+    },
+    handler: async (request) => {
+      const { userId } = z.object({ userId: z.string().uuid() }).parse(request.params);
+      const query = z.object({ limit: z.coerce.number().positive().max(100).optional() }).parse(request.query);
+
+      const items = await getUserProgressList({
+        redis,
+        prisma,
+        userId,
+        limit: query.limit ?? 20,
+      });
+
+      const payload = {
+        entries: items.map((entry) => ({
+          episode_id: entry.episodeId,
+          watched_duration: entry.progressSeconds,
+          total_duration: entry.durationSeconds,
+          last_watched_at: entry.updatedAt.toISOString(),
+          is_completed: entry.completedAt !== null,
+        })),
+      };
+
+      return continueWatchResponseSchema.parse(payload);
+    },
+  });
   fastify.post("/series/:seriesId/reviews", {
     schema: {
       params: seriesIdParamsSchema,
@@ -738,6 +776,58 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         user_reviews: result.reviews as any[], // Casting because schemas might differ slightly in property names (camel vs snake) - checked below
         next_cursor: result.nextCursor,
       };
+    },
+  });
+  // Search History
+  fastify.post("/history", {
+    schema: {
+      body: z.object({ query: z.string() }),
+      response: { 200: z.object({ success: z.boolean() }) },
+    },
+    handler: async (request) => {
+      const { query } = z.object({ query: z.string() }).parse(request.body);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+
+      request.log.info({ userId, query }, "Recording search history");
+
+      if (prisma) {
+        const { addSearchHistory } = await import("../services/search-history");
+        await addSearchHistory({ prisma, userId, query });
+      }
+
+      return { success: true };
+    },
+  });
+
+  fastify.get("/history/user/:userId", {
+    schema: {
+      params: z.object({ userId: z.string().uuid() }),
+      querystring: z.object({ limit: z.string().transform(Number).optional() }),
+      response: {
+        200: z.object({
+          history: z.array(
+            z.object({
+              id: z.string(),
+              query: z.string(),
+              createdAt: z.date().or(z.string()),
+            })
+          ),
+        }),
+      },
+    },
+    handler: async (request) => {
+      const { userId } = z.object({ userId: z.string().uuid() }).parse(request.params);
+      const { limit } = z.object({ limit: z.string().transform(Number).optional() }).parse(request.query || {});
+
+      request.log.info({ userId, limit }, "Fetching search history");
+
+      if (!prisma) return { history: [] };
+
+      const { getSearchHistory } = await import("../services/search-history");
+      const history = await getSearchHistory({ prisma, userId, limit: limit ?? 10 });
+
+      request.log.info({ userId, count: history.length }, "Found search history items");
+      return { history };
     },
   });
 }
