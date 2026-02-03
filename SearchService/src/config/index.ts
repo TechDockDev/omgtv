@@ -16,6 +16,8 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value && value.trim().length > 0 ? value : undefined)),
   DEFAULT_PAGE_SIZE: z.coerce.number().int().positive().max(100).default(20),
+  MEILI_HOST: z.string().default("http://meilisearch:7700"),
+  MEILI_MASTER_KEY: z.string().default("masterKey"),
 });
 
 type Env = z.infer<typeof envSchema>;

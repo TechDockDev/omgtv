@@ -54,6 +54,7 @@ const continueWatchItemSchema = z.object({
   progress: progressSchema,
   rating: z.number().nullable(),
   engagement: engagementSchema.nullable().optional(),
+  is_audio_series: z.boolean(),
 });
 
 const carouselItemSchema = z.object({
@@ -67,6 +68,7 @@ const carouselItemSchema = z.object({
   rating: z.number().nullable(),
   series_id: z.string().nullable(),
   engagement: engagementSchema.nullable().optional(),
+  is_audio_series: z.boolean().optional(),
 });
 
 const sectionItemSchema = z.object({
@@ -82,6 +84,7 @@ const sectionItemSchema = z.object({
   lastWatchedAt: z.string().datetime().nullable(),
   series_id: z.string().nullable(),
   engagement: engagementSchema.nullable().optional(),
+  is_audio_series: z.boolean().optional(),
 });
 
 const sectionSchema = z.object({

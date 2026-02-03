@@ -80,3 +80,12 @@ model Review {
   @@index([contentId, contentType])
   @@index([userId])
 }
+
+model SearchHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  query     String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}

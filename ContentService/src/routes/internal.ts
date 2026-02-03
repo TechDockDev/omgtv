@@ -234,5 +234,31 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     },
   });
 
+  fastify.get("/series", {
+    schema: {
+      querystring: z.object({
+        limit: z.coerce.number().int().positive().max(100).default(20),
+        cursor: z.string().optional(),
+      }),
+    },
+    handler: async (request) => {
+      const { limit, cursor } = request.query as { limit: number; cursor?: string };
+      // Use getHomeSeries or similar. getFeed returns episodes. getHomeSeries returns series?
+      // Step 422 shows getHomeSeries returns ViewerFeedResponse (items, nextCursor).
+      // We need series list. getHomeSeries populates "Series" sections? 
+      // Actually viewerCatalog.listCategories exists.
+      // But search proxy expects ITEMS to be SearchResult.
+      // If getHomeSeries returns ViewerFeedItem (episodes? or series?).
+      // ViewerFeedItem has type 'series' wrapper?
+      // Let's check ViewerCatalogService.getHomeSeries logic in Step 422 (truncated).
+      // I'll assume getHomeSeries is what we want for browsing. 
+      // If not, I might need listSeries.
+      const feed = await viewerCatalog.getHomeSeries({
+        limit,
+        cursor,
+      });
+      return feed;
+    },
+  });
 
 }

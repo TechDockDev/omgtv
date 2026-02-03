@@ -20,6 +20,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().url(),
   ENGAGEMENT_SERVICE_URL: z.string().url(),
   SUBSCRIPTION_SERVICE_URL: z.string().url(),
+  SEARCH_SERVICE_URL: z.string().url().optional(),
   SERVICE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   SERVICE_AUTH_TOKEN: z
     .string()

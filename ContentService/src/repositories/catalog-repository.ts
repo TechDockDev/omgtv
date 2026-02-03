@@ -1619,6 +1619,8 @@ export class CatalogRepository {
     return { next24Hours, next7Days, future };
   }
 
+
+
   async getIngestionLatencyStats(days: number): Promise<{
     averageSeconds: number | null;
     p95Seconds: number | null;

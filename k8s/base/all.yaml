@@ -330,6 +330,7 @@ data:
   REDIS_URL: ""
   ENGAGEMENT_SERVICE_URL: http://engagement-service:4700
   SUBSCRIPTION_SERVICE_URL: http://subscription-service:5100
+  SEARCH_SERVICE_URL: http://search-service:4800
   SERVICE_REQUEST_TIMEOUT_MS: "5000"
   FEED_CACHE_TTL_SECONDS: "60"
   SERIES_CACHE_TTL_SECONDS: "120"
@@ -531,6 +532,100 @@ spec:
       targetPort: http
   type: ClusterIP
 ---
+# ============== MEILISEARCH ==============
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: meilisearch-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: meilisearch-config
+data:
+  MEILI_ENV: production
+  MEILI_NO_ANALYTICS: "true"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: meilisearch
+spec:
+  serviceName: meilisearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: meilisearch
+  template:
+    metadata:
+      labels:
+        app: meilisearch
+    spec:
+      containers:
+        - name: meilisearch
+          image: getmeili/meilisearch:v1.6
+          ports:
+            - containerPort: 7700
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          env:
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: meilisearch-secrets
+                  key: MEILI_MASTER_KEY
+          envFrom:
+            - configMapRef:
+                name: meilisearch-config
+          volumeMounts:
+            - name: meili-data
+              mountPath: /meili_data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: meili-data
+          persistentVolumeClaim:
+            claimName: meilisearch-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meilisearch
+spec:
+  selector:
+    app: meilisearch
+  ports:
+    - name: http
+      port: 7700
+      targetPort: http
+  type: ClusterIP
+---
+# ============== SEARCH SERVICE ==============
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -541,6 +636,7 @@ data:
   HTTP_PORT: "4800"
   LOG_LEVEL: info
   DEFAULT_PAGE_SIZE: "20"
+  MEILI_HOST: http://meilisearch:7700
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -567,6 +663,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: search-service-config
+            - secretRef:
+                name: meilisearch-secrets
             - secretRef:
                 name: shared-secrets
           readinessProbe:

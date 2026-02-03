@@ -1,117 +1,82 @@
-import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
-import {
-  searchQuerySchema,
-  type SearchQuery,
-  type SearchResponse,
-} from "../schemas/search";
-import { loadConfig } from "../config";
+import { z } from "zod";
+import { getClient, SERIES_INDEX } from "../lib/meilisearch";
 
-type CatalogEntry = {
-  id: string;
-  title: string;
-  snippet: string;
-  type: "video" | "channel" | "playlist";
-  keywords: string[];
-};
+// Schemas
+const searchSchema = z.object({
+  q: z.string().min(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+});
 
-const catalog: CatalogEntry[] = [
-  {
-    id: "video-heroic-pentakill",
-    title: "Heroic Pentakill Montage",
-    snippet: "Relive the clutch pentakill that closed out Game 5.",
-    type: "video",
-    keywords: ["pentakill", "montage", "game 5"],
-  },
-  {
-    id: "channel-pocketlol-pros",
-    title: "PocketLOL Pros",
-    snippet: "Official channel for PocketLOL professional highlights.",
-    type: "channel",
-    keywords: ["pros", "highlights", "official"],
-  },
-  {
-    id: "video-support-guide",
-    title: "Ultimate Support Guide 2025",
-    snippet: "Meta breakdown with in-depth warding strategies.",
-    type: "video",
-    keywords: ["support", "guide", "meta"],
-  },
-  {
-    id: "playlist-season-recaps",
-    title: "Season Recap Playlist",
-    snippet: "Catch up on every key series in 30 minutes or less.",
-    type: "playlist",
-    keywords: ["recap", "season", "series"],
-  },
-];
+const syncSchema = z.object({
+  action: z.enum(["upsert", "delete"]),
+  payload: z.object({
+    id: z.string(),
+  }).passthrough(),
+});
 
-function filterCatalog(query: SearchQuery): CatalogEntry[] {
-  const normalized = query.q.toLowerCase();
-  return catalog.filter((entry) => {
-    return (
-      entry.title.toLowerCase().includes(normalized) ||
-      entry.snippet.toLowerCase().includes(normalized) ||
-      entry.keywords.some((keyword) => keyword.includes(normalized))
-    );
+export default async function internalRoutes(fastify: FastifyInstance) {
+  const meili = getClient();
+  const index = meili.index(SERIES_INDEX);
+
+  // Health check for Meilisearch connection specifically
+  fastify.get("/health", async () => {
+    try {
+      await meili.health();
+      return { status: "ok", meilisearch: "connected" };
+    } catch (err) {
+      return { status: "error", meilisearch: "disconnected", error: String(err) };
+    }
   });
-}
 
-function paginate(
-  results: CatalogEntry[],
-  start: number,
-  size: number
-): {
-  items: CatalogEntry[];
-  nextCursor?: string;
-} {
-  const slice = results.slice(start, start + size);
-  const nextCursor =
-    start + size < results.length ? String(start + size) : undefined;
-  return { items: slice, nextCursor };
-}
-
-function parseCursor(cursor?: string): number {
-  if (!cursor) {
-    return 0;
-  }
-  const parsed = Number.parseInt(cursor, 10);
-  if (Number.isNaN(parsed) || parsed < 0) {
-    return 0;
-  }
-  return parsed;
-}
-
-function serialize(entries: CatalogEntry[]): SearchResponse["items"] {
-  return entries.map(({ id, title, snippet, type }) => ({
-    id,
-    title,
-    snippet,
-    type,
-  }));
-}
-
-export default fp(async function internalRoutes(fastify: FastifyInstance) {
-  const config = loadConfig();
-
+  // Search Endpoint
   fastify.get("/search", {
     schema: {
-      querystring: searchQuerySchema,
+      querystring: searchSchema,
     },
     handler: async (request) => {
-      const query = searchQuerySchema.parse(request.query);
-      const limit = query.limit ?? config.DEFAULT_PAGE_SIZE;
-      const start = parseCursor(query.cursor);
-      const matches = filterCatalog(query);
-      const { items, nextCursor } = paginate(matches, start, limit);
-      request.log.debug(
-        { query: query.q, matches: matches.length, returned: items.length },
-        "Processed search query"
-      );
+      const { q, limit, offset } = searchSchema.parse(request.query);
+
+      // Cap limit at 50 as safe guard
+      const safeLimit = Math.min(limit, 50);
+
+      const result = await index.search(q, {
+        limit: safeLimit,
+        offset,
+        attributesToRetrieve: ["*"], // Return full object as stored
+        showMatchesPosition: true,
+      });
+
       return {
-        items: serialize(items),
-        nextCursor,
-      } satisfies SearchResponse;
+        hits: result.hits,
+        estimatedTotalHits: result.estimatedTotalHits,
+        processingTimeMs: result.processingTimeMs,
+        query: result.query,
+      };
     },
   });
-});
+
+  // Sync Endpoint (Upsert / Delete)
+  fastify.post("/sync", {
+    schema: {
+      body: syncSchema,
+    },
+    handler: async (request) => {
+      const { action, payload } = syncSchema.parse(request.body);
+
+      request.log.info({ action, id: payload.id }, "Sync request received");
+
+      if (action === "delete") {
+        await index.deleteDocument(payload.id);
+        return { success: true, action: "deleted", id: payload.id };
+      } else {
+        // Upsert
+        // We expect payload to be a complete or partial document. 
+        // Meilisearch merge usage: addDocuments works as upsert/merge using primary key.
+        await index.addDocuments([payload]);
+        return { success: true, action: "upserted", id: payload.id };
+      }
+    },
+  });
+}
