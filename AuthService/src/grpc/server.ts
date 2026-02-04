@@ -42,6 +42,7 @@ interface GetUserByIdResponse {
   email: string;
   role: string;
   active: boolean;
+  customer_id?: string;
 }
 
 type UnaryHandler<Req, Res> = grpc.handleUnaryCall<Req, Res>;
@@ -144,19 +145,41 @@ export async function startGrpcServer(params: {
       return;
     }
     try {
-      const admin = await params.prisma.adminCredential.findUnique({
-        where: { subjectId: userId },
+      const subject = await params.prisma.authSubject.findUnique({
+        where: { id: userId },
+        include: {
+          admin: true,
+          customer: true,
+        },
       });
-      if (!admin) {
+
+      if (!subject) {
         callback(createServiceError(status.NOT_FOUND, "User not found"));
         return;
       }
-      callback(null, {
-        user_id: admin.subjectId,
-        email: admin.email,
-        role: "ADMIN",
-        active: admin.isActive,
-      });
+
+      const response: GetUserByIdResponse = {
+        user_id: subject.id,
+        email: "",
+        role: "GUEST",
+        active: true,
+        customer_id: "",
+      };
+
+      if (subject.type === "ADMIN" && subject.admin) {
+        response.email = subject.admin.email;
+        response.role = "ADMIN";
+        response.active = subject.admin.isActive;
+      } else if (subject.type === "CUSTOMER" && subject.customer) {
+        response.customer_id = subject.customer.customerId;
+        response.role = "CUSTOMER";
+        // Email/active status might not be directly here if we rely on Firebase/UserService, 
+        // but we can at least return what we have (customerId) to link to UserService.
+      } else if (subject.type === "GUEST") {
+        response.role = "GUEST";
+      }
+
+      callback(null, response);
     } catch (error) {
       params.app.log.error({ err: error }, "Failed to fetch user by id");
       callback(createServiceError(status.INTERNAL, "Failed to fetch user"));

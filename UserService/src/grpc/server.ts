@@ -97,7 +97,7 @@ interface RevokeRoleResponse {
   success: boolean;
 }
 
-interface ListRolesRequest {}
+interface ListRolesRequest { }
 
 interface ListRolesResponse {
   roles: RoleMessage[];
@@ -133,6 +133,19 @@ interface RegisterGuestResponse {
   device_identity_id: string;
   status: GuestProfileStatusMessage;
   customer_id: string;
+}
+
+interface GetCustomerProfileRequest {
+  customer_id?: string;
+}
+
+interface GetCustomerProfileResponse {
+  customer_id: string;
+  name: string;
+  email: string;
+  phone_number: string;
+  status: string;
+  avatar_url: string;
 }
 
 type UnaryHandler<Req, Res> = grpc.handleUnaryCall<Req, Res>;
@@ -461,6 +474,45 @@ export async function startGrpcServer(
     }
   };
 
+  const getCustomerProfileHandler: UnaryHandler<
+    GetCustomerProfileRequest,
+    GetCustomerProfileResponse
+  > = async (call, callback) => {
+    const customerId = call.request.customer_id;
+    if (!customerId) {
+      callback(
+        createServiceError(status.INVALID_ARGUMENT, "customer_id is required")
+      );
+      return;
+    }
+
+    try {
+      const profile = await handlerContext.prisma.customerProfile.findUnique({
+        where: { id: customerId },
+      });
+
+      if (!profile) {
+        callback(createServiceError(status.NOT_FOUND, "Customer profile not found"));
+        return;
+      }
+
+      callback(null, {
+        customer_id: profile.id,
+        name: profile.name || "",
+        email: profile.email || "",
+        phone_number: profile.phoneNumber || "",
+        status: profile.status,
+        avatar_url: "", // Not currently stored
+      });
+    } catch (error) {
+      handlerContext.app.log.error(
+        { err: error, customerId },
+        "Failed to fetch customer profile"
+      );
+      callback(createServiceError(status.INTERNAL, "Failed to fetch customer profile"));
+    }
+  };
+
   server.addService(userPackage.UserService.service, {
     GetUserContext: wrapAuthorization(getUserContextHandler),
     AssignRole: wrapAuthorization(assignRoleHandler),
@@ -468,6 +520,7 @@ export async function startGrpcServer(
     ListRoles: wrapAuthorization(listRolesHandler),
     EnsureCustomerProfile: wrapAuthorization(ensureCustomerProfileHandler),
     RegisterGuest: wrapAuthorization(registerGuestHandler),
+    GetCustomerProfile: wrapAuthorization(getCustomerProfileHandler),
   });
 
   await new Promise<void>((resolve, reject) => {
