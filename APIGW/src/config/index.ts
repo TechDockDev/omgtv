@@ -33,7 +33,7 @@ const envSchema = z.object({
     .transform((value) => value === "true"),
   CORS_ALLOWED_ORIGINS: z.string().optional(),
   CDN_ALLOWED_HOSTS: z.string().optional(),
-  STREAMING_SERVICE_URL: z.string().url(),
+  STREAMING_SERVICE_URL: z.string().url().optional(),
   CONTENT_SERVICE_URL: z.string().url(),
   AUTH_SERVICE_URL: z.string().url(),
   USER_SERVICE_URL: z.string().url(),
@@ -64,14 +64,14 @@ export type AppConfig = ReturnType<typeof loadConfig>;
 
 let cachedConfig:
   | {
-      readonly env: z.infer<typeof envSchema>;
-    }
+    readonly env: z.infer<typeof envSchema>;
+  }
   | undefined;
 let cachedRouteToggles:
   | {
-      enabled?: ReadonlySet<RouteKey>;
-      disabled?: ReadonlySet<RouteKey>;
-    }
+    enabled?: ReadonlySet<RouteKey>;
+    disabled?: ReadonlySet<RouteKey>;
+  }
   | undefined;
 let cachedServiceOverrides: Readonly<Record<ServiceKey, string>> | undefined;
 
