@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
 import { getRazorpay } from "../../lib/razorpay";
+import { fetchUserDetails } from "../../services/userService";
 
 const planBodySchema = z.object({
   name: z.string().min(1),
@@ -397,22 +398,33 @@ export default async function adminRoutes(app: FastifyInstance) {
         }),
       ]);
 
+      const userIds = data.map((sub) => sub.userId);
+      const userMap = await fetchUserDetails(userIds);
+
       return {
         success: true,
         statusCode: 200,
         userMessage: "Trial users retrieved successfully",
         developerMessage: "Paginated list of trial users",
         data: {
-          items: data.map(sub => ({
-            id: sub.id,
-            userId: sub.userId,
-            trialPlanId: sub.trialPlanId,
-            status: sub.status,
-            startsAt: sub.startsAt,
-            endsAt: sub.endsAt,
-            // Include flattened trial plan info if needed, or just omit based on request
-            // User specifically asked to remove certain fields, assuming they just want the list of users
-          })),
+          items: data.map((sub) => {
+            const user = userMap.get(sub.userId);
+            return {
+              id: sub.id,
+              user: user || { id: sub.userId, name: "Unknown", email: "", phoneNumber: "" },
+              trialPlan: sub.trialPlan
+                ? {
+                  id: sub.trialPlan.id,
+                  trialPricePaise: sub.trialPlan.trialPricePaise,
+                  durationDays: sub.trialPlan.durationDays,
+                  isAutoDebit: sub.trialPlan.isAutoDebit,
+                }
+                : null,
+              status: sub.status,
+              startsAt: sub.startsAt,
+              endsAt: sub.endsAt,
+            };
+          }),
           pagination: {
             total,
             page,

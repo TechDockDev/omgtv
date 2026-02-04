@@ -9,6 +9,7 @@ service UserService {
   rpc ListRoles (ListRolesRequest) returns (ListRolesResponse);
   rpc EnsureCustomerProfile (EnsureCustomerProfileRequest) returns (EnsureCustomerProfileResponse);
   rpc RegisterGuest (RegisterGuestRequest) returns (RegisterGuestResponse);
+  rpc GetCustomerProfile (GetCustomerProfileRequest) returns (GetCustomerProfileResponse);
 }
 
 message Permission {
@@ -102,4 +103,17 @@ message RegisterGuestResponse {
   string device_identity_id = 2;
   GuestProfileStatus status = 3;
   string customer_id = 4;
+}
+
+message GetCustomerProfileRequest {
+  string customer_id = 1;
+}
+
+message GetCustomerProfileResponse {
+  string customer_id = 1;
+  string name = 2;
+  string email = 3;
+  string phone_number = 4;
+  string status = 5;
+  string avatar_url = 6;
 }

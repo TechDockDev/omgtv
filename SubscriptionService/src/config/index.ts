@@ -12,6 +12,8 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
+  AUTH_SERVICE_ADDRESS: z.string().default("0.0.0.0:50051"),
+  USER_SERVICE_ADDRESS: z.string().default("0.0.0.0:50052"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   SERVICE_AUTH_TOKEN: z
