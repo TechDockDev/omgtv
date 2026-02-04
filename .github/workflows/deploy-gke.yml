@@ -131,7 +131,7 @@ jobs:
           build_push content-service ./ContentService
           build_push engagement-service ./EngagementService
           build_push search-service ./SearchService
-          build_push streaming-service ./StreamingService
+
           build_push upload-service ./UploadService
           build_push subscription-service ./SubscriptionService
           build_push transcoding-worker ./TranscodingWorker
@@ -150,7 +150,7 @@ jobs:
           kustomize edit set image content-service="${registry}/content-service:${TAG}"
           kustomize edit set image engagement-service="${registry}/engagement-service:${TAG}"
           kustomize edit set image search-service="${registry}/search-service:${TAG}"
-          kustomize edit set image streaming-service="${registry}/streaming-service:${TAG}"
+
           kustomize edit set image upload-service="${registry}/upload-service:${TAG}"
           kustomize edit set image subscription-service="${registry}/subscription-service:${TAG}"
           kustomize edit set image transcoding-worker="${registry}/transcoding-worker:${TAG}"
@@ -167,6 +167,6 @@ jobs:
           kubectl -n "${ns}" rollout status deployment/content-service --timeout=10m
           kubectl -n "${ns}" rollout status deployment/engagement-service --timeout=10m
           kubectl -n "${ns}" rollout status deployment/search-service --timeout=10m
-          kubectl -n "${ns}" rollout status deployment/streaming-service --timeout=10m
+
           kubectl -n "${ns}" rollout status deployment/upload-service --timeout=10m
           kubectl -n "${ns}" rollout status deployment/subscription-service --timeout=10m

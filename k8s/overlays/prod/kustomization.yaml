@@ -30,9 +30,7 @@ images:
   - name: search-service
     newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/search-service
     newTag: latest
-  - name: streaming-service
-    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/streaming-service
-    newTag: latest
+
   - name: upload-service
     newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/upload-service
     newTag: latest

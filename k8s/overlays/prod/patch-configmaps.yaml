@@ -38,17 +38,7 @@ data:
   UPLOAD_BUCKET: "videos-bucket-pocketlol"
   CDN_UPLOAD_BASE_URL: "https://upload.cdn.pocketlol"
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: streaming-service-config
-data:
-  CDN_BASE_URL: "https://cdn.dev.pocketlol.example"
-  GCS_MANIFEST_BUCKET: "pocketlol-68ca6-streaming-manifests"
-  PUBSUB_UPLOAD_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/uploaded-media-sub"
-  AUDIT_LOG_TOPIC: "projects/pocketlol-68ca6/topics/streaming-audit"
-  AUTH_SERVICE_BASE_URL: "http://auth-service:4000"
----
+
 apiVersion: v1
 kind: ConfigMap
 metadata:

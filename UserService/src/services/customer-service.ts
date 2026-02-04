@@ -22,16 +22,26 @@ export class CustomerService {
 
     private async getFirebaseUid(userId: string): Promise<string | null> {
         const query = Prisma.sql`
-        SELECT c."firebaseUid"
-        FROM "AuthSubject" s
-        JOIN "CustomerIdentity" c ON s.id = c."subjectId"
-        WHERE s.id = ${userId}
-    `;
+            SELECT 
+                s.type,
+                c."firebaseUid"
+            FROM "AuthSubject" s
+            LEFT JOIN "CustomerIdentity" c ON s.id = c."subjectId"
+            WHERE s.id = ${userId}
+        `;
         try {
             const result = await authPrisma.$queryRaw<any[]>(query);
+            if (result.length === 0) {
+                console.warn(`[CustomerService] User not found in AuthDB: ${userId}`);
+                return null;
+            }
+            if (result[0]?.type === 'GUEST') {
+                console.warn(`[CustomerService] User ${userId} is a GUEST, cannot update customer details`);
+                return null;
+            }
             return result[0]?.firebaseUid || null;
         } catch (e) {
-            console.error("Failed to resolve firebaseUid", e);
+            console.error("[CustomerService] Failed to resolve firebaseUid - check AUTH_DATABASE_URL config:", e);
             return null;
         }
     }
