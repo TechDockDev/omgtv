@@ -613,29 +613,27 @@ export class CatalogService {
       });
 
       // Sync to Search Service (Async/Fire-and-forget)
+      // Sync to Search Service (Async/Fire-and-forget)
       const { syncSeriesToSearch } = await import("./search-sync");
-      // We need category name, so we must ensure series has category loaded if we want to index it.
-      // series (created) has categoryId but not relations loaded?
-      // prisma.create returns what we specify. The repo createSeries returns Series.
-      // We might need to fetch it or rely on inputs. The helper syncSeriesToSearch accepts Series & Category optional.
-      // Ideally we pass category name if we have it.
-      // Let's resolve category for sync if possible.
-      // For createSeries, we loaded category to check existence? Yes (line 515).
-      // But we didn't keep reference.
-      // Let's just pass what we have. If category is missing in object, it won't be indexed. 
-      // To improve this, we can fetch category or pass it if we looked it up.
-      // Optimization: We looked up `category` at line 515 if input.categoryId.
-      // But variable scope... 
-      // Let's just do a best-effort sync or re-fetch if needed? 
-      // Re-fetching is safer or just use "series" object.
-      // Actually, let's just call it. Search Sync Helper expects { category: Category? }
-      // Series from createSeries doesn't have relation loaded.
-      // I'll update syncSeriesToSearch to fetch if needed? No, too complex helper.
-      // I'll just pass series and let helper handle or skip category.
-      // OR, I can load relations here.
-      // Since this is CREATE, maybe I can just background task it.
-      // I'll call it:
-      syncSeriesToSearch("upsert", series).catch(err => console.error("Search Sync Error", err));
+
+      // Fetch fresh series with relations to ensure category info is present for search index
+      const freshSeries = await this.repo.findSeriesById(series.id);
+      if (freshSeries) {
+        // Manually attach category if we just created it with one
+        // Optimistically attach category if we have it from input to save DB call?
+        // Actually, findSeriesById in repo does NOT include category by default (based on my read).
+        // Let's use Prisma directly or assume repo update.
+        // Wait, I checked repo, `findSeriesById` is basic findFirst.
+        // I should probably just fetch with category explicitly here using prisma if I could, 
+        // or just assume `series` + `category` object if I fetched it earlier.
+        // I'll fetch the category object if I have ID.
+        let categoryForSync = undefined;
+        if (series.categoryId) {
+          categoryForSync = await this.repo.findCategoryById(series.categoryId);
+        }
+        const seriesToSync = { ...series, category: categoryForSync };
+        syncSeriesToSearch("upsert", seriesToSync).catch(err => console.error("Search Sync Error", err));
+      }
 
       return series;
     } catch (error) {
@@ -748,12 +746,16 @@ export class CatalogService {
       });
 
       // Sync to Search Service
+      // Sync to Search Service
       const { syncSeriesToSearch } = await import("./search-sync");
-      // For update, category might have changed or stayed same.
-      // We should ideally fetch full series with category to sync correct data.
-      // Or just sync what we have (series object from update).
-      // updateSeries from repo returns Series.
-      syncSeriesToSearch("upsert", updatedSeries).catch(err => console.error("Search Sync Error", err));
+
+      // Fetch category if exists to ensure search index is accurate
+      let categoryForSync = undefined;
+      if (updatedSeries.categoryId) {
+        categoryForSync = await this.repo.findCategoryById(updatedSeries.categoryId);
+      }
+      const seriesToSync = { ...updatedSeries, category: categoryForSync };
+      syncSeriesToSearch("upsert", seriesToSync).catch(err => console.error("Search Sync Error", err));
 
       return updatedSeries;
     } catch (error) {
