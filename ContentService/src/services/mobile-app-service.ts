@@ -166,22 +166,40 @@ export class MobileAppService {
 
     if (userId && this.deps.engagementClient) {
       try {
+        // Fetch more items than needed to account for duplicates (multiple episodes of same series)
+        const fetchLimit = (this.deps.config.continueWatchLimit || 10) * 5;
         const progressList = await this.deps.engagementClient.getUserProgressList({
           userId,
-          limit: this.deps.config.continueWatchLimit || 10,
+          limit: fetchLimit,
         });
 
         const episodeIds = progressList.map((p) => p.episode_id);
         if (episodeIds.length > 0) {
-          continueWatchEpisodes = await this.deps.viewerCatalog.getEpisodesBatch(episodeIds);
+          const rawEpisodes = await this.deps.viewerCatalog.getEpisodesBatch(episodeIds);
+          const episodeMap = new Map(rawEpisodes.map((e) => [e.id, e]));
 
-          // Populate progress map only for found episodes (validity check)
-          const validIds = new Set(continueWatchEpisodes.map((e) => e.id));
-          progressList.forEach((p) => {
-            if (validIds.has(p.episode_id)) {
-              progressMap.set(p.episode_id, p);
+          // Filter unique series, preserving order (most recent first)
+          const uniqueSeriesIds = new Set<string>();
+          const dedupedEpisodes: ViewerFeedItem[] = [];
+
+          for (const progress of progressList) {
+            const ep = episodeMap.get(progress.episode_id);
+            if (!ep || !ep.series?.id) continue;
+
+            if (uniqueSeriesIds.has(ep.series.id)) {
+              continue;
             }
-          });
+
+            uniqueSeriesIds.add(ep.series.id);
+            dedupedEpisodes.push(ep);
+            progressMap.set(progress.episode_id, progress);
+
+            if (dedupedEpisodes.length >= (this.deps.config.continueWatchLimit || 10)) {
+              break;
+            }
+          }
+
+          continueWatchEpisodes = dedupedEpisodes;
         }
       } catch (err) {
         options?.logger?.error({ err }, "Failed to load continue watching list");
