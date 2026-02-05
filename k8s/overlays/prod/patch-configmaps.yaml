@@ -48,3 +48,5 @@ data:
   RAZORPAY_KEY_ID: "rzp_test_RBSer2L2HUkTuM"
   RAZORPAY_KEY_SECRET: "prqqc0A1nLgTEBYghAQwQJr9IZod"
   RAZORPAY_WEBHOOK_SECRET: "whsec_omgtv_68"
+  AUTH_SERVICE_ADDRESS: "auth-service:50051"
+  USER_SERVICE_ADDRESS: "user-service:50052"
