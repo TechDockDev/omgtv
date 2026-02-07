@@ -1,0 +1,106 @@
+name: Deploy to DEV VM
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - 'k8s/**'
+      - '*.md'
+
+concurrency:
+  group: deploy-dev-vm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: 'pocketlol-68ca6'
+  REGION: 'asia-south1'
+  AR_REPO: 'pocketlol'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ======================================================
+      # 1. AUTHENTICATE & BUILD
+      # ======================================================
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/912340818228/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'github-deployer@pocketlol-68ca6.iam.gserviceaccount.com'
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Images
+        run: |
+          set -euo pipefail
+          TAG="latest"
+          registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}"
+          
+          build_push() {
+            local name="$1"
+            local dir="$2"
+            echo "Building $name..."
+            docker buildx build --platform linux/amd64 -t "${registry}/${name}:${TAG}" "${dir}" --push
+          }
+
+          build_push apigw ./APIGW
+          build_push auth-service ./AuthService
+          build_push user-service ./UserService
+          build_push content-service ./ContentService
+          build_push engagement-service ./EngagementService
+          build_push search-service ./SearchService
+          build_push upload-service ./UploadService
+          build_push subscription-service ./SubscriptionService
+          build_push transcoding-worker ./TranscodingWorker
+
+      # ======================================================
+      # 2. DEPLOY TO VM (SSH)
+      # ======================================================
+      
+      # Copy the compose file to the VM
+      - name: Copy Compose File
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_VM_HOST }}
+          username: ${{ secrets.DEV_VM_USERNAME }}
+          key: ${{ secrets.DEV_VM_SSH_KEY }}
+          source: "docker-compose.deploy.yml"
+          target: "~/"
+
+      # SSH to run the deployment
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.DEV_VM_HOST }}
+          username: ${{ secrets.DEV_VM_USERNAME }}
+          key: ${{ secrets.DEV_VM_SSH_KEY }}
+          script: |
+            set -e
+            
+            # Setup environment
+            # Rename the file we just copied
+            mv ~/docker-compose.deploy.yml ~/docker-compose.yml
+            
+            # Login to Artifact Registry
+            gcloud auth configure-docker asia-south1-docker.pkg.dev --quiet
+            
+            # Pull & Restart
+            docker compose pull
+            docker compose up -d --remove-orphans
+            
+            # Cleanup
+            docker image prune -f

@@ -11,8 +11,11 @@ import type { FirebaseAuthIntegration } from "../plugins/firebase";
 import type { AccessTokenPayload } from "../plugins/jwt";
 import type { UserServiceIntegration } from "../types/user-service";
 import { hashPassword, verifyPassword } from "../utils/password";
+import type { Redis } from "ioredis";
 
 const config = loadConfig();
+
+const ACTIVE_SESSION_PREFIX = "active_session:";
 
 export type AuthErrorCode =
   | "INVALID_CREDENTIALS"
@@ -44,17 +47,24 @@ export function hashToken(token: string): string {
 
 async function issueSessionTokens(params: {
   prisma: PrismaClient;
+  redis: Redis;
   subjectId: string;
   payload: AccessTokenPayload;
-  signAccessToken: (
-    payload: AccessTokenPayload,
-    expiresIn?: number
-  ) => Promise<string>;
+  signAccessToken:
+  | ((payload: AccessTokenPayload, expiresIn?: number) => Promise<string>)
+  | undefined;
   deviceId?: string;
   userAgent?: string;
 }): Promise<TokenResponse> {
-  const { prisma, subjectId, payload, signAccessToken, deviceId, userAgent } =
-    params;
+  const {
+    prisma,
+    redis,
+    subjectId,
+    payload,
+    signAccessToken,
+    deviceId,
+    userAgent,
+  } = params;
 
   const refreshToken = createRefreshToken();
   const hashedRefresh = hashToken(refreshToken);
@@ -62,16 +72,15 @@ async function issueSessionTokens(params: {
     Date.now() + config.REFRESH_TOKEN_TTL * 1000
   );
 
-  if (config.REFRESH_TOKEN_ROTATION) {
-    await prisma.session.deleteMany({
-      where: {
-        subjectId,
-        ...(deviceId ? { deviceId } : {}),
-      },
-    });
-  }
+  // SINGLE DEVICE LOGIN ENFORCEMENT
+  // 1. Delete all previous sessions from the database
+  await prisma.session.deleteMany({
+    where: {
+      subjectId,
+    },
+  });
 
-  await prisma.session.create({
+  const session = await prisma.session.create({
     data: {
       subjectId,
       refreshTokenHash: hashedRefresh,
@@ -81,7 +90,21 @@ async function issueSessionTokens(params: {
     },
   });
 
-  const accessToken = await signAccessToken(payload, config.ACCESS_TOKEN_TTL);
+  // 2. Set the active session in Redis (The "Heartbeat" Record)
+  // We use the Session ID (UUID) as the value.
+  // Set expiry to match Refresh Token TTL so it doesn't leak memory forever.
+  await redis.set(
+    `${ACTIVE_SESSION_PREFIX}${subjectId}`,
+    session.id,
+    "EX",
+    config.REFRESH_TOKEN_TTL
+  );
+
+  // Add sessionId to the access token payload for validation
+  const sessionPayload = { ...payload, sessionId: session.id };
+  const accessToken = signAccessToken
+    ? await signAccessToken(sessionPayload, config.ACCESS_TOKEN_TTL)
+    : ""; // If triggered internally without signing
 
   return {
     accessToken,
@@ -340,8 +363,9 @@ export async function loginAdmin(params: {
   ) => Promise<string>;
   userService: UserServiceIntegration;
   logger: FastifyBaseLogger;
+  redis: Redis;
 }): Promise<TokenResponse> {
-  const { prisma, email, password, signAccessToken, userService, logger } =
+  const { prisma, email, password, signAccessToken, userService, logger, redis } =
     params;
 
   const credential = await prisma.adminCredential.findUnique({
@@ -376,6 +400,7 @@ export async function loginAdmin(params: {
 
   return issueSessionTokens({
     prisma,
+    redis,
     subjectId: credential.subjectId,
     payload,
     signAccessToken,
@@ -392,8 +417,9 @@ export async function registerAdmin(params: {
   ) => Promise<string>;
   userService: UserServiceIntegration;
   logger: FastifyBaseLogger;
+  redis: Redis;
 }): Promise<TokenResponse> {
-  const { prisma, email, password, signAccessToken, userService, logger } =
+  const { prisma, email, password, signAccessToken, userService, logger, redis } =
     params;
 
   const existing = await prisma.adminCredential.findUnique({
@@ -438,6 +464,7 @@ export async function registerAdmin(params: {
 
   return issueSessionTokens({
     prisma,
+    redis,
     subjectId: subject.id,
     payload,
     signAccessToken,
@@ -456,6 +483,7 @@ export async function authenticateCustomer(params: {
   ) => Promise<string>;
   userService: UserServiceIntegration;
   logger: FastifyBaseLogger;
+  redis: Redis;
 }): Promise<TokenResponse> {
   const {
     prisma,
@@ -466,6 +494,7 @@ export async function authenticateCustomer(params: {
     signAccessToken,
     userService,
     logger,
+    redis,
   } = params;
 
   if (!userService.isEnabled) {
@@ -518,6 +547,7 @@ export async function authenticateCustomer(params: {
 
   return issueSessionTokens({
     prisma,
+    redis,
     subjectId: identity.subjectId,
     payload,
     signAccessToken,
@@ -534,6 +564,7 @@ export async function initializeGuest(params: {
     expiresIn?: number
   ) => Promise<string>;
   userService: UserServiceIntegration;
+  redis: Redis;
 }): Promise<{ guestId: string; tokens: TokenResponse }> {
   const {
     prisma,
@@ -541,6 +572,7 @@ export async function initializeGuest(params: {
     deviceId,
     signAccessToken,
     userService,
+    redis,
   } = params;
 
   if (!userService.isEnabled) {
@@ -575,6 +607,7 @@ export async function initializeGuest(params: {
 
   const tokens = await issueSessionTokens({
     prisma,
+    redis,
     subjectId: identity.subjectId,
     payload,
     signAccessToken,
@@ -594,6 +627,7 @@ export async function rotateRefreshToken(params: {
   ) => Promise<string>;
   userService: UserServiceIntegration;
   logger: FastifyBaseLogger;
+  redis: Redis;
 }): Promise<TokenResponse> {
   const {
     prisma,
@@ -602,6 +636,7 @@ export async function rotateRefreshToken(params: {
     signAccessToken,
     userService,
     logger,
+    redis,
   } = params;
 
   const hashedToken = hashToken(refreshToken);
@@ -642,6 +677,7 @@ export async function rotateRefreshToken(params: {
 
   return issueSessionTokens({
     prisma,
+    redis,
     subjectId: session.subjectId,
     payload,
     signAccessToken,
@@ -670,4 +706,20 @@ export async function revokeSessions(params: {
       ...(deviceId ? { deviceId } : {}),
     },
   });
+}
+
+export async function verifyActiveSession(params: {
+  redis: Redis;
+  subjectId: string;
+  sessionId: string;
+}): Promise<boolean> {
+  const { redis, subjectId, sessionId } = params;
+  const key = `${ACTIVE_SESSION_PREFIX}${subjectId}`;
+  const activeSessionId = await redis.get(key);
+
+  console.log(`[VerifySession] checking key=${key}`);
+  console.log(`[VerifySession] token.sessionId=${sessionId}`);
+  console.log(`[VerifySession] redis.activeSessionId=${activeSessionId}`);
+
+  return activeSessionId === sessionId;
 }

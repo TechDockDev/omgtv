@@ -64,6 +64,9 @@ export default function () {
     const vuId = __VU;
     const iteration = __ITER;
 
+    // Check if we have a hardcoded token (Bypass login)
+    const HARDCODED_TOKEN = __ENV.AUTH_TOKEN;
+
     // ============================================
     // SCENARIO: Typical User Session
     // ============================================
@@ -76,24 +79,30 @@ export default function () {
 
     sleep(0.2);
 
-    // 2. Guest Login (first time user)
-    group('02_Guest_Auth', () => {
-        const deviceId = `k6-${vuId}-${iteration}`;
-        const guestInit = api('POST', '/api/v1/auth/guest/init', {
-            deviceId: deviceId,
-            deviceInfo: { platform: 'android', version: '2.0.0' },
-        });
-
-        if (check(guestInit, { 'guest init ok': (r) => r.status === 200 })) {
-            try {
-                const data = JSON.parse(guestInit.body);
-                guestTokens[vuId] = {
-                    access: data.tokens?.accessToken,
-                    refresh: data.tokens?.refreshToken,
-                };
-            } catch (e) { }
+    // 2. Auth (Guest or Hardcoded)
+    group('02_Auth', () => {
+        if (HARDCODED_TOKEN) {
+            // Use provided token
+            guestTokens[vuId] = { access: HARDCODED_TOKEN };
         } else {
-            errorRate.add(1);
+            // Guest Login flow
+            const deviceId = `k6-${vuId}-${iteration}`;
+            const guestInit = api('POST', '/api/v1/auth/guest/init', {
+                deviceId: deviceId,
+                deviceInfo: { platform: 'android', version: '2.0.0' },
+            });
+
+            if (check(guestInit, { 'guest init ok': (r) => r.status === 200 })) {
+                try {
+                    const data = JSON.parse(guestInit.body);
+                    guestTokens[vuId] = {
+                        access: data.tokens?.accessToken,
+                        refresh: data.tokens?.refreshToken,
+                    };
+                } catch (e) { }
+            } else {
+                errorRate.add(1);
+            }
         }
     });
 
@@ -101,7 +110,10 @@ export default function () {
 
     // 3. Load Home Feed (Most important API)
     group('03_Home_Feed', () => {
-        const home = api('GET', '/api/v1/content/mobile/home');
+        // Use the token we have (either Guest or Hardcoded)
+        const token = guestTokens[vuId]?.access;
+
+        const home = api('GET', '/api/v1/content/mobile/home', null, token);
         const passed = check(home, {
             'home feed 200': (r) => r.status === 200,
             'home feed fast': (r) => r.timings.duration < 400,
@@ -121,8 +133,10 @@ export default function () {
 
     // 4. Search (Random query)
     group('04_Search', () => {
+        const token = guestTokens[vuId]?.access;
         const query = searchQueries[Math.floor(Math.random() * searchQueries.length)];
-        const search = api('GET', `/api/v1/search?q=${query}`);
+        // Pass token to search if available (some search APIs might be protected/personalized)
+        const search = api('GET', `/api/v1/search?q=${query}`, null, token);
         check(search, {
             'search ok': (r) => r.status === 200,
             'search fast': (r) => r.timings.duration < 200,
@@ -136,11 +150,21 @@ export default function () {
         // Request series list/tags
         const token = guestTokens[vuId]?.access;
 
-        // Try to get series data (public endpoint)
-        const series = api('GET', '/api/v1/content/mobile/series');
+        // Try to get series data (public endpoint, but pass token if we have it)
+        const series = api('GET', '/api/v1/content/mobile/series', null, token);
         check(series, {
             'series list ok': (r) => r.status === 200 || r.status === 404,
         });
+
+        // 5b. Verify Continue Watching calculation (Latency check)
+        // Only if we have a token (user has "watched" something)
+        if (token) {
+            // Re-hit Home to measure "calc" latency
+            const homeReload = api('GET', '/api/v1/content/mobile/home', null, token);
+            check(homeReload, {
+                'home re-load (calc) fast': (r) => r.timings.duration < 500,
+            });
+        }
     });
 
     sleep(0.5);

@@ -7,6 +7,7 @@ import {
   initializeGuest,
   rotateRefreshToken,
   revokeSessions,
+  verifyActiveSession,
   AuthError,
 } from "../services/auth";
 import {
@@ -62,6 +63,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           logger: request.log,
+          redis: request.server.redis,
         });
       } catch (error) {
         if (error instanceof AuthError) {
@@ -90,6 +92,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           logger: request.log,
+          redis: request.server.redis,
         });
         return reply.status(201).send(tokens);
       } catch (error) {
@@ -121,6 +124,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           logger: request.log,
+          redis: request.server.redis,
         });
       } catch (error) {
         if (error instanceof AuthError) {
@@ -151,6 +155,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           deviceId: body.deviceId,
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
+          redis: request.server.redis,
         });
         return { guestId: result.guestId, tokens: result.tokens };
       } catch (error) {
@@ -177,6 +182,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           logger: request.log,
+          redis: request.server.redis,
         });
       } catch (error) {
         if (error instanceof AuthError) {
@@ -221,6 +227,42 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
       });
 
       return reply.status(204).send();
+    },
+  });
+
+
+  fastify.get<{ Reply: { valid: boolean } }>("/api/v1/auth/session/verify", {
+    handler: async (request, reply) => {
+      const authHeader = request.headers.authorization;
+      if (!authHeader) {
+        throw fastify.httpErrors.unauthorized("Missing access token");
+      }
+      const token = authHeader.replace(/^Bearer\s+/i, "");
+      request.log.info({ tokenPrefix: token.substring(0, 10), tokenLength: token.length }, "Verifying session token");
+      let payload;
+      try {
+        payload = await request.server.jwt.verify(token);
+      } catch (error) {
+        request.log.error({ err: error }, "Token verification failed inside verify endpoint");
+        throw fastify.httpErrors.unauthorized("Invalid access token");
+      }
+
+      const { sub: subjectId, sessionId } = payload;
+      if (!subjectId || !sessionId) {
+        throw fastify.httpErrors.unauthorized("Invalid token payload");
+      }
+
+      const isValid = await verifyActiveSession({
+        redis: request.server.redis,
+        subjectId,
+        sessionId,
+      });
+
+      if (!isValid) {
+        throw fastify.httpErrors.unauthorized("Session revoked or invalid");
+      }
+
+      return { valid: true };
     },
   });
 });

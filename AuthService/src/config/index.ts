@@ -67,6 +67,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value && value.length > 0 ? value : undefined)),
+  REDIS_URL: z.string().default("redis://localhost:6379"),
 });
 
 type Env = z.infer<typeof envSchema>;

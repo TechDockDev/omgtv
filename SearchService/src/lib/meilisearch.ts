@@ -39,8 +39,7 @@ async function runRetryLoop() {
             try {
                 index = await meili.getIndex(SERIES_INDEX);
             } catch (e: any) {
-                // Check code OR message to be safe (Meilisearch errors can vary by version/transport)
-                if (e.code === "index_not_found" || e.message?.includes("not found")) {
+                if (e.code === "index_not_found") {
                     console.log(`Index '${SERIES_INDEX}' not found, creating...`);
                     const task = await meili.createIndex(SERIES_INDEX, { primaryKey: "id" });
                     await (meili as any).waitForTask(task.taskUid);

@@ -9,6 +9,7 @@ export type AdminAccessTokenPayload = {
   userType: "ADMIN";
   adminId: string;
   roles: string[];
+  sessionId?: string;
 };
 
 export type CustomerAccessTokenPayload = {
@@ -17,6 +18,7 @@ export type CustomerAccessTokenPayload = {
   userId: string;
   firebaseUid: string;
   deviceId: string;
+  sessionId?: string;
 };
 
 export type GuestAccessTokenPayload = {
@@ -25,6 +27,7 @@ export type GuestAccessTokenPayload = {
   guestId: string;
   deviceId: string;
   guestProfileId: string;
+  sessionId?: string;
 };
 
 export type AccessTokenPayload =
@@ -81,6 +84,7 @@ async function jwtPlugin(fastify: FastifyInstance) {
         },
         {
           expiresIn: expiresIn ?? config.ACCESS_TOKEN_TTL,
+          kid: config.AUTH_JWT_KEY_ID,
         }
       );
     }
