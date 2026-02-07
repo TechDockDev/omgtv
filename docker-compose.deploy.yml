@@ -1,0 +1,181 @@
+
+
+services:
+  # =========================================
+  # INFRASTRUCTURE: Cloud SQL Proxy
+  # =========================================
+  cloud-sql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+    command:
+      - "--address=0.0.0.0" 
+      - "--port=5432"
+      - "pocketlol-68ca6:asia-south1:pocketlol-pg" # <--- VERIFY THIS CONNECTION NAME
+    ports:
+      - "127.0.0.1:5432:5432" # Expose to host so other containers can reach via host.docker.internal or network
+    restart: always
+
+  # =========================================
+  # INFRASTRUCTURE: Meilisearch (Local)
+  # =========================================
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    environment:
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-masterKey}
+      - MEILI_ENV=production
+    volumes:
+      - meili_data:/meili_data
+    restart: always
+    ports:
+      - "7700:7700"
+
+  # =========================================
+  # APPLICATION SERVICES
+  # =========================================
+  
+  apigw:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/apigw:latest
+    restart: always
+    ports:
+      - "80:3000" # Expose on port 80 for public access
+    environment:
+      - NODE_ENV=production
+      - SERVER_PORT=3000
+      - REDIS_URL=redis://10.117.209.35:6379
+      - AUTH_JWKS_URL=http://auth-service:4000/.well-known/jwks.json
+      - CONTENT_SERVICE_URL=http://content-service:4600
+      - AUTH_SERVICE_URL=http://auth-service:4000
+      - USER_SERVICE_URL=http://user-service:4500
+      - UPLOAD_SERVICE_URL=http://upload-service:5000
+      - ENGAGEMENT_SERVICE_URL=http://engagement-service:4700
+      - SEARCH_SERVICE_URL=http://search-service:4800
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
+      - STREAMING_SERVICE_URL=http://streaming-service:4900
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+    depends_on:
+      - auth-service
+      - user-service
+
+  auth-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/auth-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_auth?schema=public
+      - REDIS_URL=redis://10.117.209.35:6379
+      - AUTH_JWT_PRIVATE_KEY=${AUTH_JWT_PRIVATE_KEY}
+      - AUTH_JWT_PUBLIC_KEY=${AUTH_JWT_PUBLIC_KEY}
+      - AUTH_JWT_KEY_ID=${AUTH_JWT_KEY_ID}
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - USER_SERVICE_ADDRESS=user-service:50052
+      - USER_SERVICE_TOKEN=${SERVICE_AUTH_TOKEN}
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+      - FIREBASE_CREDENTIALS_B64=${FIREBASE_CREDENTIALS_B64}
+    depends_on:
+      - cloud-sql-proxy
+
+  user-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/user-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_users?schema=public
+      - AUTH_DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_auth?schema=public
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - AUTH_SERVICE_ADDRESS=auth-service:50051
+      - AUTH_SERVICE_TOKEN=${SERVICE_AUTH_TOKEN}
+    depends_on:
+      - cloud-sql-proxy
+
+  content-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/content-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_content?schema=public
+      - REDIS_URL=redis://10.117.209.35:6379
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - ENGAGEMENT_SERVICE_URL=http://engagement-service:4700
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
+      - UPLOAD_SERVICE_URL=http://upload-service:5000
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - UPLOAD_BUCKET=${UPLOAD_BUCKET}
+      # Point to local secrets mount or env var
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-service-account.json
+    volumes:
+      - ./secrets:/secrets:ro
+    depends_on:
+      - cloud-sql-proxy
+
+  engagement-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/engagement-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_engagement?schema=public
+      - REDIS_URL=redis://10.117.209.35:6379
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+    depends_on:
+      - cloud-sql-proxy
+
+  search-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/search-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - MEILI_HOST=http://meilisearch:7700
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-masterKey}
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+    depends_on:
+      - meilisearch
+
+  streaming-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/streaming-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - CDN_BASE_URL=${CDN_BASE_URL}
+      - SIGNED_URL_TTL_SECONDS=300
+
+  upload-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/upload-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_uploads?schema=public
+      - REDIS_URL=redis://10.117.209.35:6379
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - UPLOAD_BUCKET=${UPLOAD_BUCKET}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-service-account.json
+    volumes:
+      - ./secrets:/secrets:ro
+    depends_on:
+      - cloud-sql-proxy
+
+  subscription-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/subscription-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_subscription?schema=public
+      - REDIS_URL=redis://10.117.209.35:6379
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+    depends_on:
+      - cloud-sql-proxy
+
+  transcoding-worker:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/transcoding-worker:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCS_UPLOADS_BUCKET=${UPLOAD_BUCKET}
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-service-account.json
+    volumes:
+      - ./secrets:/secrets:ro
+
+volumes:
+  meili_data: {}

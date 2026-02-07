@@ -25,16 +25,19 @@
         "@grpc/grpc-js": "^1.11.1",
         "@grpc/proto-loader": "^0.7.9",
         "@prisma/client": "^5.10.2",
-        "firebase-admin": "^12.4.0",
+        "@types/node-fetch": "^2.6.13",
+        "bcryptjs": "^2.4.3",
         "dotenv": "^16.3.1",
         "fastify": "^4.25.2",
-        "fastify-type-provider-zod": "^2.0.0",
         "fastify-plugin": "^4.5.1",
+        "fastify-type-provider-zod": "^2.0.0",
+        "firebase-admin": "^12.4.0",
+        "ioredis": "^5.9.2",
+        "jose": "^5.2.0",
+        "node-fetch": "^2.7.0",
         "pino": "^9.0.0",
         "pino-pretty": "^11.0.0",
-        "zod": "^3.22.4",
-        "bcryptjs": "^2.4.3",
-        "jose": "^5.2.0"
+        "zod": "^3.22.4"
     },
     "devDependencies": {
         "@types/bcryptjs": "^2.4.6",
@@ -42,10 +45,10 @@
         "eslint": "^8.56.0",
         "eslint-config-prettier": "^9.1.0",
         "eslint-plugin-import": "^2.29.1",
-        "prisma": "^5.10.2",
         "prettier": "^3.1.1",
+        "prisma": "^5.10.2",
         "ts-node": "^10.9.2",
-        "typescript": "^5.3.3",
-        "tsx": "^4.7.1"
+        "tsx": "^4.7.1",
+        "typescript": "^5.3.3"
     }
 }
