@@ -36,7 +36,7 @@ services:
     image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/apigw:latest
     restart: always
     ports:
-      - "80:3000" # Expose on port 80 for public access
+      - "127.0.0.1:3000:3000" # Expose on localhost:3000 only (for Nginx proxy)
     environment:
       - NODE_ENV=production
       - SERVER_PORT=3000
@@ -48,7 +48,7 @@ services:
       - UPLOAD_SERVICE_URL=http://upload-service:5000
       - ENGAGEMENT_SERVICE_URL=http://engagement-service:4700
       - SEARCH_SERVICE_URL=http://search-service:4800
-      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:4700
       - STREAMING_SERVICE_URL=http://streaming-service:4900
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
@@ -95,14 +95,14 @@ services:
       - REDIS_URL=redis://10.117.209.35:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - ENGAGEMENT_SERVICE_URL=http://engagement-service:4700
-      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:4700
       - UPLOAD_SERVICE_URL=http://upload-service:5000
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - UPLOAD_BUCKET=${UPLOAD_BUCKET}
+      - TRANSCODING_REQUESTS_TOPIC=transcoding-requests
       # Point to local secrets mount or env var
-      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-service-account.json
-    volumes:
-      - ./secrets:/secrets:ro
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - UPLOAD_BUCKET=${UPLOAD_BUCKET}
     depends_on:
       - cloud-sql-proxy
 
@@ -145,11 +145,11 @@ services:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_uploads?schema=public
       - REDIS_URL=redis://10.117.209.35:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - CONTENT_SERVICE_URL=http://content-service:4600
       - UPLOAD_BUCKET=${UPLOAD_BUCKET}
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-service-account.json
-    volumes:
-      - ./secrets:/secrets:ro
+      - UPLOAD_BUCKET=${UPLOAD_BUCKET}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
     depends_on:
       - cloud-sql-proxy
 
@@ -163,6 +163,9 @@ services:
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
       - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}
+      - AUTH_SERVICE_ADDRESS=auth-service:50051
+      - USER_SERVICE_ADDRESS=user-service:50052
     depends_on:
       - cloud-sql-proxy
 
@@ -173,9 +176,7 @@ services:
       - NODE_ENV=production
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - GCS_UPLOADS_BUCKET=${UPLOAD_BUCKET}
-      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-service-account.json
-    volumes:
-      - ./secrets:/secrets:ro
+      - GCS_STREAMING_BUCKET=${GCS_STREAMING_BUCKET}
 
 volumes:
   meili_data: {}

@@ -57,10 +57,15 @@ MEILI_MASTER_KEY=$(get_secret meilisearch-secrets MEILI_MASTER_KEY)
 # Subscription
 RAZORPAY_KEY_ID=$(get_config subscription-service-config RAZORPAY_KEY_ID)
 RAZORPAY_KEY_SECRET=$(get_config subscription-service-config RAZORPAY_KEY_SECRET)
+RAZORPAY_WEBHOOK_SECRET=$(get_secret subscription-service-secrets RAZORPAY_WEBHOOK_SECRET)
 
 # GCP / Uploads
 GCP_PROJECT_ID=$(get_config upload-service-config GCP_PROJECT_ID)
 UPLOAD_BUCKET=$(get_config upload-service-config UPLOAD_BUCKET)
+# Assuming streaming bucket is in streaming-service-config or similar, defaulting to specific name for now to be safe or checking config
+# Actually, checking k8s/base/all.yaml would confirm where it is.
+# Based on common patterns in this project:
+GCS_STREAMING_BUCKET=$(get_config transcoding-worker-config GCS_STREAMING_BUCKET)
 # CDN
 CDN_BASE_URL=$(get_config content-service-config CDN_BASE_URL)
 
@@ -95,11 +100,13 @@ MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-masterKey}
 
 # --- UPLOAD & STORAGE ---
 UPLOAD_BUCKET=$UPLOAD_BUCKET
+GCS_STREAMING_BUCKET=$GCS_STREAMING_BUCKET
 CDN_BASE_URL=$CDN_BASE_URL
 
 # --- SUBSCRIPTION ---
 RAZORPAY_KEY_ID=$RAZORPAY_KEY_ID
 RAZORPAY_KEY_SECRET=$RAZORPAY_KEY_SECRET
+RAZORPAY_WEBHOOK_SECRET=$RAZORPAY_WEBHOOK_SECRET
 
 EOF
 
