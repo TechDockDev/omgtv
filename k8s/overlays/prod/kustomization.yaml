@@ -6,6 +6,7 @@ namespace: prod
 patchesStrategicMerge:
   - patch-ingress-host.yaml
   - patch-configmaps.yaml
+  - patch-worker.yaml
 
 resources:
   - ../../base

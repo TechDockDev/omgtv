@@ -66,6 +66,7 @@ services:
       - AUTH_JWT_PUBLIC_KEY=${AUTH_JWT_PUBLIC_KEY}
       - AUTH_JWT_KEY_ID=${AUTH_JWT_KEY_ID}
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - ACCESS_TOKEN_TTL=864000
       - USER_SERVICE_ADDRESS=user-service:50052
       - USER_SERVICE_TOKEN=${SERVICE_AUTH_TOKEN}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
@@ -95,14 +96,13 @@ services:
       - REDIS_URL=redis://10.117.209.35:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - ENGAGEMENT_SERVICE_URL=http://engagement-service:4700
-      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:4700
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
       - UPLOAD_SERVICE_URL=http://upload-service:5000
+      - SEARCH_SERVICE_URL=http://search-service:4800
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-      - UPLOAD_BUCKET=${UPLOAD_BUCKET}
-      - TRANSCODING_REQUESTS_TOPIC=transcoding-requests
-      # Point to local secrets mount or env var
-      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-      - UPLOAD_BUCKET=${UPLOAD_BUCKET}
+      - UPLOAD_BUCKET=videos-bucket-pocketlol-dev
+      - TRANSCODING_REQUESTS_TOPIC=transcoding-requests-dev
+      - MEDIA_READY_SUBSCRIPTION=projects/pocketlol-68ca6/subscriptions/streaming-audit-sub-dev
     depends_on:
       - cloud-sql-proxy
 
@@ -134,7 +134,7 @@ services:
     environment:
       - NODE_ENV=production
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
-      - CDN_BASE_URL=${CDN_BASE_URL}
+      - CDN_BASE_URL=https://storage.googleapis.com/videos-bucket-pocketlol-dev
       - SIGNED_URL_TTL_SECONDS=300
 
   upload-service:
@@ -146,10 +146,9 @@ services:
       - REDIS_URL=redis://10.117.209.35:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - CONTENT_SERVICE_URL=http://content-service:4600
-      - UPLOAD_BUCKET=${UPLOAD_BUCKET}
+      - UPLOAD_BUCKET=videos-bucket-pocketlol-dev
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-      - UPLOAD_BUCKET=${UPLOAD_BUCKET}
-      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - MEDIA_UPLOADED_TOPIC=uploaded-media-dev
     depends_on:
       - cloud-sql-proxy
 
@@ -175,8 +174,15 @@ services:
     environment:
       - NODE_ENV=production
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-      - GCS_UPLOADS_BUCKET=${UPLOAD_BUCKET}
-      - GCS_STREAMING_BUCKET=${GCS_STREAMING_BUCKET}
+      - GCS_UPLOADS_BUCKET=videos-bucket-pocketlol-dev
+      - GCS_STREAMING_BUCKET=videos-bucket-pocketlol-dev
+      - PREVIEW_GENERATION_TOPIC=media.preview.requested-dev
+      - MEDIA_PROCESSED_TOPIC=media.processed-dev
+      - PUBSUB_SUBSCRIPTION=projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-dev
+      - PUBSUB_READY_TOPIC=streaming-audit-dev
+      - CDN_BASE_URL=https://storage.googleapis.com/videos-bucket-pocketlol-dev
+    depends_on:
+      - cloud-sql-proxy
 
 volumes:
   meili_data: {}
