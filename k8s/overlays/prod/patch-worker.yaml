@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcoding-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: transcoding-worker
+          env:
+            - name: GCS_UPLOADS_BUCKET
+              value: "videos-bucket-pocketlol"
+            - name: GCS_STREAMING_BUCKET
+              value: "videos-bucket-pocketlol"
+            - name: PUBSUB_SUBSCRIPTION
+              value: "projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-prod"
+            - name: PUBSUB_READY_TOPIC
+              value: "streaming-audit-prod"
+            - name: CDN_BASE_URL
+              value: "https://storage.googleapis.com/videos-bucket-pocketlol"

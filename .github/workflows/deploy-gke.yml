@@ -1,21 +1,13 @@
-name: Deploy to GKE
+name: Deploy to GKE (PROD ONLY)
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [master]
   workflow_dispatch:
+    # No inputs needed as it's prod only, but we keep it for manual UI
     inputs:
-      environment:
-        description: Target environment overlay
+      confirm:
+        description: 'Type "PROD" to confirm deployment'
         required: true
-        default: dev
-        type: choice
-        options:
-          - dev
-          - staging
-          - prod
+        default: 'PROD'
 
 permissions:
   contents: read
@@ -50,11 +42,8 @@ jobs:
       - name: Resolve target environment
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "ENVIRONMENT=${{ inputs.environment }}" >> "$GITHUB_ENV"
-          else
-            echo "ENVIRONMENT=dev" >> "$GITHUB_ENV"
-          fi
+          echo "ENVIRONMENT=prod" >> "$GITHUB_ENV"
+          echo "CLUSTER_NAME=pocketlol-prod" >> "$GITHUB_ENV"
 
       - name: Validate deploy configuration
         run: |

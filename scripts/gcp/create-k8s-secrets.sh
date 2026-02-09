@@ -13,7 +13,12 @@ fi
 
 NAMESPACE="${1:-dev}"
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
-SQL_INSTANCE="${SQL_INSTANCE:-pocketlol-pg}"
+
+if [ "$NAMESPACE" == "prod" ]; then
+  SQL_INSTANCE="${SQL_INSTANCE:-pocketlol-pg-prod}"
+else
+  SQL_INSTANCE="${SQL_INSTANCE:-pocketlol-pg}"
+fi
 
 if [ -z "${PROJECT_ID:-}" ]; then
   echo "PROJECT_ID must be set (or gcloud default project configured)" >&2
@@ -137,5 +142,13 @@ kubectl -n "$NAMESPACE" create secret generic streaming-service-secrets \
   --from-literal=OME_API_SECRET="$(get_secret_optional streaming-ome-api-secret "local-secret")" \
   --from-literal=METRICS_ACCESS_TOKEN="$(get_secret_optional streaming-metrics-access-token "")" \
   --from-literal=AUTH_SERVICE_INTERNAL_TOKEN="$AUTH_SERVICE_INTERNAL_TOKEN"
+
+echo "Creating subscription-service-secrets"
+kubectl -n "$NAMESPACE" delete secret subscription-service-secrets >/dev/null 2>&1 || true
+kubectl -n "$NAMESPACE" create secret generic subscription-service-secrets \
+  --from-literal=DATABASE_URL="$(mk_db_url pocketlol_subscription)" \
+  --from-literal=RAZORPAY_KEY_ID="$(get_secret_optional razorpay-key-id "")" \
+  --from-literal=RAZORPAY_KEY_SECRET="$(get_secret_optional razorpay-key-secret "")" \
+  --from-literal=RAZORPAY_WEBHOOK_SECRET="$(get_secret_optional razorpay-webhook-secret "")"
 
 echo "Done. Next: fill ConfigMaps for Redis/GCS/PubSub and apply kustomize overlay."

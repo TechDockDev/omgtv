@@ -3,22 +3,25 @@ kind: ConfigMap
 metadata:
   name: apigw-config
 data:
-  REDIS_URL: "redis://10.117.209.35:6379"
+  REDIS_URL: "redis://10.244.194.227:6379"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: content-service-config
 data:
-  CDN_BASE_URL: "https://cdn.dev.pocketlol.example"
-  REDIS_URL: "redis://10.117.209.35:6379"
+  CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol"
+  REDIS_URL: "redis://10.244.194.227:6379"
+  UPLOAD_BUCKET: "videos-bucket-pocketlol" # Unified bucket (hls, videos, images, thumbnails)
+  TRANSCODING_REQUESTS_TOPIC: "transcoding-requests-prod"
+  MEDIA_READY_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/streaming-audit-sub-prod"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: engagement-service-config
 data:
-  REDIS_URL: "redis://10.117.209.35:6379"
+  REDIS_URL: "redis://10.244.194.227:6379"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -26,27 +29,26 @@ metadata:
   name: auth-service-config
 data:
   FIREBASE_PROJECT_ID: "pocketlol-68ca6"
+  ACCESS_TOKEN_TTL: "864000"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: upload-service-config
 data:
-  REDIS_URL: "redis://10.117.209.35:6379"
+  REDIS_URL: "redis://10.244.194.227:6379"
   GCP_PROJECT_ID: "pocketlol-68ca6"
   PUBSUB_PROJECT_ID: "pocketlol-68ca6"
-  UPLOAD_BUCKET: "videos-bucket-pocketlol"
-  CDN_UPLOAD_BASE_URL: "https://upload.cdn.pocketlol"
+  UPLOAD_BUCKET: "videos-bucket-pocketlol" # Unified bucket
+  CDN_UPLOAD_BASE_URL: "https://upload.pocketlol.example"
+  MEDIA_UPLOADED_TOPIC: "uploaded-media-prod"
+  PREVIEW_GENERATION_TOPIC: "media.preview.requested-prod"
+  MEDIA_PROCESSED_TOPIC: "media.processed-prod"
 ---
-
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: subscription-service-config
 data:
-  REDIS_URL: "redis://10.117.209.35:6379"
-  RAZORPAY_KEY_ID: "rzp_test_RBSer2L2HUkTuM"
-  RAZORPAY_KEY_SECRET: "prqqc0A1nLgTEBYghAQwQJr9IZod"
-  RAZORPAY_WEBHOOK_SECRET: "whsec_omgtv_68"
-  AUTH_SERVICE_ADDRESS: "auth-service:50051"
-  USER_SERVICE_ADDRESS: "user-service:50052"
+  REDIS_URL: "redis://10.244.194.227:6379"
+  # Use secrets for Razorpay in prod as well
