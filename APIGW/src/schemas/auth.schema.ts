@@ -15,6 +15,17 @@ const guestIdOptionalSchema = z.preprocess((value) => {
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().trim().min(3).max(128).optional());
 
+const deviceInfoSchema = z.object({
+  os: z.string().optional(),
+  osVersion: z.string().optional(),
+  deviceName: z.string().optional(),
+  model: z.string().optional(),
+  appVersion: z.string().optional(),
+  network: z.string().optional(),
+  fcmToken: z.string().optional(),
+  permissions: z.record(z.boolean()).optional(),
+}).optional();
+
 export const adminLoginBodySchema = z.object({
   email: z.string().trim().email(),
   password: z.string().trim().min(8),
@@ -29,10 +40,12 @@ export const customerLoginBodySchema = z.object({
   firebaseToken: z.string().trim().min(20),
   deviceId: deviceIdSchema,
   guestId: guestIdOptionalSchema,
+  deviceInfo: deviceInfoSchema,
 });
 
 export const guestInitBodySchema = z.object({
   deviceId: deviceIdSchema,
+  deviceInfo: deviceInfoSchema,
 });
 
 export const tokenResponseSchema = z.object({

@@ -20,14 +20,27 @@ export const adminRegisterBodySchema = z.object({
   password: z.string().trim().min(8),
 });
 
+export const deviceInfoSchema = z.object({
+  os: z.string().optional(),
+  osVersion: z.string().optional(),
+  deviceName: z.string().optional(),
+  model: z.string().optional(),
+  appVersion: z.string().optional(),
+  network: z.string().optional(),
+  fcmToken: z.string().optional(),
+  permissions: z.record(z.boolean()).optional(),
+}).optional();
+
 export const customerLoginBodySchema = z.object({
   firebaseToken: z.string().trim().min(20),
   deviceId: deviceIdSchema,
   guestId: guestIdOptionalSchema,
+  deviceInfo: deviceInfoSchema,
 });
 
 export const guestInitBodySchema = z.object({
   deviceId: deviceIdSchema,
+  deviceInfo: deviceInfoSchema,
 });
 
 export const tokenResponseSchema = z.object({

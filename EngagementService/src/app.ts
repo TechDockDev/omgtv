@@ -14,6 +14,7 @@ import swaggerPlugin from "./plugins/swagger";
 import internalRoutes from "./routes/internal";
 import batchRoutes from "./routes/batch";
 import clientRoutes from "./routes/client";
+import adminRoutes from "./routes/admin";
 import { startProgressSyncWorker } from "./workers/progress-sync";
 import { startStatsSyncWorker } from "./workers/stats-sync";
 
@@ -50,6 +51,7 @@ export async function buildApp() {
   await app.register(internalRoutes, { prefix: "/internal" });
   await app.register(batchRoutes, { prefix: "/internal" });
   await app.register(clientRoutes, { prefix: "/client" });
+  await app.register(adminRoutes, { prefix: "/internal" });
 
   app.get("/health", async () => ({ status: "ok" }));
 

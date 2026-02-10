@@ -103,11 +103,23 @@ interface ListRolesResponse {
   roles: RoleMessage[];
 }
 
+interface DeviceInfoMessage {
+  os?: string;
+  os_version?: string;
+  model?: string;
+  app_version?: string;
+  network?: string;
+  fcm_token?: string;
+  permissions_json?: string;
+  device_name?: string;
+}
+
 interface EnsureCustomerProfileRequest {
   firebase_uid?: string;
   phone_number?: string;
   device_id?: string;
   guest_id?: string;
+  device_info?: DeviceInfoMessage;
 }
 
 interface EnsureCustomerProfileResponse {
@@ -120,6 +132,7 @@ interface EnsureCustomerProfileResponse {
 interface RegisterGuestRequest {
   guest_id?: string;
   device_id?: string;
+  device_info?: DeviceInfoMessage;
 }
 
 enum GuestProfileStatusMessage {
@@ -411,12 +424,25 @@ export async function startGrpcServer(
     }
 
     try {
+      const di = call.request.device_info;
+      const deviceInfo = di ? {
+        os: di.os || undefined,
+        osVersion: di.os_version || undefined,
+        deviceName: di.device_name || undefined,
+        model: di.model || undefined,
+        appVersion: di.app_version || undefined,
+        network: di.network || undefined,
+        fcmToken: di.fcm_token || undefined,
+        permissions: di.permissions_json ? JSON.parse(di.permissions_json) : undefined,
+      } : undefined;
+
       const result = await ensureCustomerProfile({
         prisma: handlerContext.prisma,
         firebaseUid,
         phoneNumber: call.request.phone_number || undefined,
         deviceId,
         guestId: call.request.guest_id || undefined,
+        deviceInfo,
       });
 
       callback(null, {
@@ -453,10 +479,23 @@ export async function startGrpcServer(
     }
 
     try {
+      const di = call.request.device_info;
+      const deviceInfo = di ? {
+        os: di.os || undefined,
+        osVersion: di.os_version || undefined,
+        deviceName: di.device_name || undefined,
+        model: di.model || undefined,
+        appVersion: di.app_version || undefined,
+        network: di.network || undefined,
+        fcmToken: di.fcm_token || undefined,
+        permissions: di.permissions_json ? JSON.parse(di.permissions_json) : undefined,
+      } : undefined;
+
       const result = await registerGuestProfile({
         prisma: handlerContext.prisma,
         guestId,
         deviceId,
+        deviceInfo,
       });
 
       callback(null, {

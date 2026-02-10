@@ -121,6 +121,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           firebaseToken: body.firebaseToken,
           deviceId: body.deviceId,
           guestId: body.guestId,
+          deviceInfo: body.deviceInfo,
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           logger: request.log,
@@ -148,11 +149,13 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
     },
     async (request) => {
       const body = guestInitBodySchema.parse(request.body);
+      request.log.info({ deviceInfo: body.deviceInfo }, "Guest init deviceInfo");
       try {
         const result = await initializeGuest({
           prisma: request.server.prisma,
           guestId: undefined,
           deviceId: body.deviceId,
+          deviceInfo: body.deviceInfo,
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           redis: request.server.redis,

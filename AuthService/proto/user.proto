@@ -79,11 +79,23 @@ enum GuestProfileStatus {
   GUEST_PROFILE_STATUS_MIGRATED = 2;
 }
 
+message DeviceInfo {
+  string os = 1;
+  string os_version = 2;
+  string model = 3;
+  string app_version = 4;
+  string network = 5;
+  string fcm_token = 6;
+  string permissions_json = 7;
+  string device_name = 8;
+}
+
 message EnsureCustomerProfileRequest {
   string firebase_uid = 1;
   string phone_number = 2;
   string device_id = 3;
   string guest_id = 4;
+  DeviceInfo device_info = 5;
 }
 
 message EnsureCustomerProfileResponse {
@@ -96,6 +108,7 @@ message EnsureCustomerProfileResponse {
 message RegisterGuestRequest {
   string guest_id = 1;
   string device_id = 2;
+  DeviceInfo device_info = 3;
 }
 
 message RegisterGuestResponse {

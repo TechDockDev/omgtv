@@ -76,11 +76,23 @@ type ListRolesResponse = {
   roles: RoleMessage[];
 };
 
+type DeviceInfoMessage = {
+  os?: string;
+  os_version?: string;
+  model?: string;
+  app_version?: string;
+  network?: string;
+  fcm_token?: string;
+  permissions_json?: string;
+  device_name?: string;
+};
+
 type EnsureCustomerProfileRequest = {
   firebase_uid: string;
   phone_number?: string;
   device_id: string;
   guest_id?: string;
+  device_info?: DeviceInfoMessage;
 };
 
 type EnsureCustomerProfileResponse = {
@@ -99,6 +111,7 @@ enum GuestProfileStatusMessage {
 type RegisterGuestRequest = {
   guest_id: string;
   device_id: string;
+  device_info?: DeviceInfoMessage;
 };
 
 type RegisterGuestResponse = {
@@ -370,12 +383,24 @@ const userServicePlugin = fp(async function userServicePlugin(
       phoneNumber?: string;
       deviceId: string;
       guestId?: string;
+      deviceInfo?: { os?: string; osVersion?: string; deviceName?: string; model?: string; appVersion?: string; network?: string; fcmToken?: string; permissions?: Record<string, boolean> };
     }): Promise<EnsureCustomerProfileResult> {
+      const deviceInfoMsg: DeviceInfoMessage | undefined = params.deviceInfo ? {
+        os: params.deviceInfo.os,
+        os_version: params.deviceInfo.osVersion,
+        model: params.deviceInfo.model,
+        app_version: params.deviceInfo.appVersion,
+        network: params.deviceInfo.network,
+        fcm_token: params.deviceInfo.fcmToken,
+        device_name: params.deviceInfo.deviceName,
+        permissions_json: params.deviceInfo.permissions ? JSON.stringify(params.deviceInfo.permissions) : undefined,
+      } : undefined;
       const response = await ensureCustomerProfileUnary({
         firebase_uid: params.firebaseUid,
         phone_number: params.phoneNumber,
         device_id: params.deviceId,
         guest_id: params.guestId,
+        device_info: deviceInfoMsg,
       });
       return {
         customerId: response.customer_id,
@@ -390,10 +415,22 @@ const userServicePlugin = fp(async function userServicePlugin(
     async registerGuest(params: {
       guestId: string;
       deviceId: string;
+      deviceInfo?: { os?: string; osVersion?: string; deviceName?: string; model?: string; appVersion?: string; network?: string; fcmToken?: string; permissions?: Record<string, boolean> };
     }): Promise<RegisterGuestResult> {
+      const deviceInfoMsg: DeviceInfoMessage | undefined = params.deviceInfo ? {
+        os: params.deviceInfo.os,
+        os_version: params.deviceInfo.osVersion,
+        model: params.deviceInfo.model,
+        app_version: params.deviceInfo.appVersion,
+        network: params.deviceInfo.network,
+        fcm_token: params.deviceInfo.fcmToken,
+        device_name: params.deviceInfo.deviceName,
+        permissions_json: params.deviceInfo.permissions ? JSON.stringify(params.deviceInfo.permissions) : undefined,
+      } : undefined;
       const response = await registerGuestUnary({
         guest_id: params.guestId,
         device_id: params.deviceId,
+        device_info: deviceInfoMsg,
       });
       return {
         guestProfileId: response.guest_profile_id,

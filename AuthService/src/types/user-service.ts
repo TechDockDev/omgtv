@@ -44,6 +44,17 @@ export interface RegisterGuestResult {
   customerId?: string;
 }
 
+export interface DeviceInfoParams {
+  os?: string;
+  osVersion?: string;
+  deviceName?: string;
+  model?: string;
+  appVersion?: string;
+  network?: string;
+  fcmToken?: string;
+  permissions?: Record<string, boolean>;
+}
+
 export interface UserServiceIntegration {
   isEnabled: boolean;
   getUserContext(userId: string): Promise<UserServiceContext>;
@@ -63,9 +74,11 @@ export interface UserServiceIntegration {
     phoneNumber?: string;
     deviceId: string;
     guestId?: string;
+    deviceInfo?: DeviceInfoParams;
   }): Promise<EnsureCustomerProfileResult>;
   registerGuest(params: {
     guestId: string;
     deviceId: string;
+    deviceInfo?: DeviceInfoParams;
   }): Promise<RegisterGuestResult>;
 }
