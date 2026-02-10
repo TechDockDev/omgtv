@@ -103,7 +103,7 @@ services:
     ports:
       - "7700:7700"
     environment:
-      MEILI_MASTER_KEY: masterKey
+      MEILI_MASTER_KEY: pocketlolMasterKey2026Secure
     volumes:
       - meili_data:/meili_data
     deploy:
@@ -131,7 +131,7 @@ services:
       SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
       DEFAULT_PAGE_SIZE: ${SEARCH_SERVICE_DEFAULT_PAGE_SIZE:-20}
       MEILI_HOST: http://meilisearch:7700
-      MEILI_MASTER_KEY: masterKey
+      MEILI_MASTER_KEY: pocketlolMasterKey2026Secure
     ports:
       - "${SEARCH_SERVICE_HTTP_HOST_PORT:-4800}:${SEARCH_SERVICE_HTTP_PORT:-4800}"
     healthcheck:
