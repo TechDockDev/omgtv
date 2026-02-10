@@ -20,7 +20,7 @@ services:
   meilisearch:
     image: getmeili/meilisearch:v1.6
     environment:
-      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-masterKey}
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-pocketlolMasterKey2026Secure}
       - MEILI_ENV=production
     volumes:
       - meili_data:/meili_data
@@ -48,7 +48,7 @@ services:
       - UPLOAD_SERVICE_URL=http://upload-service:5000
       - ENGAGEMENT_SERVICE_URL=http://engagement-service:4700
       - SEARCH_SERVICE_URL=http://search-service:4800
-      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:4700
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
       - STREAMING_SERVICE_URL=http://streaming-service:4900
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
@@ -123,7 +123,7 @@ services:
     environment:
       - NODE_ENV=production
       - MEILI_HOST=http://meilisearch:7700
-      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-masterKey}
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-pocketlolMasterKey2026Secure}
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
       - meilisearch
@@ -160,6 +160,7 @@ services:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_subscription?schema=public
       - REDIS_URL=redis://10.117.209.35:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - HTTP_PORT=5100
       - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
       - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
       - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}
