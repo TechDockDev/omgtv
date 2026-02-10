@@ -1,11 +1,23 @@
 import { GuestStatus, type PrismaClient } from "@prisma/client";
 
+export type DeviceInfo = {
+  os?: string;
+  osVersion?: string;
+  deviceName?: string;
+  model?: string;
+  appVersion?: string;
+  network?: string;
+  fcmToken?: string;
+  permissions?: any;
+};
+
 export type EnsureCustomerProfileParams = {
   prisma: PrismaClient;
   firebaseUid: string;
   phoneNumber?: string;
   deviceId: string;
   guestId?: string;
+  deviceInfo?: DeviceInfo;
 };
 
 export type EnsureCustomerProfileResult = {
@@ -18,17 +30,33 @@ export type EnsureCustomerProfileResult = {
 export async function ensureCustomerProfile(
   params: EnsureCustomerProfileParams
 ): Promise<EnsureCustomerProfileResult> {
-  const { prisma, firebaseUid, phoneNumber, deviceId, guestId } = params;
+  const { prisma, firebaseUid, phoneNumber, deviceId, guestId, deviceInfo } = params;
 
   return prisma.$transaction(async (tx) => {
     const device = await tx.deviceIdentity.upsert({
       where: { deviceId },
       update: {
         lastSeenAt: new Date(),
+        ...(deviceInfo?.os && { os: deviceInfo.os }),
+        ...(deviceInfo?.osVersion && { osVersion: deviceInfo.osVersion }),
+        ...(deviceInfo?.deviceName && { deviceName: deviceInfo.deviceName }),
+        ...(deviceInfo?.model && { model: deviceInfo.model }),
+        ...(deviceInfo?.appVersion && { appVersion: deviceInfo.appVersion }),
+        ...(deviceInfo?.network && { network: deviceInfo.network }),
+        ...(deviceInfo?.fcmToken && { fcmToken: deviceInfo.fcmToken }),
+        ...(deviceInfo?.permissions && { permissions: deviceInfo.permissions }),
       },
       create: {
         deviceId,
         lastSeenAt: new Date(),
+        os: deviceInfo?.os,
+        osVersion: deviceInfo?.osVersion,
+        deviceName: deviceInfo?.deviceName,
+        model: deviceInfo?.model,
+        appVersion: deviceInfo?.appVersion,
+        network: deviceInfo?.network,
+        fcmToken: deviceInfo?.fcmToken,
+        permissions: deviceInfo?.permissions,
       },
     });
 
@@ -39,16 +67,16 @@ export async function ensureCustomerProfile(
     const customer = existingCustomer
       ? phoneNumber && existingCustomer.phoneNumber !== phoneNumber
         ? await tx.customerProfile.update({
-            where: { id: existingCustomer.id },
-            data: { phoneNumber },
-          })
+          where: { id: existingCustomer.id },
+          data: { phoneNumber },
+        })
         : existingCustomer
       : await tx.customerProfile.create({
-          data: {
-            firebaseUid,
-            phoneNumber,
-          },
-        });
+        data: {
+          firebaseUid,
+          phoneNumber,
+        },
+      });
 
     await tx.customerDeviceLink.upsert({
       where: {
@@ -114,6 +142,7 @@ export type RegisterGuestProfileParams = {
   prisma: PrismaClient;
   guestId: string;
   deviceId: string;
+  deviceInfo?: DeviceInfo;
 };
 
 export type RegisterGuestProfileResult = {
@@ -126,17 +155,33 @@ export type RegisterGuestProfileResult = {
 export async function registerGuestProfile(
   params: RegisterGuestProfileParams
 ): Promise<RegisterGuestProfileResult> {
-  const { prisma, guestId, deviceId } = params;
+  const { prisma, guestId, deviceId, deviceInfo } = params;
 
   return prisma.$transaction(async (tx) => {
     const device = await tx.deviceIdentity.upsert({
       where: { deviceId },
       update: {
         lastSeenAt: new Date(),
+        ...(deviceInfo?.os && { os: deviceInfo.os }),
+        ...(deviceInfo?.osVersion && { osVersion: deviceInfo.osVersion }),
+        ...(deviceInfo?.deviceName && { deviceName: deviceInfo.deviceName }),
+        ...(deviceInfo?.model && { model: deviceInfo.model }),
+        ...(deviceInfo?.appVersion && { appVersion: deviceInfo.appVersion }),
+        ...(deviceInfo?.network && { network: deviceInfo.network }),
+        ...(deviceInfo?.fcmToken && { fcmToken: deviceInfo.fcmToken }),
+        ...(deviceInfo?.permissions && { permissions: deviceInfo.permissions }),
       },
       create: {
         deviceId,
         lastSeenAt: new Date(),
+        os: deviceInfo?.os,
+        osVersion: deviceInfo?.osVersion,
+        deviceName: deviceInfo?.deviceName,
+        model: deviceInfo?.model,
+        appVersion: deviceInfo?.appVersion,
+        network: deviceInfo?.network,
+        fcmToken: deviceInfo?.fcmToken,
+        permissions: deviceInfo?.permissions,
       },
     });
 

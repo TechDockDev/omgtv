@@ -477,6 +477,7 @@ export async function authenticateCustomer(params: {
   firebaseToken: string;
   deviceId: string;
   guestId?: string;
+  deviceInfo?: { os?: string; osVersion?: string; deviceName?: string; model?: string; appVersion?: string; network?: string; fcmToken?: string; permissions?: Record<string, boolean> };
   signAccessToken: (
     payload: AccessTokenPayload,
     expiresIn?: number
@@ -491,6 +492,7 @@ export async function authenticateCustomer(params: {
     firebaseToken,
     deviceId,
     guestId,
+    deviceInfo,
     signAccessToken,
     userService,
     logger,
@@ -510,6 +512,7 @@ export async function authenticateCustomer(params: {
     phoneNumber,
     deviceId,
     guestId,
+    deviceInfo,
   });
 
   const identity = await upsertCustomerSubject({
@@ -559,6 +562,7 @@ export async function initializeGuest(params: {
   prisma: PrismaClient;
   deviceId: string;
   guestId?: string;
+  deviceInfo?: { os?: string; osVersion?: string; deviceName?: string; model?: string; appVersion?: string; network?: string; fcmToken?: string; permissions?: Record<string, boolean> };
   signAccessToken: (
     payload: AccessTokenPayload,
     expiresIn?: number
@@ -570,6 +574,7 @@ export async function initializeGuest(params: {
     prisma,
     guestId: providedGuestId,
     deviceId,
+    deviceInfo,
     signAccessToken,
     userService,
     redis,
@@ -584,6 +589,7 @@ export async function initializeGuest(params: {
   const registration = await userService.registerGuest({
     guestId,
     deviceId,
+    deviceInfo,
   });
 
   if (registration.status === "MIGRATED") {

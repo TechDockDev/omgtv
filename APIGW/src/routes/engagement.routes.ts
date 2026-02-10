@@ -1,5 +1,6 @@
 // fp import removed
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import {
   engagementEventBodySchema,
   engagementEventSuccessResponseSchema,
@@ -50,6 +51,7 @@ import {
   saveProgress,
   getProgress,
   addReviewProxy,
+  getUserContentStatsProxy,
 } from "../proxy/engagement.proxy";
 import { getBatchContent } from "../proxy/content.proxy";
 import {
@@ -756,6 +758,36 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
       return addReviewProxy(
         id,
         body,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // Admin: User Content Analytics
+  fastify.route<{
+    Params: { userId: string };
+  }>({
+    method: "GET",
+    url: "/analytics/users/:userId/content",
+    schema: {
+      params: z.object({ userId: z.string().min(1) }),
+      response: {
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "authenticated" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request) {
+      const { userId } = z.object({ userId: z.string().min(1) }).parse(request.params);
+      return getUserContentStatsProxy(
+        userId,
         request.correlationId,
         request.user!,
         request.telemetrySpan

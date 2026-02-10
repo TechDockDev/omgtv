@@ -50,6 +50,8 @@ services:
       - SEARCH_SERVICE_URL=http://search-service:4800
       - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
       - STREAMING_SERVICE_URL=http://streaming-service:4900
+      - AUTH_AUDIENCE=pocketlol-services
+      - AUTH_ISSUER=auth-service
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
       - auth-service

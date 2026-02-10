@@ -726,3 +726,38 @@ export async function addReviewProxy(
   return parsed.data;
 }
 
+// Admin: User Content Analytics
+export async function getUserContentStatsProxy(
+  userId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<unknown> {
+  const baseUrl = resolveServiceUrl("engagement");
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<unknown>({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/internal/analytics/users/${userId}/content`,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:getUserContentStats",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to fetch user content stats",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return (payload as any)?.data ?? payload;
+}
