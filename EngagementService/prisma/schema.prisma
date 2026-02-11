@@ -89,3 +89,17 @@ model SearchHistory {
 
   @@index([userId, createdAt])
 }
+
+model AppEvent {
+  id        String   @id @default(uuid())
+  userId    String?
+  guestId   String?
+  deviceId  String
+  eventType String   // e.g., "app_open", "login", "logout", "video_play", "payment_started", etc.
+  eventData Json?    // e.g., { "planId": "...", "seriesId": "..." }
+  createdAt DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([userId, createdAt])
+  @@index([deviceId, createdAt])
+}

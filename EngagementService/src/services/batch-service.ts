@@ -15,6 +15,14 @@ interface BatchServiceDeps {
     prisma: PrismaClient | null;
 }
 
+interface AppEventItem {
+    eventType: string;
+    eventData?: Record<string, any>;
+    deviceId: string;
+    guestId?: string;
+    createdAt?: string;
+}
+
 // Redis key helpers
 function redisLikesKey(entityType: EntityType, entityId: string) {
     return `eng:${entityType}:${entityId}:likes`;
@@ -49,12 +57,16 @@ async function markDirty(redis: Redis, entityType: EntityType, entityId: string)
 export async function processBatchInteractions(
     deps: BatchServiceDeps,
     userId: string,
-    actions: BatchActionItem[]
+    params: { actions?: BatchActionItem[]; events?: AppEventItem[] }
 ): Promise<{ processed: number; failed: number }> {
     const { redis, prisma } = deps;
     let processed = 0;
     let failed = 0;
 
+    const actions = params.actions || [];
+    const events = params.events || [];
+
+    // Process Interactions
     for (const item of actions) {
         try {
             const entityType = item.contentType as EntityType;
@@ -80,6 +92,26 @@ export async function processBatchInteractions(
         } catch (error) {
             failed++;
             console.error("Batch action failed:", error);
+        }
+    }
+
+    // Process App Events
+    if (events.length > 0 && prisma) {
+        try {
+            await prisma.appEvent.createMany({
+                data: events.map(e => ({
+                    userId: userId.startsWith("guest:") ? null : userId,
+                    guestId: e.guestId || (userId.startsWith("guest:") ? userId.replace("guest:", "") : null),
+                    deviceId: e.deviceId,
+                    eventType: e.eventType,
+                    eventData: e.eventData || {},
+                    createdAt: e.createdAt ? new Date(e.createdAt) : new Date(),
+                })),
+            });
+            processed += events.length;
+        } catch (error) {
+            failed += events.length;
+            console.error("Batch app events failed:", error);
         }
     }
 

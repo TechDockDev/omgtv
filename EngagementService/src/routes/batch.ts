@@ -36,7 +36,7 @@ export default async function batchRoutes(fastify: FastifyInstance) {
             const result = await processBatchInteractions(
                 { redis, prisma },
                 userId,
-                body.actions
+                body
             );
 
             request.log.info(

@@ -14,7 +14,14 @@ export const batchInteractionItemSchema = z.object({
 });
 
 export const batchInteractionRequestSchema = z.object({
-    actions: z.array(batchInteractionItemSchema).min(1).max(100),
+    actions: z.array(batchInteractionItemSchema).optional(),
+    events: z.array(z.object({
+        eventType: z.string(),
+        eventData: z.record(z.any()).optional(),
+        deviceId: z.string(),
+        guestId: z.string().optional(),
+        createdAt: z.string().optional(), // ISO string from mobile
+    })).optional(),
 });
 
 export const batchInteractionResponseSchema = z.object({
