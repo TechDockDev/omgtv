@@ -59,6 +59,7 @@ import {
   saveProgressBodySchema,
   progressResponseSchema,
   getProgressParamsSchema,
+  userContentAnalyticsSuccessResponseSchema,
   type SaveProgressBody,
   type ProgressResponse,
 } from "../schemas/engagement.schema";
@@ -113,6 +114,7 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     schema: {
       params: z.object({ userId: z.string().min(1) }),
       response: {
+        200: userContentAnalyticsSuccessResponseSchema,
         400: errorResponseSchema,
         401: errorResponseSchema,
         500: errorResponseSchema,
@@ -125,8 +127,14 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     preHandler: [fastify.authorize(["admin"])],
     async handler(request) {
       const { userId } = z.object({ userId: z.string().min(1) }).parse(request.params);
+      const { limit, offset } = z.object({
+        limit: z.coerce.number().min(1).max(100).optional(),
+        offset: z.coerce.number().min(0).optional(),
+      }).parse(request.query);
+
       return getUserContentStatsProxy(
         userId,
+        { limit, offset },
         request.correlationId,
         request.user!,
         request.telemetrySpan

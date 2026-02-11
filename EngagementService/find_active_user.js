@@ -1,22 +1,21 @@
-const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') }); // Relative to EngagementService dir
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function findActiveUser() {
     try {
-        const user = await prisma.viewProgress.findFirst({
-            orderBy: { updatedAt: 'desc' },
+        const action = await prisma.userAction.findFirst({
+            where: { isActive: true },
             select: { userId: true }
         });
+        console.log('Active User (Likes/Saves):', action?.userId);
 
-        if (user) {
-            console.log("Found Active User ID:", user.userId);
-        } else {
-            console.log("No users with watch history found.");
-        }
-    } catch (error) {
-        console.error("Error:", error);
+        const progress = await prisma.viewProgress.findFirst({
+            select: { userId: true }
+        });
+        console.log('Active User (Progress):', progress?.userId);
+
+    } catch (e) {
+        console.error(e);
     } finally {
         await prisma.$disconnect();
     }

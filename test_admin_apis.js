@@ -27,6 +27,7 @@ async function testEndpoint(name, url) {
         const data = await response.json();
 
         if (name === "Dashboard Analytics") {
+            console.log("DAU:", data.data?.overview?.dau?.value);
             const content = data.data?.contentPerformance;
             console.log("Top Series Count:", content?.topSeries?.length);
             console.log("Top Reels Count:", content?.topReels?.length);
@@ -36,6 +37,16 @@ async function testEndpoint(name, url) {
                 console.log("Sample Series Thumbnail:", content.topSeries[0].thumbnailUrl);
             }
             console.log("Top Screens:", data.data?.topScreens);
+        } else if (name === "User Content Analytics") {
+            console.log("Full Raw Data Keys:", Object.keys(data));
+            const result = data.data || data;
+            console.log("Result Keys:", Object.keys(result));
+            console.log("Watch History Items:", result.watchHistory?.length);
+            console.log("Likes Reels Count:", result.likes?.reels?.length);
+            console.log("Pagination Meta:", result.pagination);
+            if (result.watchHistory?.length > 0) {
+                console.log("Sample History Item:", result.watchHistory[0].title);
+            }
         } else if (name === "Admin Users") {
             console.log("User Stats:", data.stats);
             console.log("Total Users Fetched:", data.data?.items?.length);
@@ -51,6 +62,8 @@ async function testEndpoint(name, url) {
 async function runTests() {
     await testEndpoint("Dashboard Analytics", `${BASE_URL}/engagement/analytics/dashboard?granularity=daily`);
     await testEndpoint("Admin Users", `${BASE_URL}/user/admin/app-users?page=1&limit=20`);
+    const userId = "d7df07ee-1cb0-44f4-af03-404b5354c1cd";
+    await testEndpoint("User Content Analytics", `${BASE_URL}/engagement/analytics/users/${userId}/content?limit=5&offset=0`);
 }
 
 runTests();

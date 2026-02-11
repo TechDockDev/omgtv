@@ -86,6 +86,13 @@ const userContentStatsResponseSchema = z.object({
         totalLikes: z.number(),
         totalSaves: z.number(),
     }),
+    pagination: z.object({
+        limit: z.number(),
+        offset: z.number(),
+        totalHistory: z.number(),
+        totalLikes: z.number(),
+        totalSaves: z.number(),
+    }),
 });
 
 export default async function adminRoutes(fastify: FastifyInstance) {

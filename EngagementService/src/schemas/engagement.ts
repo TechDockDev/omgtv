@@ -120,6 +120,15 @@ export type ListWithStatsResponse = z.infer<typeof listWithStatsResponseSchema>;
 export type StatsBatchRequest = z.infer<typeof statsBatchRequestSchema>;
 export type StatsBatchResponse = z.infer<typeof statsBatchResponseSchema>;
 
+// Analytics Event schema
+export const appEventItemSchema = z.object({
+  eventType: z.string(),
+  eventData: z.record(z.any()).optional(),
+  deviceId: z.string(),
+  guestId: z.string().optional(),
+  createdAt: z.string().optional(),
+});
+
 // Batch action schemas
 export const batchActionItemSchema = z.object({
   contentType: z.enum(["reel", "series"]),
@@ -128,7 +137,10 @@ export const batchActionItemSchema = z.object({
 });
 
 export const batchActionRequestSchema = z.object({
-  actions: z.array(batchActionItemSchema).min(1).max(50),
+  actions: z.array(batchActionItemSchema).optional(),
+  events: z.array(appEventItemSchema).optional(),
+}).refine(data => (data.actions && data.actions.length > 0) || (data.events && data.events.length > 0), {
+  message: "Provide at least one action or event",
 });
 
 export const batchActionResultSchema = z.object({
