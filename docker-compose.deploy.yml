@@ -116,6 +116,7 @@ services:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_engagement?schema=public
       - REDIS_URL=redis://10.117.209.35:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - CONTENT_SERVICE_URL=http://content-service:4600
     depends_on:
       - cloud-sql-proxy
 

@@ -705,7 +705,7 @@ export class ViewerCatalogService {
         slug: series.slug,
         title: series.title,
         synopsis: series.synopsis ?? null,
-        heroImageUrl: series.heroImageUrl ?? null,
+        heroImageUrl: series.heroImageUrl || series.mediaAssets?.[0]?.defaultThumbnailUrl || null,
         bannerImageUrl: series.bannerImageUrl ?? null,
         category: series.category
           ? {

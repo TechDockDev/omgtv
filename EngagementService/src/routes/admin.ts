@@ -107,9 +107,15 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         },
     });
 
+    const userContentQuerySchema = z.object({
+        limit: z.coerce.number().min(1).max(100).optional().default(50),
+        offset: z.coerce.number().min(0).optional().default(0),
+    });
+
     fastify.get("/analytics/users/:userId/content", {
         schema: {
             params: userIdParamsSchema,
+            querystring: userContentQuerySchema,
             response: { 200: userContentStatsResponseSchema },
         },
         handler: async (request, reply) => {
@@ -120,10 +126,13 @@ export default async function adminRoutes(fastify: FastifyInstance) {
             }
 
             const { userId } = userIdParamsSchema.parse(request.params);
+            const { limit, offset } = userContentQuerySchema.parse(request.query);
 
             const result = await getUserContentStats({
                 prisma,
                 userId,
+                limit,
+                offset,
             });
 
             return result;
