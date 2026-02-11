@@ -52,6 +52,7 @@ import {
   getProgress,
   addReviewProxy,
   getUserContentStatsProxy,
+  getGeneralDashboardStatsProxy,
 } from "../proxy/engagement.proxy";
 import { getBatchContent } from "../proxy/content.proxy";
 import {
@@ -68,6 +69,70 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     rateLimitPolicy: "authenticated" as const,
     security: { bodyLimit: 8 * 1024 },
   };
+
+  // Admin: General Dashboard Analytics
+  fastify.route<{
+    Querystring: { startDate?: string; endDate?: string; granularity?: string };
+  }>({
+    method: "GET",
+    url: "/analytics/dashboard",
+    schema: {
+      querystring: z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        granularity: z.enum(["daily", "monthly", "yearly"]).optional(),
+      }),
+      response: {
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "authenticated" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request) {
+      const query = request.query as { startDate?: string; endDate?: string; granularity?: string };
+      return getGeneralDashboardStatsProxy(
+        query,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // Admin: User Content Analytics
+  fastify.route<{
+    Params: { userId: string };
+  }>({
+    method: "GET",
+    url: "/analytics/users/:userId/content",
+    schema: {
+      params: z.object({ userId: z.string().min(1) }),
+      response: {
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "authenticated" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request) {
+      const { userId } = z.object({ userId: z.string().min(1) }).parse(request.params);
+      return getUserContentStatsProxy(
+        userId,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
 
   fastify.route<{
     Body: EngagementEventBody;
@@ -758,36 +823,6 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
       return addReviewProxy(
         id,
         body,
-        request.correlationId,
-        request.user!,
-        request.telemetrySpan
-      );
-    },
-  });
-
-  // Admin: User Content Analytics
-  fastify.route<{
-    Params: { userId: string };
-  }>({
-    method: "GET",
-    url: "/analytics/users/:userId/content",
-    schema: {
-      params: z.object({ userId: z.string().min(1) }),
-      response: {
-        400: errorResponseSchema,
-        401: errorResponseSchema,
-        500: errorResponseSchema,
-      },
-    },
-    config: {
-      auth: { public: false },
-      rateLimitPolicy: "authenticated" as const,
-    },
-    preHandler: [fastify.authorize(["admin"])],
-    async handler(request) {
-      const { userId } = z.object({ userId: z.string().min(1) }).parse(request.params);
-      return getUserContentStatsProxy(
-        userId,
         request.correlationId,
         request.user!,
         request.telemetrySpan
