@@ -94,107 +94,135 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const results: BatchActionResult[] = [];
       let failed = 0;
 
-      for (const action of body.actions) {
-        const entityType = action.contentType === "reel" ? "reel" : "series";
-        const entityId = action.contentId;
+      // Process Actions
+      if (body.actions && body.actions.length > 0) {
+        for (const action of body.actions) {
+          const entityType = action.contentType === "reel" ? "reel" : "series";
+          const entityId = action.contentId;
 
-        try {
-          let result: BatchActionResult["result"];
+          try {
+            let result: BatchActionResult["result"];
 
-          switch (action.action) {
-            case "like": {
-              const likeResult = await likeEntity({
-                redis,
-                prisma,
-                entityType: entityType as "reel" | "series",
-                entityId,
-                userId,
-              });
-              result = {
-                liked: likeResult.liked,
-                likes: likeResult.likes,
-                views: likeResult.views,
-                saves: likeResult.saves,
-              };
-              break;
+            switch (action.action) {
+              case "like": {
+                const likeResult = await likeEntity({
+                  redis,
+                  prisma,
+                  entityType: entityType as "reel" | "series",
+                  entityId,
+                  userId,
+                });
+                result = {
+                  liked: likeResult.liked,
+                  likes: likeResult.likes,
+                  views: likeResult.views,
+                  saves: likeResult.saves,
+                };
+                break;
+              }
+              case "unlike": {
+                const unlikeResult = await unlikeEntity({
+                  redis,
+                  prisma,
+                  entityType: entityType as "reel" | "series",
+                  entityId,
+                  userId,
+                });
+                result = {
+                  liked: unlikeResult.liked,
+                  likes: unlikeResult.likes,
+                  views: unlikeResult.views,
+                  saves: unlikeResult.saves,
+                };
+                break;
+              }
+              case "save": {
+                const saveResult = await saveEntity({
+                  redis,
+                  prisma,
+                  entityType: entityType as "reel" | "series",
+                  entityId,
+                  userId,
+                });
+                result = { saved: saveResult.saved };
+                break;
+              }
+              case "unsave": {
+                const unsaveResult = await unsaveEntity({
+                  redis,
+                  prisma,
+                  entityType: entityType as "reel" | "series",
+                  entityId,
+                  userId,
+                });
+                result = { saved: unsaveResult.saved };
+                break;
+              }
+              case "view": {
+                const viewResult = await addView({
+                  redis,
+                  prisma,
+                  entityType: entityType as "reel" | "series",
+                  entityId,
+                });
+                result = { views: viewResult.views };
+                break;
+              }
             }
-            case "unlike": {
-              const unlikeResult = await unlikeEntity({
-                redis,
-                prisma,
-                entityType: entityType as "reel" | "series",
-                entityId,
-                userId,
-              });
-              result = {
-                liked: unlikeResult.liked,
-                likes: unlikeResult.likes,
-                views: unlikeResult.views,
-                saves: unlikeResult.saves,
-              };
-              break;
-            }
-            case "save": {
-              const saveResult = await saveEntity({
-                redis,
-                prisma,
-                entityType: entityType as "reel" | "series",
-                entityId,
-                userId,
-              });
-              result = { saved: saveResult.saved };
-              break;
-            }
-            case "unsave": {
-              const unsaveResult = await unsaveEntity({
-                redis,
-                prisma,
-                entityType: entityType as "reel" | "series",
-                entityId,
-                userId,
-              });
-              result = { saved: unsaveResult.saved };
-              break;
-            }
-            case "view": {
-              const viewResult = await addView({
-                redis,
-                prisma,
-                entityType: entityType as "reel" | "series",
-                entityId,
-              });
-              result = { views: viewResult.views };
-              break;
-            }
+
+            results.push({
+              contentType: action.contentType,
+              contentId: action.contentId,
+              action: action.action,
+              success: true,
+              result,
+            });
+          } catch (error) {
+            failed++;
+            results.push({
+              contentType: action.contentType,
+              contentId: action.contentId,
+              action: action.action,
+              success: false,
+              error: error instanceof Error ? error.message : "Unknown error",
+            });
           }
+        }
+      }
 
-          results.push({
-            contentType: action.contentType,
-            contentId: action.contentId,
-            action: action.action,
-            success: true,
-            result,
+      // Process Analytics Events
+      if (body.events && body.events.length > 0 && prisma) {
+        try {
+          // Identify if guest or actual user
+          const isGuest = userId.startsWith("guest:");
+          const actualUserId = isGuest ? null : userId;
+          const guestId = isGuest ? userId.replace("guest:", "") : null;
+
+          await prisma.appEvent.createMany({
+            data: body.events.map((e) => ({
+              userId: actualUserId,
+              guestId: e.guestId || guestId,
+              deviceId: e.deviceId,
+              eventType: e.eventType,
+              eventData: e.eventData || {},
+              createdAt: e.createdAt ? new Date(e.createdAt) : new Date(),
+            })),
           });
+          request.log.info({ eventCount: body.events.length }, "Saved batch analytics events");
         } catch (error) {
-          failed++;
-          results.push({
-            contentType: action.contentType,
-            contentId: action.contentId,
-            action: action.action,
-            success: false,
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
+          failed += body.events.length;
+          request.log.error({ err: error }, "Failed to process batch analytics events");
         }
       }
 
       request.log.info(
-        { processed: results.length, failed },
+        { processed: results.length, failed, eventsProcessed: body.events?.length ?? 0 },
         "Processed batch engagement actions"
       );
 
       return batchActionResponseSchema.parse({
         results,
-        processed: results.length,
+        processed: results.length + (body.events?.length ?? 0),
         failed,
       });
     },

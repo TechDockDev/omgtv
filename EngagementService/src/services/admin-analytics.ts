@@ -31,6 +31,13 @@ export interface UserContentStats {
         totalLikes: number;
         totalSaves: number;
     };
+    pagination: {
+        limit: number;
+        offset: number;
+        totalHistory: number;
+        totalLikes: number;
+        totalSaves: number;
+    };
 }
 
 export async function getUserContentStats(params: {
@@ -41,26 +48,28 @@ export async function getUserContentStats(params: {
 }): Promise<UserContentStats> {
     const { prisma, userId, limit = 50, offset = 0 } = params;
 
-    const [watchHistory, likedActions, savedActions, totalWatchHistoryCount] = await Promise.all([
+    const [watchHistory, totalWatchHistoryCount, likedActions, totalLikesCount, savedActions, totalSavesCount] = await Promise.all([
         prisma.viewProgress.findMany({
             where: { userId },
             orderBy: { updatedAt: "desc" },
             take: limit,
             skip: offset,
         }),
+        prisma.viewProgress.count({ where: { userId } }),
         prisma.userAction.findMany({
             where: { userId, actionType: "LIKE", isActive: true },
             select: { contentType: true, contentId: true },
             take: limit,
             skip: offset,
         }),
+        prisma.userAction.count({ where: { userId, actionType: "LIKE", isActive: true } }),
         prisma.userAction.findMany({
             where: { userId, actionType: "SAVE", isActive: true },
             select: { contentType: true, contentId: true },
             take: limit,
             skip: offset,
         }),
-        prisma.viewProgress.count({ where: { userId } }),
+        prisma.userAction.count({ where: { userId, actionType: "SAVE", isActive: true } }),
     ]);
 
     const likedReelIds = likedActions.filter(a => a.contentType === "REEL").map(a => a.contentId);
@@ -167,7 +176,8 @@ export async function getUserContentStats(params: {
         }
     });
 
-    return {
+    console.log(`[Analytics] Returning stats for user ${userId}, limit: ${limit}, offset: ${offset}`);
+    const response = {
         watchHistory: watchHistory.map(entry => {
             const meta = episodeMeta.find((m: any) => m.id === entry.episodeId);
             return {
@@ -195,10 +205,19 @@ export async function getUserContentStats(params: {
             totalWatchTimeSeconds,
             episodesStarted: totalWatchHistoryCount,
             episodesCompleted,
-            totalLikes: await prisma.userAction.count({ where: { userId, actionType: "LIKE", isActive: true } }),
-            totalSaves: await prisma.userAction.count({ where: { userId, actionType: "SAVE", isActive: true } }),
+            totalLikes: totalLikesCount,
+            totalSaves: totalSavesCount,
         },
+        pagination: {
+            limit,
+            offset,
+            totalHistory: totalWatchHistoryCount,
+            totalLikes: totalLikesCount,
+            totalSaves: totalSavesCount,
+        }
     };
+    console.log(`[Analytics] Result Keys for user ${userId}:`, Object.keys(response));
+    return response;
 }
 
 export interface MetricWithTrend {
@@ -229,24 +248,26 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
     const revUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/revenue/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
     const userUrl = `${config.USER_SERVICE_URL}/internal/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
 
-    const [revRes, userRes, dauCount, loginCount, logoutCount, uninstallCount] = await Promise.all([
+    const [revRes, userRes, dauData, loginCount, logoutCount, uninstallCount] = await Promise.all([
         fetch(revUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ totalRevenuePaise: 0, trend: [] })),
         fetch(userUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ newCustomers: 0, totalCustomers: 0, trend: [] })),
-        (prisma as any).appEvent.groupBy({
-            by: ["userId"],
-            where: { createdAt: { gte: start, lte: end } },
-            _count: true,
-        }).then((res: any[]) => res.length),
+        prisma.$queryRaw<{ count: bigint }[]>`
+            SELECT COUNT(DISTINCT COALESCE("userId", "guestId", "deviceId")) as count 
+            FROM "AppEvent" 
+            WHERE "createdAt" >= ${start} AND "createdAt" <= ${end}
+        `.catch(() => [{ count: BigInt(0) }]),
         (prisma as any).appEvent.count({ where: { eventType: "login", createdAt: { gte: start, lte: end } } }),
         (prisma as any).appEvent.count({ where: { eventType: "logout", createdAt: { gte: start, lte: end } } }),
         (prisma as any).appEvent.count({ where: { eventType: "uninstall", createdAt: { gte: start, lte: end } } }),
     ]);
 
+    const dau = Number(dauData[0]?.count || 0);
+
     return {
         revenue: ((revRes as any).totalRevenuePaise || 0) / 100,
         newUsers: (userRes as any).newCustomers || 0,
         totalSubscribers: (userRes as any).totalCustomers || 0,
-        dau: dauCount,
+        dau,
         login: loginCount,
         logout: logoutCount,
         uninstall: uninstallCount,
@@ -342,24 +363,24 @@ export async function getGeneralDashboardStats(params: {
         });
     };
 
-    // Top Screens
-    const screens = await (prisma as any).appEvent.findMany({
-        where: {
-            eventType: "screen_view",
-            createdAt: { gte: currentStart, lte: currentEnd }
-        }
-    });
+    // Top Screens via SQL Aggregation
+    const topScreensResult = await prisma.$queryRaw<{ name: string, count: bigint }[]>`
+        SELECT 
+            COALESCE(("eventData"->>'screen'), 'unknown') as name,
+            COUNT(*) as count
+        FROM "AppEvent"
+        WHERE "eventType" = 'screen_view' 
+          AND "createdAt" >= ${currentStart} 
+          AND "createdAt" <= ${currentEnd}
+        GROUP BY name
+        ORDER BY count DESC
+        LIMIT 10
+    `.catch(() => []);
 
-    const screenCounts: Record<string, number> = {};
-    screens.forEach((s: any) => {
-        const screenName = (s.eventData as any)?.screen || "unknown";
-        screenCounts[screenName] = (screenCounts[screenName] || 0) + 1;
-    });
-
-    const topScreens = Object.entries(screenCounts)
-        .map(([name, viewCount]) => ({ name, viewCount }))
-        .sort((a, b) => b.viewCount - a.viewCount)
-        .slice(0, 10);
+    const topScreens = topScreensResult.map(r => ({
+        name: r.name,
+        viewCount: Number(r.count)
+    }));
 
     return {
         overview: {

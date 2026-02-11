@@ -729,18 +729,26 @@ export async function addReviewProxy(
 // Admin: User Content Analytics
 export async function getUserContentStatsProxy(
   userId: string,
+  params: { limit?: number; offset?: number },
   correlationId: string,
   user: GatewayUser,
   span?: Span
 ): Promise<unknown> {
   const baseUrl = resolveServiceUrl("engagement");
 
+  const query = new URLSearchParams();
+  if (params.limit !== undefined) query.append("limit", params.limit.toString());
+  if (params.offset !== undefined) query.append("offset", params.offset.toString());
+
+  const queryString = query.toString();
+  const path = `/internal/analytics/users/${userId}/content${queryString ? `?${queryString}` : ""}`;
+
   let payload: unknown;
   try {
     const response = await performServiceRequest<unknown>({
       serviceName: "engagement",
       baseUrl,
-      path: `/internal/analytics/users/${userId}/content`,
+      path,
       method: "GET",
       correlationId,
       user,

@@ -102,6 +102,15 @@ export const batchInteractionSuccessResponseSchema = createSuccessResponseSchema
 export type BatchInteractionBody = z.infer<typeof batchInteractionBodySchema>;
 export type BatchInteractionData = z.infer<typeof batchInteractionDataSchema>;
 
+// Analytics Event schema
+export const appEventItemSchema = z.object({
+  eventType: z.string(),
+  eventData: z.record(z.any()).optional(),
+  deviceId: z.string(),
+  guestId: z.string().optional(),
+  createdAt: z.string().optional(),
+});
+
 // Batch action schemas (detailed version with results)
 export const batchActionItemSchema = z.object({
   contentType: z.enum(["reel", "series"]),
@@ -110,7 +119,10 @@ export const batchActionItemSchema = z.object({
 });
 
 export const batchActionRequestSchema = z.object({
-  actions: z.array(batchActionItemSchema).min(1).max(50),
+  actions: z.array(batchActionItemSchema).optional(),
+  events: z.array(appEventItemSchema).optional(),
+}).refine(data => (data.actions && data.actions.length > 0) || (data.events && data.events.length > 0), {
+  message: "Provide at least one action or event",
 });
 
 export const batchActionResultSchema = z.object({
@@ -166,6 +178,57 @@ export const progressResponseSchema = z.object({
 
 export type SaveProgressBody = z.infer<typeof saveProgressBodySchema>;
 export type ProgressResponse = z.infer<typeof progressResponseSchema>;
+
+// Analytics
+export const contentDetailSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  thumbnailUrl: z.string().nullable(),
+  manifestUrl: z.string().nullable(),
+});
+
+export const userContentAnalyticsResponseSchema = z.object({
+  watchHistory: z.array(
+    z.object({
+      episodeId: z.string(),
+      title: z.string(),
+      thumbnailUrl: z.string().nullable(),
+      manifestUrl: z.string().nullable(),
+      progressSeconds: z.number(),
+      durationSeconds: z.number(),
+      isCompleted: z.boolean(),
+      lastWatchedAt: z.string(),
+    })
+  ),
+  likes: z.object({
+    reels: z.array(contentDetailSchema),
+    series: z.array(contentDetailSchema),
+  }),
+  saves: z.object({
+    reels: z.array(contentDetailSchema),
+    series: z.array(contentDetailSchema),
+  }),
+  ongoingSeries: z.array(z.any()),
+  completedSeries: z.array(z.any()),
+  stats: z.object({
+    totalWatchTimeSeconds: z.number(),
+    episodesStarted: z.number(),
+    episodesCompleted: z.number(),
+    totalLikes: z.number(),
+    totalSaves: z.number(),
+  }),
+  pagination: z.object({
+    limit: z.number(),
+    offset: z.number(),
+    totalHistory: z.number(),
+    totalLikes: z.number(),
+    totalSaves: z.number(),
+  }),
+});
+
+export const userContentAnalyticsSuccessResponseSchema = createSuccessResponseSchema(
+  userContentAnalyticsResponseSchema
+);
 
 // Reviews
 export const addReviewBodySchema = z.object({
