@@ -149,7 +149,7 @@ export const relatedSeriesResponseSchema = z.object({
 
 export const batchContentRequestSchema = z.object({
   ids: z.array(z.string().uuid()),
-  type: z.enum(["reel", "series"]),
+  type: z.enum(["reel", "series", "episode"]),
 });
 
 export const batchContentResponseSchema = z.object({

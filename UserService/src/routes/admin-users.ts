@@ -45,6 +45,23 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
 
       const result = await listUsers(request.server.prisma, params);
 
+      // Fetch aggregated stats from Subscription Service
+      let subscriptionStats = { active_subscribers: 0, active_trials: 0 };
+      try {
+        const subServiceUrl = process.env.SUBSCRIPTION_SERVICE_URL || "http://subscription-service:5100";
+        const serviceToken = process.env.SERVICE_AUTH_TOKEN || "";
+
+        const res = await fetch(`${subServiceUrl}/internal/stats/users`, {
+          headers: { "x-service-token": serviceToken }
+        });
+
+        if (res.ok) {
+          subscriptionStats = await res.json();
+        }
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to fetch subscription stats");
+      }
+
       // Manual Global Response Wrapper (since UserService lacks the plugin currently)
       return {
         success: true,
@@ -52,6 +69,12 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
         userMessage: "Users fetched successfully",
         developerMessage: "Fetched users from AuthDB and UserDB",
         data: result,
+        stats: {
+          totalRegistered: result.total,
+          totalSubscribed: subscriptionStats.active_subscribers,
+          totalTrial: subscriptionStats.active_trials,
+          totalNotSubscribed: Math.max(0, result.total - (subscriptionStats.active_subscribers + subscriptionStats.active_trials))
+        }
       };
     },
   });

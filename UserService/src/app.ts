@@ -53,6 +53,9 @@ export async function buildApp() {
   await fastify.register(customerRoutes, {
     prefix: externalBase,
   });
+  await fastify.register(import("./routes/internal"), {
+    prefix: "/internal",
+  });
 
   fastify.get("/health", async () => ({ status: "ok" }));
 

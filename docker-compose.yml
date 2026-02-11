@@ -89,6 +89,7 @@ services:
       REDIS_URL: ${ENGAGEMENT_SERVICE_REDIS_URL:-redis://redis:6379/3}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${ENGAGEMENT_SERVICE_DB:-pocketlol_engagement}?schema=public
       SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
+      CONTENT_SERVICE_URL: http://content-service:${CONTENT_SERVICE_HTTP_PORT:-4600}
     ports:
       - "${ENGAGEMENT_SERVICE_HTTP_HOST_PORT:-4700}:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}"
     healthcheck:

@@ -375,7 +375,7 @@ export class CatalogRepository {
 
   async findSeriesByIds(ids: string[]) {
     if (ids.length === 0) {
-      return [] as Array<Series & { category: Category | null }>;
+      return [] as Array<Series & { category: Category | null; mediaAssets: MediaAsset[] }>;
     }
     return this.prisma.series.findMany({
       where: {
@@ -384,6 +384,7 @@ export class CatalogRepository {
       },
       include: {
         category: true,
+        mediaAssets: true,
       },
     });
   }
@@ -2103,7 +2104,4 @@ export class CatalogRepository {
       data: { deletedAt: new Date(), updatedByAdminId: adminId }
     });
   }
-
-
-
 }

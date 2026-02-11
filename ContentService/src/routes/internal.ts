@@ -227,6 +227,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       let items: any[] = [];
       if (type === "reel") {
         items = await viewerCatalog.getReelsBatch(ids);
+      } else if (type === "episode") {
+        items = await viewerCatalog.getEpisodesBatch(ids);
       } else {
         items = await viewerCatalog.getSeriesBatch(ids);
       }

@@ -36,23 +36,31 @@ export interface UserContentStats {
 export async function getUserContentStats(params: {
     prisma: PrismaClient;
     userId: string;
+    limit?: number;
+    offset?: number;
 }): Promise<UserContentStats> {
-    const { prisma, userId } = params;
+    const { prisma, userId, limit = 50, offset = 0 } = params;
 
-    const [watchHistory, likedActions, savedActions] = await Promise.all([
+    const [watchHistory, likedActions, savedActions, totalWatchHistoryCount] = await Promise.all([
         prisma.viewProgress.findMany({
             where: { userId },
             orderBy: { updatedAt: "desc" },
-            take: 100,
+            take: limit,
+            skip: offset,
         }),
         prisma.userAction.findMany({
             where: { userId, actionType: "LIKE", isActive: true },
             select: { contentType: true, contentId: true },
+            take: limit,
+            skip: offset,
         }),
         prisma.userAction.findMany({
             where: { userId, actionType: "SAVE", isActive: true },
             select: { contentType: true, contentId: true },
+            take: limit,
+            skip: offset,
         }),
+        prisma.viewProgress.count({ where: { userId } }),
     ]);
 
     const likedReelIds = likedActions.filter(a => a.contentType === "REEL").map(a => a.contentId);
@@ -63,12 +71,20 @@ export async function getUserContentStats(params: {
 
     const fetchMetadata = async (ids: string[], type: "reel" | "series" | "episode") => {
         if (ids.length === 0) return [];
-        const res = await fetch(`${config.CONTENT_SERVICE_URL}/internal/catalog/batch`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-service-token": config.SERVICE_AUTH_TOKEN || "" },
-            body: JSON.stringify({ ids, type })
-        }).then(res => res.json()).catch(() => ({ items: [] }));
-        return res.items || [];
+        try {
+            const res = await fetch(`${config.CONTENT_SERVICE_URL}/internal/catalog/batch`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-service-token": config.SERVICE_AUTH_TOKEN || "" },
+                body: JSON.stringify({ ids, type })
+            });
+            const payload = await res.json();
+            // Handle globalResponsePlugin wrapper: { data: { items: [] } }
+            // OR direct response: { items: [] }
+            return payload.data?.items || payload.items || [];
+        } catch (error) {
+            console.error(`Failed to fetch metadata for ${type}:`, error);
+            return [];
+        }
     };
 
     const [
@@ -97,10 +113,19 @@ export async function getUserContentStats(params: {
         });
     };
 
-    const totalWatchTimeSeconds = watchHistory.reduce((sum, entry) => sum + entry.progressSeconds, 0);
-    const episodesCompleted = watchHistory.filter(entry => entry.completedAt !== null).length;
+    const totalWatchTimeSeconds = await prisma.viewProgress.aggregate({
+        where: { userId },
+        _sum: { progressSeconds: true }
+    }).then(res => res._sum.progressSeconds || 0);
 
-    // Calculate Series Completion
+    const episodesCompleted = await prisma.viewProgress.count({
+        where: { userId, completedAt: { not: null } }
+    });
+
+    // Calculate Series Completion (Note: this logic relies on fetched episodes, so it might be partial if paginated)
+    // For full accuracy, we'd need to fetch ALL watch history, which defeats pagination purposes.
+    // For now, we will only show series completion based on the *currently fetched* watch history window.
+    // Ideally, we should have a separate 'SeriesProgress' table or aggregation query for this.
     const seriesMap = new Map<string, { completedEpisodes: Set<string>; allWatchedEpisodes: Set<string> }>();
     watchHistory.forEach(h => {
         const meta = episodeMeta.find((m: any) => m.id === h.episodeId);
@@ -126,7 +151,7 @@ export async function getUserContentStats(params: {
             const seriesInfo = {
                 id: meta.id,
                 title: meta.title,
-                thumbnailUrl: meta.thumbnailUrl,
+                thumbnailUrl: meta.thumbnailUrl || meta.posterUrl || meta.heroImageUrl || meta.defaultThumbnailUrl || null,
                 totalEpisodes: meta.totalEpisodes || 0,
                 userCompletedEpisodes: userData.completedEpisodes.size,
                 progressPercentage: meta.totalEpisodes > 0
@@ -148,7 +173,7 @@ export async function getUserContentStats(params: {
             return {
                 episodeId: entry.episodeId,
                 title: meta?.title || "Unknown Episode",
-                thumbnailUrl: meta?.defaultThumbnailUrl || meta?.heroImageUrl || null,
+                thumbnailUrl: meta?.thumbnailUrl || meta?.posterUrl || meta?.heroImageUrl || meta?.defaultThumbnailUrl || null,
                 manifestUrl: meta?.playback?.manifestUrl || null,
                 progressSeconds: entry.progressSeconds,
                 durationSeconds: entry.durationSeconds,
@@ -168,10 +193,10 @@ export async function getUserContentStats(params: {
         completedSeries,
         stats: {
             totalWatchTimeSeconds,
-            episodesStarted: watchHistory.length,
+            episodesStarted: totalWatchHistoryCount,
             episodesCompleted,
-            totalLikes: likedActions.length,
-            totalSaves: savedActions.length,
+            totalLikes: await prisma.userAction.count({ where: { userId, actionType: "LIKE", isActive: true } }),
+            totalSaves: await prisma.userAction.count({ where: { userId, actionType: "SAVE", isActive: true } }),
         },
     };
 }
@@ -272,12 +297,32 @@ export async function getGeneralDashboardStats(params: {
 
     const fetchMetadataExtended = async (ids: string[], type: "reel" | "series" | "episode") => {
         if (ids.length === 0) return [];
-        const res = await fetch(`${config.CONTENT_SERVICE_URL}/internal/catalog/batch`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-service-token": config.SERVICE_AUTH_TOKEN || "" },
-            body: JSON.stringify({ ids, type })
-        }).then(res => res.json()).catch(() => ({ items: [] }));
-        return res.items || [];
+        try {
+            const res = await fetch(`${config.CONTENT_SERVICE_URL}/internal/catalog/batch`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-service-token": config.SERVICE_AUTH_TOKEN || "" },
+                body: JSON.stringify({ ids, type })
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                console.error(`Fetch failed for ${type}: ${res.status} ${res.statusText} - Body: ${text}`);
+                throw new Error(`Fetch failed: ${res.statusText}`);
+            }
+
+            const payload = await res.json();
+            // Handle globalResponsePlugin wrapper: { data: { items: [] } }
+            // OR direct response: { items: [] }
+            const items = payload.data?.items || payload.items || [];
+            console.log(`[ContentFetch] Requested ${ids.length} ${type}s, Received ${items.length} items.`);
+            if (items.length === 0) {
+                console.warn(`[ContentFetch] Warning: content service returned 0 items for ids:`, ids);
+            }
+            return items;
+        } catch (error) {
+            console.error(`Failed to fetch metadata for ${type}:`, error);
+            return [];
+        }
     };
 
     const [seriesMetadata, reelsMetadata] = await Promise.all([
@@ -291,7 +336,7 @@ export async function getGeneralDashboardStats(params: {
             return {
                 id: s.contentId,
                 title: meta?.title || "Unknown Content",
-                thumbnailUrl: meta?.thumbnailUrl || meta?.posterUrl || null,
+                thumbnailUrl: meta?.thumbnailUrl || meta?.posterUrl || meta?.heroImageUrl || meta?.defaultThumbnailUrl || null,
                 stats: { viewCount: s.viewCount, likeCount: s.likeCount, saveCount: s.saveCount }
             };
         });
@@ -327,8 +372,8 @@ export async function getGeneralDashboardStats(params: {
             totalUninstall: { value: currentStats.uninstall, percentageChange: calculateChange(currentStats.uninstall, prevStats.uninstall) },
         },
         contentPerformance: {
-            topSeries: mapStats(seriesMetadata, topSeriesStats),
-            topReels: mapStats(reelsMetadata, topReelsStats),
+            topSeries: mapStats(seriesMetadata, topSeriesStats).slice(0, 10),
+            topReels: mapStats(reelsMetadata, topReelsStats).slice(0, 10),
         },
         topScreens,
         revenueTrend: currentStats.revenueTrend,
