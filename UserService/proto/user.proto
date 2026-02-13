@@ -10,6 +10,8 @@ service UserService {
   rpc EnsureCustomerProfile (EnsureCustomerProfileRequest) returns (EnsureCustomerProfileResponse);
   rpc RegisterGuest (RegisterGuestRequest) returns (RegisterGuestResponse);
   rpc GetCustomerProfile (GetCustomerProfileRequest) returns (GetCustomerProfileResponse);
+  rpc UnlinkDevice (UnlinkDeviceRequest) returns (UnlinkDeviceResponse);
+  rpc SyncDeviceDeviceInfo (SyncDeviceDeviceInfoRequest) returns (SyncDeviceDeviceInfoResponse);
 }
 
 message Permission {
@@ -129,4 +131,22 @@ message GetCustomerProfileResponse {
   string phone_number = 4;
   string status = 5;
   string avatar_url = 6;
+}
+
+message UnlinkDeviceRequest {
+  string customer_id = 1;
+  string device_id = 2;
+}
+
+message UnlinkDeviceResponse {
+  bool success = 1;
+}
+
+message SyncDeviceDeviceInfoRequest {
+  string device_id = 1;
+  DeviceInfo device_info = 2;
+}
+
+message SyncDeviceDeviceInfoResponse {
+  bool success = 1;
 }

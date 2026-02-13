@@ -10,6 +10,7 @@ import {
   verifyActiveSession,
   AuthError,
 } from "../services/auth";
+import { type AccessTokenPayload } from "../plugins/jwt";
 import {
   adminLoginBodySchema,
   adminRegisterBodySchema,
@@ -17,6 +18,7 @@ import {
   guestInitBodySchema,
   refreshBodySchema,
   logoutBodySchema,
+  deviceSyncBodySchemaMinimal,
   type AdminLoginBody,
   type AdminRegisterBody,
   type CustomerLoginBody,
@@ -24,6 +26,7 @@ import {
   type GuestInitResponse,
   type RefreshBody,
   type LogoutBody,
+  type DeviceSyncBody,
 } from "../schemas/auth";
 
 function mapAuthError(fastify: FastifyInstance, error: AuthError): never {
@@ -208,9 +211,9 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
         throw fastify.httpErrors.unauthorized("Missing access token");
       }
       const token = authHeader.replace(/^Bearer\s+/i, "");
-      let payload: { sub?: string };
+      let payload: AccessTokenPayload;
       try {
-        payload = await request.server.jwt.verify(token);
+        payload = (await request.server.jwt.verify(token)) as AccessTokenPayload;
       } catch (error) {
         request.log.warn({ err: error }, "Access token verification failed");
         throw fastify.httpErrors.unauthorized("Invalid access token");
@@ -229,7 +232,39 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
         allDevices: body.allDevices,
       });
 
+      // UNLINK DEVICE ON LOGOUT
+      if (body.deviceId && payload.userType === "CUSTOMER") {
+        try {
+          await request.server.userService.unlinkDevice({
+            customerId: payload.userId,
+            deviceId: body.deviceId,
+          });
+        } catch (error) {
+          request.log.error({ err: error, customerId: payload.userId, deviceId: body.deviceId }, "Failed to unlink device on logout");
+          // Non-blocking error for logout
+        }
+      }
+
       return reply.status(204).send();
+    },
+  });
+
+  fastify.post<{ Body: DeviceSyncBody }>("/api/v1/auth/device/sync", {
+    schema: {
+      body: deviceSyncBodySchemaMinimal,
+    },
+    handler: async (request, reply) => {
+      const body = deviceSyncBodySchemaMinimal.parse(request.body);
+      try {
+        await request.server.userService.syncDeviceDeviceInfo({
+          deviceId: body.deviceId,
+          deviceInfo: body.deviceInfo,
+        });
+        return reply.status(204).send();
+      } catch (error) {
+        request.log.error({ err: error, deviceId: body.deviceId }, "Device sync failed");
+        throw fastify.httpErrors.internalServerError();
+      }
     },
   });
 
