@@ -24,7 +24,7 @@
     "@google-cloud/pubsub": "^4.3.0",
     "@grpc/grpc-js": "^1.11.1",
     "@grpc/proto-loader": "^0.7.9",
-    "@prisma/client": "^5.10.2",
+    "@prisma/client": "^5.22.0",
     "dotenv": "^16.3.1",
     "fastify": "^4.25.2",
     "fastify-plugin": "^4.5.1",
@@ -40,7 +40,7 @@
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.1.1",
-    "prisma": "^5.10.2",
+    "prisma": "^5.22.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.7.1",
     "typescript": "^5.3.3"

@@ -12,8 +12,14 @@ export async function startUserEventListeners(fastify: FastifyInstance) {
 
     try {
         const subscription = pubsub.subscription(subscriptionName);
+        const [exists] = await subscription.exists();
 
-        console.log(`Listening for messages on ${subscriptionName}...`);
+        if (!exists) {
+            console.warn(`⚠️ Pub/Sub subscription ${subscriptionName} does not exist. Events will not be processed.`);
+            return;
+        }
+
+        console.log(`✅ Listening for messages on ${subscriptionName}...`);
 
         subscription.on('message', async (message) => {
             try {

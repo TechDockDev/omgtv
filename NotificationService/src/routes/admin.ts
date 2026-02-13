@@ -29,9 +29,8 @@ export default async function adminRoutes(server: FastifyInstance) {
      * Send notification to specific user
      */
     server.post('/send', {
-        schema: {
-            body: sendNotificationSchema,
-        }
+        schema: { body: sendNotificationSchema },
+        preHandler: [(server as any).requireAdmin]
     }, async (request, reply) => {
         const { userId, title, body, data, type, priority } = sendNotificationSchema.parse(request.body);
 
@@ -72,9 +71,8 @@ export default async function adminRoutes(server: FastifyInstance) {
      * Send notification to ALL users
      */
     server.post('/broadcast', {
-        schema: {
-            body: broadcastNotificationSchema,
-        }
+        schema: { body: broadcastNotificationSchema },
+        preHandler: [(server as any).requireAdmin]
     }, async (request, reply) => {
         const { title, body, data, priority } = broadcastNotificationSchema.parse(request.body);
 
@@ -107,7 +105,9 @@ export default async function adminRoutes(server: FastifyInstance) {
      * GET /admin/notifications/stats
      * Get simple stats
      */
-    server.get('/stats', async (request, reply) => {
+    server.get('/stats', {
+        preHandler: [(server as any).requireAdmin]
+    }, async (request, reply) => {
         const total = await prisma.notification.count();
         const pending = await prisma.notification.count({ where: { status: 'PENDING' } });
         const sent = await prisma.notification.count({ where: { status: 'SENT' } });

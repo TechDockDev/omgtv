@@ -70,70 +70,118 @@ export class PushNotificationService {
     }
 
     /**
-     * Send push notifications to multiple devices
+     * Send push notifications to multiple devices with automatic batching (500 tokens limit)
      */
     async sendToMultipleDevices(
         deviceTokens: string[],
-        notification: PushNotificationPayload
+        notification: PushNotificationPayload,
+        maxRetries = 3
     ): Promise<BulkPushResult> {
-        try {
-            const messaging = getMessaging();
+        const BATCH_SIZE = 500;
+        let successCount = 0;
+        let failureCount = 0;
+        const allResponses: SendPushResult[] = [];
 
-            const message: MulticastMessage = {
-                tokens: deviceTokens,
-                notification: {
-                    title: notification.title,
-                    body: notification.body,
-                    ...(notification.imageUrl && { imageUrl: notification.imageUrl }),
-                },
-                ...(notification.data && { data: notification.data }),
-                android: {
-                    priority: 'high',
-                    notification: {
-                        sound: 'default',
-                        priority: 'high',
-                    },
-                },
-                apns: {
-                    payload: {
-                        aps: {
-                            sound: 'default',
-                            badge: 1,
-                        },
-                    },
-                },
-            };
+        // Split tokens into batches of 500 (FCM limit)
+        for (let i = 0; i < deviceTokens.length; i += BATCH_SIZE) {
+            const batchTokens = deviceTokens.slice(i, i + BATCH_SIZE);
 
-            console.log("message", message)
-            const response: BatchResponse = await messaging.sendEachForMulticast(message);
-            console.log("response", response)
-            const results: SendPushResult[] = response.responses.map((resp, idx) => {
-                if (resp.success) {
-                    return { success: true, messageId: resp.messageId };
-                } else {
-                    const errorCode = (resp.error as any)?.code || 'unknown';
-                    const errorMessage = resp.error?.message || 'Unknown error';
-                    console.error(`❌ Token index ${idx} failed: [${errorCode}] ${errorMessage}`);
-                    return {
-                        success: false,
-                        error: `${errorCode}: ${errorMessage}`
-                    };
+            let retryCount = 0;
+            let success = false;
+            let batchResponse: BulkPushResult | null = null;
+
+            while (retryCount <= maxRetries && !success) {
+                try {
+                    batchResponse = await this.sendBatch(batchTokens, notification);
+                    success = true;
+                } catch (error: any) {
+                    const isTransient = error.code === 'messaging/server-unavailable' || error.code === 'messaging/internal-error';
+                    if (isTransient && retryCount < maxRetries) {
+                        retryCount++;
+                        const delay = Math.pow(2, retryCount) * 1000;
+                        console.warn(`Transient FCM error, retrying batch (${retryCount}/${maxRetries}) after ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        console.error('Final FCM batch failure:', error);
+                        failureCount += batchTokens.length;
+                        batchTokens.forEach(() => {
+                            allResponses.push({ success: false, error: error.message });
+                        });
+                        break;
+                    }
                 }
-            });
+            }
 
-            console.log(`✅ Bulk push sent: ${response.successCount} success, ${response.failureCount} failures`);
-
-            return {
-                successCount: response.successCount,
-                failureCount: response.failureCount,
-                responses: results,
-            };
-        } catch (error) {
-            console.error('❌ Failed to send bulk push notifications:', error);
-            throw error;
+            if (batchResponse) {
+                successCount += batchResponse.successCount;
+                failureCount += batchResponse.failureCount;
+                allResponses.push(...batchResponse.responses);
+            }
         }
+
+        return {
+            successCount,
+            failureCount,
+            responses: allResponses,
+        };
     }
 
+    /**
+     * Internal method to send a single batch of up to 500 tokens
+     */
+    private async sendBatch(
+        tokens: string[],
+        notification: PushNotificationPayload
+    ): Promise<BulkPushResult> {
+        const messaging = getMessaging();
+
+        const message: MulticastMessage = {
+            tokens: tokens,
+            notification: {
+                title: notification.title,
+                body: notification.body,
+                ...(notification.imageUrl && { imageUrl: notification.imageUrl }),
+            },
+            ...(notification.data && { data: notification.data }),
+            android: {
+                priority: 'high',
+                notification: {
+                    sound: 'default',
+                    priority: 'high',
+                },
+            },
+            apns: {
+                payload: {
+                    aps: {
+                        sound: 'default',
+                        badge: 1,
+                    },
+                },
+            },
+        };
+
+        const response: BatchResponse = await messaging.sendEachForMulticast(message);
+
+        const results: SendPushResult[] = response.responses.map((resp, idx) => {
+            if (resp.success) {
+                return { success: true, messageId: resp.messageId };
+            } else {
+                const errorCode = (resp.error as any)?.code || 'unknown';
+                const errorMessage = resp.error?.message || 'Unknown error';
+                console.error(`❌ Token index ${idx} failed: [${errorCode}] ${errorMessage}`);
+                return {
+                    success: false,
+                    error: `${errorCode}: ${errorMessage}`
+                };
+            }
+        });
+
+        return {
+            successCount: response.successCount,
+            failureCount: response.failureCount,
+            responses: results,
+        };
+    }
     /**
      * Send push notification to a topic
      */

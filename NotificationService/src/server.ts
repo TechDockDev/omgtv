@@ -5,14 +5,13 @@ import helmet from '@fastify/helmet';
 import sensible from '@fastify/sensible';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { initializeFirebase } from './config/firebase';
+import prisma from './prisma';
 
 
 const server = fastify({
     logger: {
         level: process.env.LOG_LEVEL || 'info',
-        transport: {
-            target: 'pino-pretty',
-        },
+        transport: process.env.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined,
     },
 });
 
@@ -24,6 +23,7 @@ server.setSerializerCompiler(serializerCompiler);
 server.register(cors);
 server.register(helmet);
 server.register(sensible);
+server.register(import('./plugins/auth'));
 server.register(import('./plugins/pubsub'));
 
 // Routes
@@ -31,14 +31,32 @@ server.register(import('./routes/notifications'), { prefix: '/api/v1/notificatio
 server.register(import('./routes/preferences'), { prefix: '/api/v1/preferences' });
 server.register(import('./routes/push'), { prefix: '/api/v1/notifications/push' }); // Changed to nest properly
 server.register(import('./routes/admin'), { prefix: '/api/v1/admin/notifications' });
+server.register(import('./routes/campaigns'), { prefix: '/api/v1/admin/campaigns' });
 
 // Health check
-server.get('/health', async () => {
-    return { status: 'ok', service: 'notification-service' };
+server.get('/health', async (request, reply) => {
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+        return {
+            status: 'ok',
+            service: 'notification-service',
+            timestamp: new Date().toISOString(),
+            checks: {
+                database: 'healthy'
+            }
+        };
+    } catch (error) {
+        server.log.error(error, 'Health check failed');
+        return reply.status(503).send({
+            status: 'unhealthy',
+            reason: 'Database connectivity issue'
+        });
+    }
 });
 
 import { startUserEventListeners } from './listeners/user-events';
 import { startGrpcServer } from './grpc';
+import { campaignService } from './services/CampaignService';
 
 const start = async () => {
     try {
@@ -49,6 +67,7 @@ const start = async () => {
 
         // Start Listeners
         startUserEventListeners(server);
+
         const port = parseInt(process.env.HTTP_PORT || '5200');
         const host = process.env.HTTP_HOST || '0.0.0.0';
 
@@ -57,6 +76,13 @@ const start = async () => {
 
         await server.listen({ port, host });
         console.log(`Notification Service running at http://${host}:${port}`);
+
+        // Start Campaign Scheduler (Check every minute)
+        setInterval(() => {
+            campaignService.processScheduledCampaigns().catch(err => {
+                server.log.error(err, 'Campaign scheduler error');
+            });
+        }, 60 * 1000);
     } catch (err) {
         server.log.error(err);
         process.exit(1);
@@ -64,4 +90,3 @@ const start = async () => {
 };
 
 start();
-

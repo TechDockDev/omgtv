@@ -1,0 +1,454 @@
+{
+  "info": {
+    "name": "OMGTV Notification Service",
+    "description": "Complete API collection for the OMGTV Notification Service.\n\nSet the `baseUrl` variable to your deployment URL (e.g. http://localhost:4700 or https://your-domain.com).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4700",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "type": "string"
+    },
+    {
+      "key": "adminId",
+      "value": "admin-uuid-here",
+      "type": "string"
+    },
+    {
+      "key": "fcmToken",
+      "value": "your-fcm-token-here",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "📱 Mobile App",
+      "item": [
+        {
+          "name": "Push Token Management",
+          "item": [
+            {
+              "name": "Register FCM Token",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "x-user-id", "value": "{{userId}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"token\": \"{{fcmToken}}\",\n  \"deviceId\": \"device-abc123\",\n  \"platform\": \"android\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/notifications/push/register-token",
+                  "host": ["{{baseUrl}}"],
+                  "path": [
+                    "api",
+                    "v1",
+                    "notifications",
+                    "push",
+                    "register-token"
+                  ]
+                },
+                "description": "Register a device's FCM token for push notifications. Call this on app startup or when the FCM token refreshes."
+              }
+            },
+            {
+              "name": "Unregister FCM Token",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"token\": \"{{fcmToken}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/notifications/push/unregister-token",
+                  "host": ["{{baseUrl}}"],
+                  "path": [
+                    "api",
+                    "v1",
+                    "notifications",
+                    "push",
+                    "unregister-token"
+                  ]
+                },
+                "description": "Unregister an FCM token on user logout or token invalidation."
+              }
+            },
+            {
+              "name": "Get User Tokens",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/notifications/push/tokens/{{userId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": [
+                    "api",
+                    "v1",
+                    "notifications",
+                    "push",
+                    "tokens",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Get all registered FCM tokens for a user."
+              }
+            }
+          ]
+        },
+        {
+          "name": "Notifications",
+          "item": [
+            {
+              "name": "Get Notifications",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "x-user-id", "value": "{{userId}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/notifications?limit=20&offset=0",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "notifications"],
+                  "query": [
+                    { "key": "limit", "value": "20" },
+                    { "key": "offset", "value": "0" }
+                  ]
+                },
+                "description": "Fetch paginated in-app notifications for the current user."
+              }
+            },
+            {
+              "name": "Get Unread Count",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "x-user-id", "value": "{{userId}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/notifications/unread-count",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "notifications", "unread-count"]
+                },
+                "description": "Get the count of unread notifications (for badge display)."
+              }
+            },
+            {
+              "name": "Mark Notification as Read",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "x-user-id", "value": "{{userId}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/notifications/:id/read",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "notifications", ":id", "read"],
+                  "variable": [
+                    {
+                      "key": "id",
+                      "value": "notification-uuid-here",
+                      "description": "Notification ID"
+                    }
+                  ]
+                },
+                "description": "Mark a single notification as read."
+              }
+            },
+            {
+              "name": "Mark All as Read",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "x-user-id", "value": "{{userId}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/notifications/read-all",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "notifications", "read-all"]
+                },
+                "description": "Mark all notifications as read for the current user."
+              }
+            },
+            {
+              "name": "Delete Notification",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "x-user-id", "value": "{{userId}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/notifications/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "notifications", ":id"],
+                  "variable": [
+                    {
+                      "key": "id",
+                      "value": "notification-uuid-here",
+                      "description": "Notification ID"
+                    }
+                  ]
+                },
+                "description": "Delete a specific notification."
+              }
+            }
+          ]
+        },
+        {
+          "name": "Preferences",
+          "item": [
+            {
+              "name": "Get Preferences",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "x-user-id", "value": "{{userId}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/preferences",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "preferences"]
+                },
+                "description": "Get the current user's notification preferences."
+              }
+            },
+            {
+              "name": "Update Preferences",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "x-user-id", "value": "{{userId}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pushEnabled\": true,\n  \"emailEnabled\": true,\n  \"inAppEnabled\": true,\n  \"allowMarketing\": false,\n  \"allowTransactional\": true,\n  \"allowNewContent\": true\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/preferences",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "preferences"]
+                },
+                "description": "Update notification preferences. All fields are optional — send only what changed."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "🛠️ Admin Dashboard",
+      "item": [
+        {
+          "name": "Notifications",
+          "item": [
+            {
+              "name": "Send Notification to User",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "x-user-id", "value": "{{adminId}}" },
+                  { "key": "x-user-role", "value": "admin" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"title\": \"Account Update\",\n  \"body\": \"Your subscription has been upgraded!\",\n  \"type\": \"PUSH\",\n  \"priority\": \"HIGH\",\n  \"data\": {\n    \"screen\": \"subscription\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/admin/notifications/send",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "admin", "notifications", "send"]
+                },
+                "description": "Send a notification to a specific user. Supports EMAIL, PUSH, and IN_APP types."
+              }
+            },
+            {
+              "name": "Broadcast to All Users",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "x-user-id", "value": "{{adminId}}" },
+                  { "key": "x-user-role", "value": "admin" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"🎉 New Feature Launch!\",\n  \"body\": \"Check out our exciting new content library.\",\n  \"priority\": \"HIGH\",\n  \"data\": {\n    \"screen\": \"home\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/admin/notifications/broadcast",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "admin", "notifications", "broadcast"]
+                },
+                "description": "Broadcast a push notification to all users via FCM topic 'all-users'."
+              }
+            },
+            {
+              "name": "Get Notification Stats",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "x-user-id", "value": "{{adminId}}" },
+                  { "key": "x-user-role", "value": "admin" }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/admin/notifications/stats",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "admin", "notifications", "stats"]
+                },
+                "description": "Get notification statistics: total, pending, sent, failed, read counts."
+              }
+            }
+          ]
+        },
+        {
+          "name": "Campaigns",
+          "item": [
+            {
+              "name": "Create Campaign",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "x-user-id", "value": "{{adminId}}" },
+                  { "key": "x-user-role", "value": "admin" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Weekend Promo\",\n  \"title\": \"50% Off This Weekend!\",\n  \"body\": \"Use code WEEKEND50 for all premium content.\",\n  \"type\": \"PUSH\",\n  \"scheduledAt\": \"2026-02-15T10:00:00.000Z\",\n  \"idempotencyKey\": \"weekend-promo-feb-2026\",\n  \"data\": {\n    \"promoCode\": \"WEEKEND50\"\n  },\n  \"targetCriteria\": {\n    \"plan\": \"premium\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/admin/campaigns",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "admin", "campaigns"]
+                },
+                "description": "Create a new notification campaign. Set scheduledAt for future delivery, or omit for a draft."
+              }
+            },
+            {
+              "name": "List Campaigns",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "x-user-id", "value": "{{adminId}}" },
+                  { "key": "x-user-role", "value": "admin" }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/admin/campaigns?limit=10&offset=0",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "admin", "campaigns"],
+                  "query": [
+                    { "key": "limit", "value": "10" },
+                    { "key": "offset", "value": "0" }
+                  ]
+                },
+                "description": "List all campaigns with pagination."
+              }
+            },
+            {
+              "name": "Get Campaign Details",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "x-user-id", "value": "{{adminId}}" },
+                  { "key": "x-user-role", "value": "admin" }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/admin/campaigns/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "admin", "campaigns", ":id"],
+                  "variable": [
+                    {
+                      "key": "id",
+                      "value": "campaign-uuid-here",
+                      "description": "Campaign ID"
+                    }
+                  ]
+                },
+                "description": "Get full details of a specific campaign including notification count."
+              }
+            },
+            {
+              "name": "Execute Campaign",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "x-user-id", "value": "{{adminId}}" },
+                  { "key": "x-user-role", "value": "admin" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"idempotencyKey\": \"exec-weekend-promo-1\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/admin/campaigns/:id/execute",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "admin", "campaigns", ":id", "execute"],
+                  "variable": [
+                    {
+                      "key": "id",
+                      "value": "campaign-uuid-here",
+                      "description": "Campaign ID"
+                    }
+                  ]
+                },
+                "description": "Manually trigger a campaign to send notifications immediately."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "🔧 Push (Direct)",
+      "item": [
+        {
+          "name": "Send Push to User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"title\": \"Direct Push Test\",\n  \"body\": \"This is a direct push notification.\",\n  \"data\": {\n    \"screen\": \"home\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/push/send",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "notifications", "push", "send"]
+            },
+            "description": "Send a push notification directly to all devices of a specific user."
+          }
+        },
+        {
+          "name": "Send Push to Topic",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic\": \"all-users\",\n  \"title\": \"Topic Push Test\",\n  \"body\": \"This goes to everyone subscribed to the topic.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/push/topic",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "notifications", "push", "topic"]
+            },
+            "description": "Send a push notification to an FCM topic (e.g. 'all-users')."
+          }
+        }
+      ]
+    }
+  ]
+}

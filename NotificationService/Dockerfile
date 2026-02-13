@@ -1,15 +1,16 @@
+# syntax=docker/dockerfile:1
 
 FROM node:20-alpine AS build
 WORKDIR /app
 RUN apk add --no-cache openssl libstdc++
 COPY package*.json ./
-RUN npm ci
-COPY tsconfig.json ./
 COPY prisma ./prisma
+RUN npm install
+COPY tsconfig.json ./
 COPY proto ./proto
 COPY src ./src
-RUN npm run generate
 RUN npm run build
+RUN npx prisma generate
 
 FROM node:20-alpine AS runtime
 WORKDIR /app
