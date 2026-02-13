@@ -188,5 +188,18 @@ services:
     depends_on:
       - cloud-sql-proxy
 
+  notification-service:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/notification-service:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_notification?schema=public
+      - REDIS_URL=redis://10.117.209.35:6379
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      - HTTP_PORT=5200
+      - FIREBASE_SERVICE_ACCOUNT_PATH=/app/secrets/firebase/notification-service-account.json
+    depends_on:
+      - cloud-sql-proxy
+
 volumes:
   meili_data: {}

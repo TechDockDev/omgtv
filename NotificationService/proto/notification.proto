@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package notification;
+
+service NotificationService {
+  rpc SendNotification (SendNotificationRequest) returns (SendNotificationResponse);
+  rpc UpdatePreferences (UpdatePreferencesRequest) returns (UpdatePreferencesResponse);
+}
+
+message SendNotificationRequest {
+  string userId = 1;
+  string type = 2; // EMAIL, PUSH, IN_APP
+  string title = 3;
+  string body = 4;
+  string payloadJson = 5; // JSON string for extra data
+  string priority = 6;
+}
+
+message SendNotificationResponse {
+  bool success = 1;
+  string notificationId = 2;
+  string error = 3;
+}
+
+message UpdatePreferencesRequest {
+  string userId = 1;
+  bool emailEnabled = 2;
+  bool pushEnabled = 3;
+  bool inAppEnabled = 4;
+}
+
+message UpdatePreferencesResponse {
+  bool success = 1;
+}
