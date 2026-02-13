@@ -87,6 +87,26 @@ export const logoutBodySchema = z
     }
   );
 
+export const deviceSyncBodySchema = z.object({
+  deviceId: deviceIdSchema,
+  deviceInfo: deviceInfoSchema.unwrap(), // schema is optional() in definition, need to unwrap for required object here but Zod's optional() is a bit different. Actually deviceInfoSchema itself is z.object(...).optional().
+});
+
+// Re-defining for clarity/correctness if needed, or just use:
+export const deviceSyncBodySchemaMinimal = z.object({
+  deviceId: deviceIdSchema,
+  deviceInfo: z.object({
+    os: z.string().optional(),
+    osVersion: z.string().optional(),
+    deviceName: z.string().optional(),
+    model: z.string().optional(),
+    appVersion: z.string().optional(),
+    network: z.string().optional(),
+    fcmToken: z.string().optional(),
+    permissions: z.record(z.boolean()).optional(),
+  }),
+});
+
 export type AdminLoginBody = z.infer<typeof adminLoginBodySchema>;
 export type AdminRegisterBody = z.infer<typeof adminRegisterBodySchema>;
 export type CustomerLoginBody = z.infer<typeof customerLoginBodySchema>;
@@ -95,3 +115,4 @@ export type GuestInitResponse = z.infer<typeof guestInitResponseSchema>;
 export type RefreshBody = z.infer<typeof refreshBodySchema>;
 export type LogoutBody = z.infer<typeof logoutBodySchema>;
 export type TokenResponse = z.infer<typeof tokenResponseSchema>;
+export type DeviceSyncBody = z.infer<typeof deviceSyncBodySchemaMinimal>;

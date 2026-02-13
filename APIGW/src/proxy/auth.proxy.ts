@@ -19,6 +19,8 @@ import {
   type TokenRefreshBody,
   type LogoutBody,
   type TokenResponse,
+  type DeviceSyncBody,
+  deviceSyncBodySchema,
 } from "../schemas/auth.schema";
 
 function summarizeValue(value: unknown): unknown {
@@ -286,16 +288,16 @@ function normalizeTokenPayload(payload: unknown): TokenResponse {
       typeof refreshExpiresIn === "number"
         ? refreshExpiresIn
         : Math.max(
-            Number.parseInt(
-              String(
-                refreshExpiresIn !== undefined
-                  ? refreshExpiresIn
-                  : (expiresIn ?? 0)
-              ),
-              10
-            ) || 0,
-            0
-          ),
+          Number.parseInt(
+            String(
+              refreshExpiresIn !== undefined
+                ? refreshExpiresIn
+                : (expiresIn ?? 0)
+            ),
+            10
+          ) || 0,
+          0
+        ),
     tokenType: "Bearer",
   };
 }
@@ -377,6 +379,38 @@ export async function logoutUser(
           error.cause
         );
       }
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Authentication service error",
+        error.cause
+      );
+    }
+    throw error;
+  }
+}
+
+export async function syncDevice(
+  body: DeviceSyncBody,
+  correlationId: string,
+  span?: Span
+): Promise<void> {
+  const baseUrl = resolveServiceUrl("auth");
+
+  const validatedBody = deviceSyncBodySchema.parse(body);
+
+  try {
+    await performServiceRequest<void>({
+      serviceName: "auth",
+      baseUrl,
+      path: "/api/v1/auth/device/sync",
+      method: "POST",
+      correlationId,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:auth:device-sync",
+    });
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
       throw createHttpError(
         Math.min(error.statusCode, 502),
         "Authentication service error",

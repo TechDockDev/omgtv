@@ -81,4 +81,12 @@ export interface UserServiceIntegration {
     deviceId: string;
     deviceInfo?: DeviceInfoParams;
   }): Promise<RegisterGuestResult>;
+  unlinkDevice(params: {
+    customerId: string;
+    deviceId: string;
+  }): Promise<boolean>;
+  syncDeviceDeviceInfo(params: {
+    deviceId: string;
+    deviceInfo: DeviceInfoParams;
+  }): Promise<boolean>;
 }

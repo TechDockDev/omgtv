@@ -9,6 +9,8 @@ import {
   tokenRefreshBodySchema,
   logoutBodySchema,
   logoutSuccessResponseSchema,
+  deviceSyncBodySchema,
+  deviceSyncSuccessResponseSchema,
   type AdminLoginBody,
   type AdminRegisterBody,
   type CustomerLoginBody,
@@ -17,6 +19,7 @@ import {
   type TokenRefreshBody,
   type TokenPayload,
   type LogoutBody,
+  type DeviceSyncBody,
 } from "../schemas/auth.schema";
 import { errorResponseSchema } from "../schemas/base.schema";
 import {
@@ -26,6 +29,7 @@ import {
   initializeGuest,
   refreshTokens,
   logoutUser,
+  syncDevice,
 } from "../proxy/auth.proxy";
 import { createHttpError } from "../utils/errors";
 
@@ -258,6 +262,39 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
       );
 
       return reply.status(200).send({});
+    },
+  });
+
+  fastify.route<{
+    Body: DeviceSyncBody;
+    Reply: Record<string, never>;
+  }>({
+    method: "POST",
+    url: "/device/sync",
+    schema: {
+      body: deviceSyncBodySchema,
+      response: {
+        204: deviceSyncSuccessResponseSchema,
+        400: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: true },
+      rateLimitPolicy: "anonymous",
+      security: { bodyLimit: 8 * 1024 },
+    },
+    async handler(request, reply) {
+      const body = deviceSyncBodySchema.parse(request.body);
+
+      await syncDevice(body, request.correlationId, request.telemetrySpan);
+
+      request.log.info(
+        { deviceId: body.deviceId },
+        "Device sync routed to auth service"
+      );
+
+      return reply.status(204).send({});
     },
   });
 };

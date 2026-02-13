@@ -217,3 +217,65 @@ export async function registerGuestProfile(
     } satisfies RegisterGuestProfileResult;
   });
 }
+
+export async function unlinkDevice(params: {
+  prisma: PrismaClient;
+  customerId: string;
+  deviceId: string;
+}): Promise<boolean> {
+  const { prisma, customerId, deviceId } = params;
+
+  const device = await prisma.deviceIdentity.findUnique({
+    where: { deviceId },
+  });
+
+  if (!device) {
+    return false;
+  }
+
+  await prisma.customerDeviceLink.deleteMany({
+    where: {
+      customerId,
+      deviceIdentityId: device.id,
+    },
+  });
+
+  return true;
+}
+
+export async function syncDeviceDeviceInfo(params: {
+  prisma: PrismaClient;
+  deviceId: string;
+  deviceInfo: DeviceInfo;
+}): Promise<boolean> {
+  const { prisma, deviceId, deviceInfo } = params;
+
+  await prisma.deviceIdentity.upsert({
+    where: { deviceId },
+    update: {
+      lastSeenAt: new Date(),
+      ...(deviceInfo.os && { os: deviceInfo.os }),
+      ...(deviceInfo.osVersion && { osVersion: deviceInfo.osVersion }),
+      ...(deviceInfo.deviceName && { deviceName: deviceInfo.deviceName }),
+      ...(deviceInfo.model && { model: deviceInfo.model }),
+      ...(deviceInfo.appVersion && { appVersion: deviceInfo.appVersion }),
+      ...(deviceInfo.network && { network: deviceInfo.network }),
+      ...(deviceInfo.fcmToken && { fcmToken: deviceInfo.fcmToken }),
+      ...(deviceInfo.permissions && { permissions: deviceInfo.permissions }),
+    },
+    create: {
+      deviceId,
+      lastSeenAt: new Date(),
+      os: deviceInfo.os,
+      osVersion: deviceInfo.osVersion,
+      deviceName: deviceInfo.deviceName,
+      model: deviceInfo.model,
+      appVersion: deviceInfo.appVersion,
+      network: deviceInfo.network,
+      fcmToken: deviceInfo.fcmToken,
+      permissions: deviceInfo.permissions,
+    },
+  });
+
+  return true;
+}

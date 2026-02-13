@@ -121,6 +121,24 @@ type RegisterGuestResponse = {
   customer_id?: string;
 };
 
+type UnlinkDeviceRequest = {
+  customer_id: string;
+  device_id: string;
+};
+
+type UnlinkDeviceResponse = {
+  success: boolean;
+};
+
+type SyncDeviceDeviceInfoRequest = {
+  device_id: string;
+  device_info: DeviceInfoMessage;
+};
+
+type SyncDeviceDeviceInfoResponse = {
+  success: boolean;
+};
+
 type GrpcUnary<Req, Res> = (
   request: Req,
   metadata: grpc.Metadata,
@@ -158,6 +176,10 @@ type GrpcUserServiceClient = grpc.Client & {
   >;
   registerGuest?: GrpcUnary<RegisterGuestRequest, RegisterGuestResponse>;
   RegisterGuest?: GrpcUnary<RegisterGuestRequest, RegisterGuestResponse>;
+  unlinkDevice?: GrpcUnary<UnlinkDeviceRequest, UnlinkDeviceResponse>;
+  UnlinkDevice?: GrpcUnary<UnlinkDeviceRequest, UnlinkDeviceResponse>;
+  syncDeviceDeviceInfo?: GrpcUnary<SyncDeviceDeviceInfoRequest, SyncDeviceDeviceInfoResponse>;
+  SyncDeviceDeviceInfo?: GrpcUnary<SyncDeviceDeviceInfoRequest, SyncDeviceDeviceInfoResponse>;
 };
 
 const PROTO_PATH = path.join(__dirname, "../../proto/user.proto");
@@ -303,6 +325,12 @@ const userServicePlugin = fp(async function userServicePlugin(
     async registerGuest() {
       throw new Error("UserService integration disabled");
     },
+    async unlinkDevice() {
+      throw new Error("UserService integration disabled");
+    },
+    async syncDeviceDeviceInfo() {
+      throw new Error("UserService integration disabled");
+    },
   };
 
   fastify.decorate("userService", integration);
@@ -348,6 +376,14 @@ const userServicePlugin = fp(async function userServicePlugin(
     RegisterGuestRequest,
     RegisterGuestResponse
   >(client, "RegisterGuest", config.USER_SERVICE_TOKEN);
+  const unlinkDeviceUnary = resolveUnary<
+    UnlinkDeviceRequest,
+    UnlinkDeviceResponse
+  >(client, "UnlinkDevice", config.USER_SERVICE_TOKEN);
+  const syncDeviceDeviceInfoUnary = resolveUnary<
+    SyncDeviceDeviceInfoRequest,
+    SyncDeviceDeviceInfoResponse
+  >(client, "SyncDeviceDeviceInfo", config.USER_SERVICE_TOKEN);
 
   Object.assign(integration, {
     isEnabled: true,
@@ -441,6 +477,44 @@ const userServicePlugin = fp(async function userServicePlugin(
             ? response.customer_id
             : undefined,
       } satisfies RegisterGuestResult;
+    },
+    async unlinkDevice(params: { customerId: string; deviceId: string }) {
+      const response = await unlinkDeviceUnary({
+        customer_id: params.customerId,
+        device_id: params.deviceId,
+      });
+      return response.success;
+    },
+    async syncDeviceDeviceInfo(params: {
+      deviceId: string;
+      deviceInfo: {
+        os?: string;
+        osVersion?: string;
+        deviceName?: string;
+        model?: string;
+        appVersion?: string;
+        network?: string;
+        fcmToken?: string;
+        permissions?: Record<string, boolean>;
+      };
+    }) {
+      const deviceInfoMsg: DeviceInfoMessage = {
+        os: params.deviceInfo.os,
+        os_version: params.deviceInfo.osVersion,
+        model: params.deviceInfo.model,
+        app_version: params.deviceInfo.appVersion,
+        network: params.deviceInfo.network,
+        fcm_token: params.deviceInfo.fcmToken,
+        device_name: params.deviceInfo.deviceName,
+        permissions_json: params.deviceInfo.permissions
+          ? JSON.stringify(params.deviceInfo.permissions)
+          : undefined,
+      };
+      const response = await syncDeviceDeviceInfoUnary({
+        device_id: params.deviceId,
+        device_info: deviceInfoMsg,
+      });
+      return response.success;
     },
   } as UserServiceIntegration);
 

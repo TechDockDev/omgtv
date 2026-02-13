@@ -13,6 +13,8 @@ import {
 import {
   ensureCustomerProfile,
   registerGuestProfile,
+  unlinkDevice,
+  syncDeviceDeviceInfo,
 } from "../services/identity";
 import type {
   PermissionDTO,
@@ -159,6 +161,24 @@ interface GetCustomerProfileResponse {
   phone_number: string;
   status: string;
   avatar_url: string;
+}
+
+interface UnlinkDeviceRequest {
+  customer_id?: string;
+  device_id?: string;
+}
+
+interface UnlinkDeviceResponse {
+  success: boolean;
+}
+
+interface SyncDeviceDeviceInfoRequest {
+  device_id?: string;
+  device_info?: DeviceInfoMessage;
+}
+
+interface SyncDeviceDeviceInfoResponse {
+  success: boolean;
 }
 
 type UnaryHandler<Req, Res> = grpc.handleUnaryCall<Req, Res>;
@@ -552,6 +572,61 @@ export async function startGrpcServer(
     }
   };
 
+  const unlinkDeviceHandler: UnaryHandler<
+    UnlinkDeviceRequest,
+    UnlinkDeviceResponse
+  > = async (call, callback) => {
+    const { customer_id: customerId, device_id: deviceId } = call.request;
+    if (!customerId || !deviceId) {
+      callback(createServiceError(status.INVALID_ARGUMENT, "customer_id and device_id are required"));
+      return;
+    }
+    try {
+      const success = await unlinkDevice({
+        prisma: handlerContext.prisma,
+        customerId,
+        deviceId,
+      });
+      callback(null, { success });
+    } catch (error) {
+      handlerContext.app.log.error({ err: error, customerId, deviceId }, "Failed to unlink device");
+      callback(createServiceError(status.INTERNAL, "Failed to unlink device"));
+    }
+  };
+
+  const syncDeviceDeviceInfoHandler: UnaryHandler<
+    SyncDeviceDeviceInfoRequest,
+    SyncDeviceDeviceInfoResponse
+  > = async (call, callback) => {
+    const { device_id: deviceId, device_info: di } = call.request;
+    if (!deviceId) {
+      callback(createServiceError(status.INVALID_ARGUMENT, "device_id is required"));
+      return;
+    }
+    try {
+      const deviceInfo = di ? {
+        os: di.os || undefined,
+        osVersion: di.os_version || undefined,
+        deviceName: di.device_name || undefined,
+        model: di.model || undefined,
+        appVersion: di.app_version || undefined,
+        network: di.network || undefined,
+        fcmToken: di.fcm_token || undefined,
+        permissions: di.permissions_json ? JSON.parse(di.permissions_json) : undefined,
+      } : { os: undefined };
+
+      const success = await syncDeviceDeviceInfo({
+        prisma: handlerContext.prisma,
+        deviceId,
+        deviceInfo,
+      });
+      callback(null, { success });
+    } catch (error) {
+      handlerContext.app.log.error({ err: error, deviceId }, "Failed to sync device device info");
+      callback(createServiceError(status.INTERNAL, "Failed to sync device device info"));
+    }
+  };
+
   server.addService(userPackage.UserService.service, {
     GetUserContext: wrapAuthorization(getUserContextHandler),
     AssignRole: wrapAuthorization(assignRoleHandler),
@@ -560,6 +635,8 @@ export async function startGrpcServer(
     EnsureCustomerProfile: wrapAuthorization(ensureCustomerProfileHandler),
     RegisterGuest: wrapAuthorization(registerGuestHandler),
     GetCustomerProfile: wrapAuthorization(getCustomerProfileHandler),
+    UnlinkDevice: wrapAuthorization(unlinkDeviceHandler),
+    SyncDeviceDeviceInfo: wrapAuthorization(syncDeviceDeviceInfoHandler),
   });
 
   await new Promise<void>((resolve, reject) => {

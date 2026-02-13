@@ -75,6 +75,10 @@ export const logoutSuccessResponseSchema = createSuccessResponseSchema(
   z.object({}).strict()
 );
 
+export const deviceSyncSuccessResponseSchema = createSuccessResponseSchema(
+  z.object({}).strict()
+);
+
 export const tokenRefreshBodySchema = z.object({
   refreshToken: z.string().trim().min(1),
   deviceId: z.preprocess(
@@ -106,6 +110,11 @@ export const logoutBodySchema = z
     }
   );
 
+export const deviceSyncBodySchema = z.object({
+  deviceId: deviceIdSchema,
+  deviceInfo: deviceInfoSchema.unwrap(),
+});
+
 export type AdminLoginBody = z.infer<typeof adminLoginBodySchema>;
 export type AdminRegisterBody = z.infer<typeof adminRegisterBodySchema>;
 export type CustomerLoginBody = z.infer<typeof customerLoginBodySchema>;
@@ -114,6 +123,7 @@ export type TokenRefreshBody = z.infer<typeof tokenRefreshBodySchema>;
 export type LogoutBody = z.infer<typeof logoutBodySchema>;
 export type TokenResponse = z.infer<typeof tokenResponseSchema>;
 export type GuestInitData = z.infer<typeof guestInitDataSchema>;
+export type DeviceSyncBody = z.infer<typeof deviceSyncBodySchema>;
 export type TokenPayload = z.infer<typeof tokenPayloadSchema>;
 export type TokenSuccessResponse = SuccessResponse<TokenPayload>;
 export type GuestInitSuccessResponse = SuccessResponse<GuestInitData>;
