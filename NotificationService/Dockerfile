@@ -21,8 +21,9 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/proto ./proto
-COPY secrets ./secrets
+RUN mkdir -p secrets/firebase
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x docker-entrypoint.sh && sed -i 's/\r$//' docker-entrypoint.sh
-EXPOSE 4700
+EXPOSE 5200
+EXPOSE 50072
 CMD ["./docker-entrypoint.sh"]
