@@ -311,7 +311,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       });
 
       // Fetch engagement stats for all liked reels
-      let statsMap: Record<string, { likes: number; views: number; saves: number }> = {};
+      let statsMap: Record<string, any> = {};
       if (ids.length > 0) {
         statsMap = await getStatsBatch({
           redis,
@@ -326,6 +326,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         likes: statsMap[id]?.likes ?? 0,
         views: statsMap[id]?.views ?? 0,
         saves: statsMap[id]?.saves ?? 0,
+        averageRating: statsMap[id]?.averageRating ?? 0,
+        reviewCount: statsMap[id]?.reviewCount ?? 0,
       }));
 
       return listWithStatsResponseSchema.parse({ items });
@@ -383,7 +385,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       });
 
       // Fetch engagement stats for all saved reels
-      let statsMap: Record<string, { likes: number; views: number; saves: number }> = {};
+      let statsMap: Record<string, any> = {};
       if (ids.length > 0) {
         statsMap = await getStatsBatch({
           redis,
@@ -398,6 +400,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         likes: statsMap[id]?.likes ?? 0,
         views: statsMap[id]?.views ?? 0,
         saves: statsMap[id]?.saves ?? 0,
+        averageRating: statsMap[id]?.averageRating ?? 0,
+        reviewCount: statsMap[id]?.reviewCount ?? 0,
       }));
 
       return listWithStatsResponseSchema.parse({ items });
@@ -505,7 +509,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         });
 
         // Fetch engagement stats for all liked series
-        let statsMap: Record<string, { likes: number; views: number; saves: number }> = {};
+        let statsMap: Record<string, any> = {};
         if (ids.length > 0) {
           statsMap = await getStatsBatch({
             redis,
@@ -520,6 +524,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
           likes: statsMap[id]?.likes ?? 0,
           views: statsMap[id]?.views ?? 0,
           saves: statsMap[id]?.saves ?? 0,
+          averageRating: statsMap[id]?.averageRating ?? 0,
+          reviewCount: statsMap[id]?.reviewCount ?? 0,
         }));
 
         return listWithStatsResponseSchema.parse({ items });
@@ -582,7 +588,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         });
 
         // Fetch engagement stats for all saved series
-        let statsMap: Record<string, { likes: number; views: number; saves: number }> = {};
+        let statsMap: Record<string, any> = {};
         if (ids.length > 0) {
           statsMap = await getStatsBatch({
             redis,
@@ -597,6 +603,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
           likes: statsMap[id]?.likes ?? 0,
           views: statsMap[id]?.views ?? 0,
           saves: statsMap[id]?.saves ?? 0,
+          averageRating: statsMap[id]?.averageRating ?? 0,
+          reviewCount: statsMap[id]?.reviewCount ?? 0,
         }));
 
         return listWithStatsResponseSchema.parse({ items });

@@ -41,6 +41,7 @@ export async function syncSeriesToSearch(action: "upsert" | "delete", series: Se
             localization: { captions: [], availableLanguages: [] },
             personalization: { reason: "search" },
             ratings: { average: null },
+            is_audio_series: series.isAudioSeries,
         };
 
         const body = {

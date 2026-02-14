@@ -66,7 +66,7 @@ services:
     ports:
       - "${CONTENT_SERVICE_HTTP_HOST_PORT:-4600}:${CONTENT_SERVICE_HTTP_PORT:-4600}"
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-4600}/health >/dev/null || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:$$HTTP_PORT/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -93,7 +93,7 @@ services:
     ports:
       - "${ENGAGEMENT_SERVICE_HTTP_HOST_PORT:-4700}:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}"
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-4700}/health >/dev/null || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:$$HTTP_PORT/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -136,7 +136,7 @@ services:
     ports:
       - "${SEARCH_SERVICE_HTTP_HOST_PORT:-4800}:${SEARCH_SERVICE_HTTP_PORT:-4800}"
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-4800}/health >/dev/null || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:$$HTTP_PORT/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -157,7 +157,7 @@ services:
     ports:
       - "${STREAMING_SERVICE_HTTP_HOST_PORT:-4900}:${STREAMING_SERVICE_HTTP_PORT:-4900}"
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-4900}/health >/dev/null || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:$$HTTP_PORT/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -189,7 +189,7 @@ services:
     ports:
       - "${UPLOAD_SERVICE_HTTP_HOST_PORT:-5000}:${UPLOAD_SERVICE_HTTP_PORT:-5000}"
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-5000}/health >/dev/null || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:$$HTTP_PORT/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -247,7 +247,7 @@ services:
       - "${SUBSCRIPTION_SERVICE_HTTP_HOST_PORT:-5100}:${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}"
       - "${SUBSCRIPTION_SERVICE_GRPC_HOST_PORT:-50071}:${SUBSCRIPTION_SERVICE_GRPC_PORT:-50071}"
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fsS http://localhost:${HTTP_PORT:-5100}/health >/dev/null || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:$$HTTP_PORT/health >/dev/null || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5

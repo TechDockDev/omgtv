@@ -131,11 +131,17 @@ async function getStatsRedis(
     redisLikesKey(entityType, entityId),
     redisViewsKey(entityType, entityId),
     redisSavesKey(entityType, entityId),
+    redisReviewStatsKey(entityType, entityId),
   ];
-  const [likesRaw, viewsRaw, savesRaw] = await redis.mget(...keys);
+  const [likesRaw, viewsRaw, savesRaw] = await redis.mget(keys[0], keys[1], keys[2]);
+  const reviewStatsRaw = await redis.hgetall(keys[3]);
 
   // Warm-up logic: if ANY keys are missing from Redis, try loading from DB
-  if (prisma && (likesRaw === null || viewsRaw === null || savesRaw === null)) {
+  if (prisma && (likesRaw === null || viewsRaw === null || savesRaw === null || !reviewStatsRaw.count)) {
+    // Note: We check .count to see if review stats exist. 
+    // If they don't, we still load from DB to be sure.
+
+    // Load counts views likes
     const dbStat = await prisma.contentStats.findUnique({
       where: {
         contentType_contentId: {
@@ -145,27 +151,53 @@ async function getStatsRedis(
       },
     });
 
-    if (dbStat) {
+    // Load review stats from review table
+    const reviewAgg = await prisma.review.aggregate({
+      where: {
+        contentType: entityType.toUpperCase() as any,
+        contentId: entityId,
+      },
+      _avg: { rating: true },
+      _count: { rating: true },
+    });
+
+    if (dbStat || reviewAgg) {
       const stats = {
-        likes: dbStat.likeCount,
-        views: dbStat.viewCount,
-        saves: dbStat.saveCount,
+        likes: dbStat?.likeCount ?? 0,
+        views: dbStat?.viewCount ?? 0,
+        saves: dbStat?.saveCount ?? 0,
+        reviewCount: reviewAgg._count.rating ?? 0,
+        averageRating: reviewAgg._avg.rating ?? 0,
       };
+
       // Populate Redis
-      await redis.pipeline()
+      const pipe = redis.pipeline()
         .set(keys[0], stats.likes)
         .set(keys[1], stats.views)
-        .set(keys[2], stats.saves)
-        .exec();
+        .set(keys[2], stats.saves);
+
+      if (stats.reviewCount > 0) {
+        pipe.hset(keys[3], {
+          count: stats.reviewCount,
+          sum: stats.averageRating * stats.reviewCount
+        });
+      }
+
+      await pipe.exec();
       return stats;
     }
   }
+
+  const count = reviewStatsRaw ? parseInt(reviewStatsRaw.count ?? "0", 10) : 0;
+  const sum = reviewStatsRaw ? parseFloat(reviewStatsRaw.sum ?? "0") : 0;
+  const avg = count > 0 ? sum / count : 0;
 
   return {
     likes: clampNonNegative(parseRedisInt(likesRaw)),
     views: clampNonNegative(parseRedisInt(viewsRaw)),
     saves: clampNonNegative(parseRedisInt(savesRaw)),
-    // Review stats not fetched here yet for single entity, defaulting to optional
+    reviewCount: count,
+    averageRating: avg,
   };
 }
 

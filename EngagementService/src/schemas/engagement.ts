@@ -86,6 +86,8 @@ export const listItemWithStatsSchema = z.object({
   likes: z.number().int().nonnegative(),
   views: z.number().int().nonnegative(),
   saves: z.number().int().nonnegative(),
+  averageRating: z.number().nonnegative().optional().default(0),
+  reviewCount: z.number().int().nonnegative().optional().default(0),
 });
 
 export const listWithStatsResponseSchema = z.object({

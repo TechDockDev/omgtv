@@ -150,21 +150,24 @@ export class MobileAppService {
   ): Promise<{ data: MobileHomeData; fromCache: boolean }> {
     const parsed = mobileHomeQuerySchema.parse(query);
 
-    // Fetch Series for Sections (Main Content) and Episodes for Continue Watch (Resume)
-    const [seriesFeed, topTen] = await Promise.all([
-      this.deps.viewerCatalog.getHomeSeries({
-        limit: parsed.limit ?? this.deps.config.homeFeedLimit,
-        cursor: parsed.cursor,
-      }),
-      this.deps.repository.getTopTenSeries(),
-    ]);
+    // Fetch Series for Sections (Main Content)
+    // If tag is present, we SKIP Top 10 and Continue Watching to strictly show only tagged sections.
+    const seriesFeed = await this.deps.viewerCatalog.getHomeSeries({
+      limit: parsed.limit ?? this.deps.config.homeFeedLimit,
+      cursor: parsed.cursor,
+    });
+
+    let topTen: any[] = [];
+    if (!parsed.tag) {
+      topTen = await this.deps.repository.getTopTenSeries();
+    }
 
     // Fetch Continue Watching (Recent Progress)
     let continueWatchEpisodes: ViewerFeedItem[] = [];
     const progressMap = new Map<string, ContinueWatchEntry>();
     const userId = options?.context?.userId;
 
-    if (userId && this.deps.engagementClient) {
+    if (!parsed.tag && userId && this.deps.engagementClient) {
       try {
         // Fetch more items than needed to account for duplicates (multiple episodes of same series)
         const fetchLimit = (this.deps.config.continueWatchLimit || 10) * 5;
@@ -227,7 +230,10 @@ export class MobileAppService {
 
     const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
-    const carouselItems = await this.buildCarouselItems(filteredItems, engagementStates);
+    let carouselItems: CarouselEntryView[] = [];
+    if (!parsed.tag) {
+      carouselItems = await this.buildCarouselItems(filteredItems, engagementStates);
+    }
 
     const top10Items = topTen.map((t) => {
       const engagement = engagementStates.get(t.series.id);
@@ -244,7 +250,7 @@ export class MobileAppService {
         lastWatchedAt: null,
         series_id: t.series.id,
         engagement: engagement ?? null,
-        is_audio_series: t.series.isAudioSeries || t.series.tags.some((tag: string) => tag.toLowerCase().includes("audio")) || t.series.category?.slug.includes("audio") || false
+        is_audio_series: t.series.isAudioSeries ?? false
       };
     });
 
@@ -602,6 +608,7 @@ export class MobileAppService {
       videoUrl: null,
       rating: engagementRating ?? null,
       series_id: series.id,
+      is_audio_series: series.isAudioSeries,
     } satisfies CarouselEntryView;
   }
 
@@ -637,7 +644,7 @@ export class MobileAppService {
       videoUrl: item.playback.manifestUrl,
       rating: engagementRating ?? item.ratings.average,
       series_id: item.series.id,
-      is_audio_series: item.tags.some((t: string) => t.toLowerCase().includes("audio")) || item.series.category?.slug.includes("audio") || false
+      is_audio_series: item.series.isAudioSeries,
     } satisfies CarouselEntryView;
   }
 
@@ -680,7 +687,7 @@ export class MobileAppService {
         is_completed: progress?.is_completed ?? false,
       },
       rating: item.ratings.average,
-      is_audio_series: item.tags.some((t: string) => t.toLowerCase().includes("audio")) || item.series.category?.slug.includes("audio") || false,
+      is_audio_series: item.series.isAudioSeries,
     };
   }
 
@@ -715,6 +722,7 @@ export class MobileAppService {
       _categoryName: item.series.category?.name ?? null,
       _seriesTitle: item.series.title,
       _seriesThumbnail: item.series.heroImageUrl ?? item.series.bannerImageUrl ?? item.heroImageUrl,
+      is_audio_series: item.series.isAudioSeries,
     };
   }
 
@@ -747,22 +755,9 @@ export class MobileAppService {
           rating: entry.rating,
           lastWatchedAt: entry.progress.last_watched_at,
           series_id: entry.series_id,
+          is_audio_series: entry.is_audio_series,
         })),
       });
-    }
-
-    if (tag) {
-      // If filtering by specific tag, return flat list as "Category" type section
-      if (featured.length > 0) {
-        sections.push({
-          id: `section_${tag.toLowerCase()}`,
-          type: "category",
-          title: tag.replace(/\b\w/g, (c) => c.toUpperCase()),
-          priority: sections.length + 1,
-          items: featured.map(item => this.cleanSectionItem(item)),
-        });
-      }
-      return sections;
     }
 
     // 2. Group by Category (Internal Grouping Logic)
@@ -808,6 +803,7 @@ export class MobileAppService {
             watchedDuration: null,
             progress: null,
             lastWatchedAt: null,
+            is_audio_series: item.is_audio_series,
           });
         }
       });
@@ -1030,6 +1026,7 @@ export class MobileAppService {
         ? {
           id: reel.series.id,
           title: reel.series.title,
+          is_audio_series: reel.series.isAudioSeries,
           thumbnail: reel.series.heroImageUrl ?? reel.series.bannerImageUrl ?? null,
         }
         : null,

@@ -41,3 +41,6 @@ images:
   - name: transcoding-worker
     newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/transcoding-worker
     newTag: latest
+  - name: notification-service
+    newName: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/notification-service
+    newTag: latest

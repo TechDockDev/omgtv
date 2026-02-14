@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - all.yaml
   - ingress.yaml
+  - notification-service.yaml
 
 images:
   - name: apigw
@@ -30,4 +31,7 @@ images:
     newTag: latest
   - name: subscription-service
     newName: subscription-service
+    newTag: latest
+  - name: notification-service
+    newName: notification-service
     newTag: latest

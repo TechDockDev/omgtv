@@ -195,6 +195,7 @@ const reelItemSchema = z.object({
       id: z.string(),
       title: z.string(),
       thumbnail: z.string().nullable(),
+      is_audio_series: z.boolean().optional(),
     })
     .nullable(),
   episode: z

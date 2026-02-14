@@ -1,0 +1,107 @@
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-service-config
+data:
+  NODE_ENV: production
+  HTTP_HOST: 0.0.0.0
+  HTTP_PORT: "5200"
+  GRPC_BIND_ADDRESS: 0.0.0.0:50072
+  LOG_LEVEL: info
+  REDIS_URL: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      serviceAccountName: pocketlol-sa
+      containers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+          command: ["/cloud-sql-proxy"]
+          args:
+            [
+              "--address",
+              "0.0.0.0",
+              "--port",
+              "5432",
+              "$(CLOUD_SQL_CONNECTION_NAME)",
+            ]
+          envFrom:
+            - secretRef:
+                name: cloudsql-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 256Mi
+        - name: notification-service
+          image: notification-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5200
+              name: http
+            - containerPort: 50072
+              name: grpc
+          resources:
+            requests:
+              cpu: 150m
+              memory: 384Mi
+            limits:
+              cpu: 400m
+              memory: 768Mi
+          envFrom:
+            - configMapRef:
+                name: notification-service-config
+            - secretRef:
+                name: notification-service-secrets
+            - secretRef:
+                name: shared-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+spec:
+  selector:
+    app: notification-service
+  ports:
+    - name: http
+      port: 5200
+      targetPort: http
+    - name: grpc
+      port: 50072
+      targetPort: grpc
+  type: ClusterIP

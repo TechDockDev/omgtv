@@ -47,7 +47,7 @@ export type SeriesWithRelations = Series & {
 export type ReelWithRelations = Reel & {
   mediaAsset: (MediaAsset & { variants: MediaAssetVariant[] }) | null;
   category: Category | null;
-  series: Pick<Series, "id" | "title" | "heroImageUrl" | "bannerImageUrl"> | null;
+  series: Pick<Series, "id" | "title" | "heroImageUrl" | "bannerImageUrl" | "isAudioSeries"> | null;
   episode: Pick<Episode, "id" | "slug" | "episodeNumber"> | null;
 };
 
@@ -1218,6 +1218,7 @@ export class CatalogRepository {
             title: true,
             heroImageUrl: true,
             bannerImageUrl: true,
+            isAudioSeries: true,
           }
         },
         episode: {
