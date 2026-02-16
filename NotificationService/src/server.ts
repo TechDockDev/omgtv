@@ -28,10 +28,10 @@ server.register(import('./plugins/pubsub'));
 
 // Routes
 server.register(import('./routes/notifications'), { prefix: '/api/v1/notifications' });
-server.register(import('./routes/preferences'), { prefix: '/api/v1/preferences' });
-server.register(import('./routes/push'), { prefix: '/api/v1/notifications/push' }); // Changed to nest properly
-server.register(import('./routes/admin'), { prefix: '/api/v1/admin/notifications' });
-server.register(import('./routes/campaigns'), { prefix: '/api/v1/admin/campaigns' });
+server.register(import('./routes/preferences'), { prefix: '/api/v1/notifications/preferences' });
+server.register(import('./routes/push'), { prefix: '/api/v1/notifications/push' });
+server.register(import('./routes/admin'), { prefix: '/api/v1/notifications/admin' });
+server.register(import('./routes/campaigns'), { prefix: '/api/v1/notifications/admin/campaigns' });
 
 // Health check
 server.get('/health', async (request, reply) => {
@@ -60,8 +60,12 @@ import { campaignService } from './services/CampaignService';
 
 const start = async () => {
     try {
-        // Initialize Firebase Admin SDK
-        initializeFirebase();
+        // Initialize Firebase Admin SDK (non-fatal — service can still serve other routes)
+        try {
+            initializeFirebase();
+        } catch (err) {
+            server.log.warn('Firebase initialization failed — push notifications will be unavailable');
+        }
 
         await server.ready();
 

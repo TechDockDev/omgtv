@@ -16,7 +16,13 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 
 const notificationProto = grpc.loadPackageDefinition(packageDefinition).notification as any;
 
-const notificationManager = new NotificationManager();
+let notificationManager: NotificationManager | null = null;
+function getNotificationManager(): NotificationManager {
+    if (!notificationManager) {
+        notificationManager = new NotificationManager();
+    }
+    return notificationManager;
+}
 
 const sendNotification = async (call: any, callback: any) => {
     const { userId, type, title, body, payloadJson, priority } = call.request;
@@ -26,7 +32,7 @@ const sendNotification = async (call: any, callback: any) => {
         // Map string type to enum
         const notifType = type as NotificationType;
 
-        const result = await notificationManager.sendNotification(
+        const result = await getNotificationManager().sendNotification(
             userId,
             notifType,
             title,

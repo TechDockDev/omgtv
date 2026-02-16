@@ -7,6 +7,7 @@ const CONTENT_BASE_PATH = "/api/v1/content" as const;
 const ENGAGEMENT_BASE_PATH = "/api/v1/engagement" as const;
 const SEARCH_BASE_PATH = "/api/v1/search" as const;
 const SUBSCRIPTION_BASE_PATH = "/api/v1/subscription" as const;
+const NOTIFICATION_BASE_PATH = "/api/v1/notifications" as const;
 
 export function getServiceRegistry(): readonly ServiceDefinition[] {
   return [
@@ -111,6 +112,18 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       internalBasePath: "/v1/admin/uploads",
       exposeViaProxy: false,
       documentationBasePath: "/api/v1/admin/uploads",
+    },
+    {
+      name: "notification",
+      displayName: "Notification Service",
+      description: "Push notifications, in-app notifications, preferences, and campaigns",
+      basePath: NOTIFICATION_BASE_PATH,
+      target: resolveServiceUrl("notification"),
+      swaggerPath: "/openapi.json",
+      access: "authenticated",
+      rateLimitPolicy: "authenticated",
+      internalBasePath: "/api/v1/notifications",
+      adminPrefixes: ["/admin"],
     },
   ] as const;
 }

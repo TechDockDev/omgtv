@@ -1,9 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { NotificationManager } from '../services/notification-manager';
 
-const notificationManager = new NotificationManager();
-
 export async function startUserEventListeners(fastify: FastifyInstance) {
+    const notificationManager = new NotificationManager();
+
     const pubsub = fastify.pubsub;
     const subscriptionName = process.env.USER_EVENTS_SUBSCRIPTION || 'notification-user-events-sub';
 

@@ -41,6 +41,7 @@ const envSchema = z.object({
   ENGAGEMENT_SERVICE_URL: z.string().url(),
   SEARCH_SERVICE_URL: z.string().url(),
   SUBSCRIPTION_SERVICE_URL: z.string().url(),
+  NOTIFICATION_SERVICE_URL: z.string().url().optional(),
   SERVICE_AUTH_TOKEN: z.string().optional(),
   ENABLE_TELEMETRY: z
     .string()
@@ -83,6 +84,7 @@ const ROUTE_KEYS = [
   "engagement",
   "search",
   "subscription",
+  "notification",
 ] as const;
 
 const SERVICE_KEYS = [
@@ -94,6 +96,7 @@ const SERVICE_KEYS = [
   "engagement",
   "search",
   "subscription",
+  "notification",
 ] as const;
 
 export type RouteKey = (typeof ROUTE_KEYS)[number];
@@ -167,6 +170,7 @@ const SERVICE_ENV_MAP: Record<ServiceKey, keyof z.infer<typeof envSchema>> = {
   engagement: "ENGAGEMENT_SERVICE_URL",
   search: "SEARCH_SERVICE_URL",
   subscription: "SUBSCRIPTION_SERVICE_URL",
+  notification: "NOTIFICATION_SERVICE_URL",
 } as const;
 
 function parseServiceOverrides(): Readonly<Record<ServiceKey, string>> {
@@ -214,6 +218,7 @@ export function getServiceUrl(
     | "ENGAGEMENT_SERVICE_URL"
     | "SEARCH_SERVICE_URL"
     | "SUBSCRIPTION_SERVICE_URL"
+    | "NOTIFICATION_SERVICE_URL"
   >
 ) {
   const mappingEntry = Object.entries(SERVICE_ENV_MAP).find(
