@@ -50,6 +50,7 @@ services:
       - SEARCH_SERVICE_URL=http://search-service:4800
       - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
       - STREAMING_SERVICE_URL=http://streaming-service:4900
+      - NOTIFICATION_SERVICE_URL=http://notification-service:5200
       - AUTH_AUDIENCE=pocketlol-services
       - AUTH_ISSUER=auth-service
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}

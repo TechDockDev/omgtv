@@ -4,9 +4,10 @@ let firebaseApp: admin.app.App | null = null;
 
 /**
  * Initialize Firebase Admin SDK
- * Credentials are stored as individual environment variables
+ * Returns the app instance on success, or null if credentials are unavailable.
+ * This allows the service to start and serve non-push routes even without Firebase.
  */
-export function initializeFirebase(): admin.app.App {
+export function initializeFirebase(): admin.app.App | null {
     if (admin.apps.length > 0) {
         firebaseApp = admin.apps[0]!;
         return firebaseApp;
@@ -39,9 +40,16 @@ export function initializeFirebase(): admin.app.App {
         console.log('✅ Firebase Admin SDK initialized successfully');
         return firebaseApp;
     } catch (error) {
-        console.error('❌ Failed to initialize Firebase Admin SDK:', error);
-        throw new Error(`Firebase initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        console.error('⚠️ Firebase Admin SDK not available — push notifications will be disabled:', error instanceof Error ? error.message : error);
+        return null;
     }
+}
+
+/**
+ * Check if Firebase has been successfully initialized
+ */
+export function isFirebaseAvailable(): boolean {
+    return firebaseApp !== null;
 }
 
 /**

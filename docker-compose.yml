@@ -340,6 +340,8 @@ services:
       REDIS_URL: ${NOTIFICATION_SERVICE_REDIS_URL:-redis://redis:6379/4}
       SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
       FIREBASE_SERVICE_ACCOUNT_PATH: /app/secrets/firebase/notification-service-account.json
+    volumes:
+      - ./NotificationService/secrets/firebase/notification-service-account.json:/app/secrets/firebase/notification-service-account.json:ro
     ports:
       - "${NOTIFICATION_SERVICE_HTTP_HOST_PORT:-5200}:${NOTIFICATION_SERVICE_HTTP_PORT:-5200}"
       - "${NOTIFICATION_SERVICE_GRPC_HOST_PORT:-50072}:${NOTIFICATION_SERVICE_GRPC_PORT:-50072}"
@@ -399,6 +401,7 @@ services:
       ENGAGEMENT_SERVICE_URL: http://engagement-service:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}
       SEARCH_SERVICE_URL: http://search-service:${SEARCH_SERVICE_HTTP_PORT:-4800}
       SUBSCRIPTION_SERVICE_URL: http://subscription-service:${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}
+      NOTIFICATION_SERVICE_URL: http://notification-service:${NOTIFICATION_SERVICE_HTTP_PORT:-5200}
       SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
       ENABLE_TELEMETRY: ${GATEWAY_ENABLE_TELEMETRY:-false}
       SERVICE_NAME: ${GATEWAY_SERVICE_NAME:-pocketlol-gateway}
