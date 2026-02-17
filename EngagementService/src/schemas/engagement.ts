@@ -16,6 +16,7 @@ export const engagementEventMetricsSchema = z.object({
 });
 
 export const continueWatchUpsertSchema = z.object({
+  userId: z.string().uuid(),
   episodeId: z.string(),
   watchedDuration: z.number().int().nonnegative(),
   totalDuration: z.number().int().positive(),
