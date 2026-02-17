@@ -1,0 +1,116 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MediaAssetStatus {
+  PENDING
+  UPLOADED  // File uploaded but processing not started
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum MediaAssetType {
+  EPISODE
+  REEL
+}
+
+model MediaAsset {
+  id              String           @id @default(uuid())
+  type            MediaAssetType
+  uploadId        String?          @unique
+  filename        String?
+  title           String?
+  sizeBytes       BigInt?
+  sourceUploadId  String?
+  streamingAssetId String?
+  manifestUrl     String?
+  defaultThumbnailUrl String?
+  status          MediaAssetStatus @default(PENDING)
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  deletedAt       DateTime?
+
+  // Relations (Commented out to avoid dependency hell in worker)
+  // episodeId String? @unique
+  // reelId    String? @unique
+  // seriesId  String? 
+
+  // episode Episode? @relation(fields: [episodeId], references: [id])
+  // reel    Reel?    @relation(fields: [reelId], references: [id])
+  // series  Series?  @relation(fields: [seriesId], references: [id])
+
+  variants MediaAssetVariant[]
+
+  @@index([status])
+  // @@index([seriesId])
+}
+
+model ImageAsset {
+  id          String           @id @default(uuid())
+  uploadId    String           @unique
+  filename    String?
+  title       String?
+  sizeBytes   BigInt?
+  url         String           // GCS URL
+  status      MediaAssetStatus @default(PENDING)
+  
+  // Optional linking - can be assigned later
+  seriesId String?
+  episodeId String?
+  reelId    String?
+
+  // specific relations removed for worker simplicity
+  // series  Series?  @relation(fields: [seriesId], references: [id])
+  // episode Episode? @relation(fields: [episodeId], references: [id])
+  // reel    Reel?    @relation(fields: [reelId], references: [id])
+  
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([seriesId])
+  @@index([episodeId])
+  @@index([reelId])
+}
+
+model MediaAssetVariant {
+  id             String   @id @default(uuid())
+  mediaAssetId   String
+  label          String
+  width          Int?
+  height         Int?
+  bitrateKbps    Int?
+  codec          String?
+  frameRate      Float?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id])
+
+  @@unique([mediaAssetId, label])
+  @@index([mediaAssetId])
+}
+
+// Minimal Definitions for Relations to support ImageAsset/MediaAsset validity in Worker
+// We don't need full fields, just IDs for relation integrity if we were validation, 
+// but Prisma requires the relation fields to exist on both sides if specified.
+// To avoid copy-pasting the ENTIRE schema which is fragile, I will comment out the relations in ImageAsset 
+// and just keep the scalar fields (seriesId, etc) for the Worker.
+// The Worker ONLY updates status, it doesn't navigate relations.
+// WAIT - If I comment out relations in ImageAsset, Prisma won't complain about missing models.
+// Let's try that first to keep it simple.
+
+// RE-WRITING REPLACEMENT WITHOUT RELATIONS FOR WORKER SIMPLICITY
+

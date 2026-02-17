@@ -27,12 +27,25 @@ import {
   addAdminCarouselSeries,
   removeAdminCarouselSeries,
   getSeriesReviews,
+  uploadMedia,
+  uploadImage,
+  uploadThumbnail,
 } from "../proxy/content.proxy";
 import {
   mediaProcessSuccessResponseSchema,
   mediaAssetListSuccessResponseSchema,
   adminCarouselActionSuccessResponseSchema,
   type AdminCarouselActionResponse,
+  uploadMediaBodySchema,
+  uploadMediaResponseSchema,
+  uploadImageBodySchema,
+  uploadImageResponseSchema,
+  uploadThumbnailResponseSchema,
+  type UploadMediaBody,
+  type UploadMediaResponse,
+  type UploadImageBody,
+  type UploadImageResponse,
+  type UploadThumbnailResponse,
 } from "../schemas/content.schema";
 import { getCachedJson, setCachedJson } from "../utils/cache";
 import { getContentCacheTtlSeconds } from "../config";
@@ -409,6 +422,115 @@ export default fp(
         return reply.send(result);
       },
     });
+    fastify.route<{
+      Params: { id: string };
+      Reply: UploadThumbnailResponse;
+    }>({
+      method: "POST",
+      url: "/admin/media/:id/thumbnail",
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        response: {
+          200: uploadThumbnailResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          404: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const { id } = request.params;
+        const result = await uploadThumbnail({
+          mediaId: id,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        request.log.info(
+          { adminId: request.user?.id, mediaId: id },
+          "Initiated thumbnail upload"
+        );
+        return reply.send(result as UploadThumbnailResponse);
+      },
+    });
+
+    fastify.route<{
+      Body: UploadMediaBody;
+      Reply: UploadMediaResponse;
+    }>({
+      method: "POST",
+      url: "/admin/media/upload",
+      schema: {
+        body: uploadMediaBodySchema,
+        response: {
+          200: uploadMediaResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const body = uploadMediaBodySchema.parse(request.body);
+        const result = await uploadMedia({
+          body,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        request.log.info(
+          { adminId: request.user?.id, type: body.type },
+          "Initiated media upload"
+        );
+        return reply.send(result as UploadMediaResponse);
+      },
+    });
+
+    fastify.route<{
+      Body: UploadImageBody;
+      Reply: UploadImageResponse;
+    }>({
+      method: "POST",
+      url: "/admin/catalog/images/upload",
+      schema: {
+        body: uploadImageBodySchema,
+        response: {
+          200: uploadImageResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const body = uploadImageBodySchema.parse(request.body);
+        const result = await uploadImage({
+          body,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        request.log.info(
+          { adminId: request.user?.id },
+          "Initiated image upload"
+        );
+        return reply.send(result as UploadImageResponse);
+      },
+    });
+
   },
   { name: "content-routes" }
 );

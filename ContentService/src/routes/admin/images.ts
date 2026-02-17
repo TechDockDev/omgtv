@@ -1,12 +1,18 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { MediaAssetStatus } from "@prisma/client";
+import * as crypto from "crypto";
 
 const listImagesQuerySchema = z.object({
     status: z.nativeEnum(MediaAssetStatus).optional(),
     unassigned: z.coerce.boolean().optional(),
     limit: z.coerce.number().int().positive().max(100).default(20),
     cursor: z.string().uuid().optional(),
+});
+
+const uploadImageBodySchema = z.object({
+    title: z.string().min(1),
+    filename: z.string().optional(),
 });
 
 const assignImageBodySchema = z.object({
@@ -106,4 +112,78 @@ export default async function adminImageRoutes(fastify: FastifyInstance) {
             }
         },
     });
+    /**
+     * POST /admin/catalog/images/upload
+     * Initiates an image upload flow by creating a PENDING asset and returning a GCS Signed URL.
+     */
+    fastify.post(
+        "/upload",
+        {
+            schema: {
+                body: uploadImageBodySchema,
+                response: {
+                    200: z.object({
+                        id: z.string(),
+                        uploadUrl: z.string(),
+                        expiresAt: z.string(),
+                        publicUrl: z.string(),
+                    }),
+                },
+            },
+        },
+        async (request, reply) => {
+            const { title, filename } = uploadImageBodySchema.parse(request.body);
+            const adminId = requireAdminId(request, reply);
+            const { Storage } = await import("@google-cloud/storage");
+            const storage = new Storage({ projectId: process.env.GCP_PROJECT_ID });
+            const bucketName = process.env.UPLOAD_BUCKET || "videos-bucket-pocketlol-dev"; // Reusing video bucket for simplicity
+
+            // 1. Create ImageAsset in DB (PENDING)
+            // We generate a UUID for the uploadId to ensure uniqueness
+            const uploadId = crypto.randomUUID();
+
+            const imageAsset = await fastify.prisma.imageAsset.create({
+                data: {
+                    title,
+                    status: MediaAssetStatus.PENDING,
+                    filename: filename || "source.jpg",
+                    createdByAdminId: adminId,
+                    uploadId,
+                    url: "", // Will be updated after upload or set to predicted URL
+                },
+            });
+
+            // 2. Generate Signed URL
+            // Convention: images/{id}/source.jpg
+            const objectName = `images/${imageAsset.id}/source.jpg`; // Force jpg or use extension from filename if strict
+            const file = storage.bucket(bucketName).file(objectName);
+            const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+            const [url] = await file.getSignedUrl({
+                version: "v4",
+                action: "write",
+                expires: expiresAt,
+                contentType: "image/jpeg", // Assume JPEG for now, or detect from filename
+            });
+
+            // 3. Update URL in DB (Optimistic / Predictive)
+            const publicUrl = `https://storage.googleapis.com/${bucketName}/${objectName}`;
+            await fastify.prisma.imageAsset.update({
+                where: { id: imageAsset.id },
+                data: { url: publicUrl }
+            });
+
+            fastify.log.info(
+                { imageAssetId: imageAsset.id, objectName, adminId },
+                "Generated signed URL for new image upload"
+            );
+
+            return {
+                id: imageAsset.id,
+                uploadUrl: url,
+                expiresAt: expiresAt.toISOString(),
+                publicUrl,
+            };
+        }
+    );
 }
