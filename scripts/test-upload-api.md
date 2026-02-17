@@ -57,6 +57,40 @@ curl -X POST "http://localhost:5000/internal/uploads/{uploadId}/validation" \
 docker logs omgtv-transcoding-worker-1 -f
 ```
 
+## 6. Upload Custom Thumbnail (Manual)
+First, get the signed URL for a specific MediaAsset:
+```bash
+curl -X POST http://localhost:3000/api/v1/content/admin/media/{mediaId}/thumbnail \
+  -H "Authorization: Bearer change-me" \
+  -H "Content-Type: application/json"
+```
+
+Then, upload the image using the `uploadUrl` from the response:
+```bash
+curl -X PUT "{uploadUrl}" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary "@/path/to/your-thumbnail.jpg"
+```
+
+## 7. Generic Image Upload (Posters/Banners)
+This is used for images not yet tied to a specific video.
+```bash
+curl -X POST http://localhost:3000/api/v1/content/admin/catalog/images/upload \
+  -H "Authorization: Bearer <your_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "My Poster",
+    "filename": "poster.jpg"
+  }'
+```
+
+Then, upload the image using the `uploadUrl` from the response:
+```bash
+curl -X PUT "{uploadUrl}" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary "@/path/to/image.jpg"
+```
+
 ## Expected Flow
 1. Sign URL → Get signedUrl + uploadId
 2. Upload video to signedUrl (directly to GCS)
@@ -65,3 +99,4 @@ docker logs omgtv-transcoding-worker-1 -f
 5. FFmpeg transcodes to HLS
 6. HLS uploaded to gs://videos-bucket-pocketlol/hls/{contentId}/
 7. Check GCS for output files
+8. (Optional) Upload manual thumbnail via step 6

@@ -246,6 +246,13 @@ export async function createApp(): Promise<FastifyInstance> {
         cb(null, true);
         return;
       }
+
+      // Allow Dev Tunnels / Remote Development
+      if (origin.endsWith(".devtunnels.ms") || origin.endsWith(".github.dev")) {
+        cb(null, true);
+        return;
+      }
+
       cb(new Error("Origin not allowed"), false);
     },
     credentials: true,

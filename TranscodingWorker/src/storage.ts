@@ -37,6 +37,19 @@ export class StorageClient {
 
         this.logger.info({ localPath }, "Source video downloaded");
     }
+    /**
+     * Delete a file from GCS
+     */
+    async deleteFile(bucket: string, objectPath: string): Promise<void> {
+        this.logger.info({ bucket, objectPath }, "Deleting source file");
+        try {
+            await this.storage.bucket(bucket).file(objectPath).delete();
+            this.logger.info({ bucket, objectPath }, "Source file deleted");
+        } catch (error) {
+            this.logger.error({ error, bucket, objectPath }, "Failed to delete source file");
+            // We don't throw here to avoid failing the whole job if cleanup fails
+        }
+    }
 
     /**
      * Upload HLS files from local directory to GCS

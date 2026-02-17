@@ -235,3 +235,41 @@ export const adminTopTenResponseSchema = z.array(adminTopTenSeriesSchema);
 
 export type AdminTopTenBody = z.infer<typeof adminTopTenBodySchema>;
 export type AdminTopTenResponse = z.infer<typeof adminTopTenResponseSchema>;
+
+// Upload Schemas (Video/Image/Thumbnail)
+export const uploadMediaBodySchema = z.object({
+  title: z.string().min(1),
+  type: z.enum(["EPISODE", "REEL"]), // strict casing matching ContentService
+  filename: z.string().optional(),
+});
+
+export const uploadMediaResponseSchema = z.object({
+  id: z.string().uuid(),
+  uploadUrl: z.string(),
+  expiresAt: z.string(),
+  storagePath: z.string().optional(),
+});
+
+export const uploadImageBodySchema = z.object({
+  title: z.string().min(1),
+  filename: z.string().optional(),
+});
+
+export const uploadImageResponseSchema = z.object({
+  id: z.string(),
+  uploadUrl: z.string(),
+  expiresAt: z.string(),
+  publicUrl: z.string(),
+});
+
+export const uploadThumbnailResponseSchema = z.object({
+  uploadUrl: z.string(),
+  publicUrl: z.string(),
+  expiresAt: z.string(),
+});
+
+export type UploadMediaBody = z.infer<typeof uploadMediaBodySchema>;
+export type UploadMediaResponse = z.infer<typeof uploadMediaResponseSchema>;
+export type UploadImageBody = z.infer<typeof uploadImageBodySchema>;
+export type UploadImageResponse = z.infer<typeof uploadImageResponseSchema>;
+export type UploadThumbnailResponse = z.infer<typeof uploadThumbnailResponseSchema>;

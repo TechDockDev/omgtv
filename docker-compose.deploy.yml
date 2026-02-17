@@ -185,6 +185,8 @@ services:
       - PUBSUB_SUBSCRIPTION=projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-dev
       - PUBSUB_READY_TOPIC=streaming-audit-dev
       - CDN_BASE_URL=https://storage.googleapis.com/videos-bucket-pocketlol-dev
+      # Worker needs direct DB access to Content DB
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_content?schema=public
     depends_on:
       - cloud-sql-proxy
 

@@ -8,7 +8,9 @@ const configSchema = z.object({
     GCS_STREAMING_BUCKET: z.string().min(1),
 
     // Pub/Sub (using existing topics)
-    PUBSUB_SUBSCRIPTION: z.string().default("uploaded-media-sub"),
+    PUBSUB_SUBSCRIPTION: z.string().default("uploaded-media-sub").or(z.undefined()).transform((val) => {
+        return process.env.PUBSUB_TRANSCODING_SUBSCRIPTION || val || "uploaded-media-sub";
+    }),
     PUBSUB_READY_TOPIC: z.string().default("streaming-audit"),
 
     // Transcode Settings
