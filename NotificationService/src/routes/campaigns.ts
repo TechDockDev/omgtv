@@ -8,7 +8,10 @@ const createCampaignSchema = z.object({
     title: z.string().min(1).max(100),
     body: z.string().min(1).max(500),
     data: z.record(z.string()).optional(),
-    targetCriteria: z.record(z.any()).optional(),
+    targetCriteria: z.object({
+        segment: z.enum(['SUBSCRIBERS', 'ALL']).optional(),
+        custom: z.record(z.any()).optional()
+    }).optional(),
     idempotencyKey: z.string().optional(),
     type: z.enum(['PUSH', 'EMAIL', 'IN_APP']),
     scheduledAt: z.string().datetime().optional(),

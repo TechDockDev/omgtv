@@ -349,16 +349,38 @@ curl -X GET https://<domain>/api/v1/admin/notifications/stats \
 POST /api/v1/admin/campaigns
 ```
 
-| Field            | Type                          | Required | Description                         |
-| ---------------- | ----------------------------- | -------- | ----------------------------------- |
-| `name`           | string (1–100)                | ✅       | Campaign name                       |
-| `title`          | string (1–100)                | ✅       | Notification title                  |
-| `body`           | string (1–500)                | ✅       | Notification body                   |
-| `type`           | `PUSH` \| `EMAIL` \| `IN_APP` | ✅       | Channel                             |
-| `data`           | object                        | ❌       | Extra payload                       |
-| `targetCriteria` | object                        | ❌       | Targeting rules                     |
-| `idempotencyKey` | string                        | ❌       | Dedup key                           |
-| `scheduledAt`    | ISO 8601 datetime             | ❌       | Schedule for later (omit for draft) |
+| Field            | Type                          | Required | Description                           |
+| ---------------- | ----------------------------- | -------- | ------------------------------------- |
+| `name`           | string (1–100)                | ✅       | Campaign name                         |
+| `title`          | string (1–100)                | ✅       | Notification title                    |
+| `body`           | string (1–500)                | ✅       | Notification body                     |
+| `type`           | `PUSH` \| `EMAIL` \| `IN_APP` | ✅       | Channel                               |
+| `data`           | object                        | ❌       | Extra payload                         |
+| `targetCriteria` | object                        | ❌       | Targeting rules (`segment`, `custom`) |
+| `idempotencyKey` | string                        | ❌       | Dedup key                             |
+| `scheduledAt`    | ISO 8601 datetime             | ❌       | Schedule for later (omit for draft)   |
+
+### Targeted Campaign Example
+
+To send to all subscribers:
+
+```bash
+curl -X POST https://<domain>/api/v1/admin/campaigns \
+  -H "Content-Type: application/json" \
+  -H "x-user-id: <ADMIN_UUID>" \
+  -H "x-user-role: admin" \
+  -d '{
+    "name": "Subscribers Only",
+    "title": "Exclusive Deal",
+    "body": "For our loyal subscribers.",
+    "type": "IN_APP",
+    "targetCriteria": {
+      "segment": "SUBSCRIBERS"
+    }
+  }'
+```
+
+### Regular Campaign Example
 
 ```bash
 curl -X POST https://<domain>/api/v1/admin/campaigns \
