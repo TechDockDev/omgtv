@@ -783,6 +783,7 @@ export class ViewerCatalogService {
     viewerId?: string;
     limit?: number;
     cursor?: string | null;
+    tag?: string; // Added tag param
   }): Promise<ViewerFeedResponse & { fromCache: boolean }> {
     return withSpan(
       "ViewerCatalogService.getHomeSeries",
@@ -790,11 +791,12 @@ export class ViewerCatalogService {
         viewerId: params.viewerId ?? "anon",
         limit: params.limit ?? "default",
         cursor: params.cursor ?? "origin",
+        tag: params.tag ?? "none",
       },
       async (span) => {
         // We can reuse the feed cache structure or create a new one.
         // For simplicity, let's use a distinct key.
-        const cacheKey = `home_series:${params.viewerId ?? "anon"}:${params.limit ?? "default"}:${params.cursor ?? "origin"}`;
+        const cacheKey = `home_series:${params.viewerId ?? "anon"}:${params.limit ?? "default"}:${params.cursor ?? "origin"}:${params.tag ?? "none"}`;
 
         if (this.redis) {
           const cached = await getCachedJson<ViewerFeedResponse>(
@@ -811,6 +813,7 @@ export class ViewerCatalogService {
         const repoResult = await this.repo.listHomeSeries({
           limit: params.limit,
           cursor: decodedCursor,
+          tag: params.tag, // Pass tag to repo
         });
         span.setAttribute("result.count", repoResult.items.length);
 
@@ -888,6 +891,7 @@ export class ViewerCatalogService {
     viewerId?: string;
     limit?: number;
     cursor?: string | null;
+    tag?: string; // Added tag param
   }): Promise<ViewerFeedResponse & { fromCache: boolean }> {
     return withSpan(
       "ViewerCatalogService.getAudioSeries",
@@ -895,9 +899,10 @@ export class ViewerCatalogService {
         viewerId: params.viewerId ?? "anon",
         limit: params.limit ?? "default",
         cursor: params.cursor ?? "origin",
+        tag: params.tag ?? "none",
       },
       async (span) => {
-        const cacheKey = `audio_series:${params.viewerId ?? "anon"}:${params.limit ?? "default"}:${params.cursor ?? "origin"}`;
+        const cacheKey = `audio_series:${params.viewerId ?? "anon"}:${params.limit ?? "default"}:${params.cursor ?? "origin"}:${params.tag ?? "none"}`;
 
         if (this.redis) {
           const cached = await getCachedJson<ViewerFeedResponse>(
@@ -914,6 +919,7 @@ export class ViewerCatalogService {
         const repoResult = await this.repo.listAudioSeries({
           limit: params.limit,
           cursor: decodedCursor,
+          tag: params.tag, // Pass tag to repo
         });
         span.setAttribute("result.count", repoResult.items.length);
 

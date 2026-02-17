@@ -155,6 +155,7 @@ export class MobileAppService {
     const seriesFeed = await this.deps.viewerCatalog.getHomeSeries({
       limit: parsed.limit ?? this.deps.config.homeFeedLimit,
       cursor: parsed.cursor,
+      tag: parsed.tag, // Pass tag to catalog service
     });
 
     let topTen: any[] = [];
@@ -215,7 +216,7 @@ export class MobileAppService {
       topTen: topTen.length,
     });
 
-    const filteredItems = this.filterByTag(seriesFeed.items, parsed.tag);
+    const filteredItems = seriesFeed.items;
     const entitlements = await this.resolveEntitlements(options);
 
     // Old progress map logic removed
@@ -335,9 +336,10 @@ export class MobileAppService {
     const seriesFeed = await this.deps.viewerCatalog.getAudioSeries({
       limit: parsed.limit ?? this.deps.config.homeFeedLimit,
       cursor: parsed.cursor,
+      tag: parsed.tag, // Pass tag to catalog service
     });
 
-    const filteredItems = this.filterByTag(seriesFeed.items, parsed.tag);
+    const filteredItems = seriesFeed.items;
 
     // Fetch Continue Watching for Audio
     // For now, we reuse the same list but we might want to filter for Audio-only if possible?

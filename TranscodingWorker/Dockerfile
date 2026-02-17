@@ -22,8 +22,8 @@ RUN npm run build
 # Stage 2: Runtime
 FROM node:20-alpine
 
-# Install FFmpeg
-RUN apk add --no-cache ffmpeg
+# Install FFmpeg and OpenSSL (required for Prisma on Alpine)
+RUN apk add --no-cache ffmpeg openssl
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -32,8 +32,13 @@ RUN addgroup -g 1001 -S nodejs && \
 WORKDIR /app
 
 # Copy built files from builder
+# Copy built files from builder
 COPY --from=builder /app/package*.json ./
-RUN npm ci
+# Need schema to generate client
+COPY --from=builder /app/prisma ./prisma
+
+# Install prod deps and generate prisma client
+RUN npm ci && npx prisma generate
 
 COPY --from=builder /app/dist ./dist
 

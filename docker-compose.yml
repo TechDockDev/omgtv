@@ -214,6 +214,8 @@ services:
       TRANSCODE_TEMP_DIR: /tmp/transcode
       HLS_SEGMENT_DURATION: 4
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-service-account.json
+      # Worker needs direct DB access to Content DB (Local)
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${CONTENT_SERVICE_DB:-pocketlol_content}?schema=public
     volumes:
       # Mount GCP credentials for local development
       - ${GCP_CREDENTIALS_PATH:-./secrets/gcp-service-account.json}:/secrets/gcp-service-account.json:ro

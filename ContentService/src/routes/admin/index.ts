@@ -7,6 +7,7 @@ import adminTagRoutes from "./tags";
 import adminReelRoutes from "./reels";
 import adminCarouselRoutes from "./carousel";
 import adminMediaRoutes from "./media";
+import adminUploadRoutes from "./upload";
 import adminImageRoutes from "./images";
 import adminTopTenRoutes from "./top-ten";
 
@@ -75,6 +76,8 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   });
   await fastify.register(adminImageRoutes, { prefix: "/catalog/images" });
 
+  // Register upload BEFORE media routes to avoid /:id collision
+  fastify.register(adminUploadRoutes, { prefix: "/media" });
   fastify.register(adminMediaRoutes, { prefix: "/media" });
   await fastify.register(adminTopTenRoutes, { prefix: "/catalog/top-10" });
 }

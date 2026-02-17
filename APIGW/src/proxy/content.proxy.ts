@@ -340,7 +340,7 @@ export async function processMediaAsset({
     const response = await performServiceRequest({
       serviceName: "content",
       baseUrl,
-      path: `/api/v1/content/admin/media/${mediaId}/process`,
+      path: `/admin/media/${mediaId}/process`,
       method: "POST",
       correlationId,
       user,
@@ -560,6 +560,117 @@ export async function getSeriesReviews({
         "Failed to fetch series reviews",
         error.cause
       );
+    }
+    throw error;
+  }
+  return payload;
+}
+
+// Upload Promoted Functions
+
+export async function uploadMedia({
+  body,
+  correlationId,
+  user,
+  span,
+}: {
+  body: any; // Typed in route handler
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}) {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: "/admin/media/upload",
+      method: "POST",
+      body,
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:uploadMedia",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(Math.min(error.statusCode, 502), "Failed to initiate media upload", error.cause);
+    }
+    throw error;
+  }
+  return payload;
+}
+
+export async function uploadImage({
+  body,
+  correlationId,
+  user,
+  span,
+}: {
+  body: any;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}) {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: "/admin/catalog/images/upload",
+      method: "POST",
+      body,
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:uploadImage",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(Math.min(error.statusCode, 502), "Failed to initiate image upload", error.cause);
+    }
+    throw error;
+  }
+  return payload;
+}
+
+export async function uploadThumbnail({
+  mediaId,
+  correlationId,
+  user,
+  span,
+}: {
+  mediaId: string;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}) {
+  const baseUrl = resolveServiceUrl("content");
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "content",
+      baseUrl,
+      path: `/admin/media/${mediaId}/thumbnail`,
+      method: "POST",
+      body: {},
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:content:uploadThumbnail",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 404) throw createHttpError(404, "Media asset not found", error.cause);
+      throw createHttpError(Math.min(error.statusCode, 502), "Failed to initiate thumbnail upload", error.cause);
     }
     throw error;
   }

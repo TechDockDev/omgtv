@@ -1652,19 +1652,36 @@ export class CatalogRepository {
   async listHomeSeries(params: {
     limit?: number;
     cursor?: string | null;
+    tag?: string; // Added tag param
     now?: Date;
   }): Promise<PaginatedResult<Series & { category: Category | null }>> {
     const limit = normalizeLimit(params.limit);
     const now = params.now ?? new Date();
 
+    const where: Prisma.SeriesWhereInput = {
+      deletedAt: null,
+      status: PublicationStatus.PUBLISHED,
+      visibility: Visibility.PUBLIC,
+      OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
+      isAudioSeries: false, // Exclude audio series from home feed
+    };
+
+    if (params.tag) {
+      const normalizedTag = params.tag.trim().toLowerCase();
+      where.OR = [
+        {
+          category: {
+            OR: [
+              { name: { contains: normalizedTag, mode: "insensitive" } },
+              { slug: { contains: normalizedTag, mode: "insensitive" } },
+            ],
+          },
+        },
+        { tags: { has: params.tag } }, // Exact match for tags array
+      ];
+    }
     const rows = await this.prisma.series.findMany({
-      where: {
-        deletedAt: null,
-        status: PublicationStatus.PUBLISHED,
-        visibility: Visibility.PUBLIC,
-        OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
-        isAudioSeries: false, // Exclude audio series from home feed
-      },
+      where,
       include: {
         category: true,
       },
@@ -1733,19 +1750,37 @@ export class CatalogRepository {
   async listAudioSeries(params: {
     limit?: number;
     cursor?: string | null;
+    tag?: string; // Added tag param
     now?: Date;
   }): Promise<PaginatedResult<Series & { category: Category | null }>> {
     const limit = normalizeLimit(params.limit);
     const now = params.now ?? new Date();
 
+    const where: Prisma.SeriesWhereInput = {
+      deletedAt: null,
+      status: PublicationStatus.PUBLISHED,
+      visibility: Visibility.PUBLIC,
+      OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
+      isAudioSeries: true, // Only audio series
+    };
+
+    if (params.tag) {
+      const normalizedTag = params.tag.trim().toLowerCase();
+      where.OR = [
+        {
+          category: {
+            OR: [
+              { name: { contains: normalizedTag, mode: "insensitive" } },
+              { slug: { contains: normalizedTag, mode: "insensitive" } },
+            ],
+          },
+        },
+        { tags: { has: params.tag } },
+      ];
+    }
+
     const rows = await this.prisma.series.findMany({
-      where: {
-        deletedAt: null,
-        status: PublicationStatus.PUBLISHED,
-        visibility: Visibility.PUBLIC,
-        OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
-        isAudioSeries: true, // Only audio series
-      },
+      where,
       include: {
         category: true,
       },

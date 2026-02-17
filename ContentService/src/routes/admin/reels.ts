@@ -20,6 +20,8 @@ const createReelSchema = z.object({
   durationSeconds: z.number().int().positive().optional(),
   uploadId: z.string().optional(),
   mediaAssetId: z.string().uuid().optional(),
+  heroImageUrl: z.string().url().optional(),
+  defaultThumbnailUrl: z.string().url().optional(),
 });
 
 const updateReelTagsSchema = z.object({
@@ -33,6 +35,8 @@ const updateReelSchema = z.object({
   visibility: z.nativeEnum(Visibility).optional(),
   publishedAt: z.coerce.date().nullable().optional(),
   durationSeconds: z.number().int().positive().optional(),
+  heroImageUrl: z.string().url().nullable().optional(),
+  defaultThumbnailUrl: z.string().url().nullable().optional(),
 });
 
 export default async function adminReelRoutes(fastify: FastifyInstance) {
