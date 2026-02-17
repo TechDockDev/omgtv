@@ -6,12 +6,12 @@ import {
 
 const continueWatchQuerySchema = z.object({
   userId: z.string().uuid(),
-  episodeIds: z.array(z.string().uuid()).min(1).max(100),
+  episodeIds: z.array(z.string()).min(1).max(100),
   limit: z.number().int().positive().max(100).optional(),
 });
 
 const continueWatchEntrySchema = z.object({
-  episode_id: z.string().uuid(),
+  episode_id: z.string(),
   watched_duration: z.number().int().nonnegative(),
   total_duration: z.number().int().positive(),
   last_watched_at: z.string().datetime().nullable(),
@@ -25,7 +25,7 @@ const continueWatchResponseSchema = z.object({
 // User state schemas for engagement enrichment
 const userStateItemSchema = z.object({
   contentType: z.enum(["reel", "series"]),
-  contentId: z.string().uuid(),
+  contentId: z.string(),
 });
 
 const userStateEntrySchema = z.object({
@@ -167,7 +167,7 @@ export class EngagementClient {
     });
 
     const reviewSchema = z.object({
-      review_id: z.string().uuid(),
+      review_id: z.string(),
       user_id: z.string().uuid(),
       user_name: z.string(),
       user_phone: z.string().optional(),
@@ -251,7 +251,7 @@ export class EngagementClient {
       items: z.array(
         z.object({
           contentType: z.enum(["reel", "series"]),
-          contentId: z.string().uuid(),
+          contentId: z.string(),
         })
       ),
     });
@@ -296,7 +296,7 @@ export class EngagementClient {
     }
 
     const statsBatchRequestSchema = z.object({
-      ids: z.array(z.string().uuid()).min(1).max(200),
+      ids: z.array(z.string()).min(1).max(200),
     });
 
     const statsSchema = z.object({

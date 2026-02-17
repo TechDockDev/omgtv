@@ -109,6 +109,16 @@ type EntitlementLookup = {
   reel: EntitlementSnapshot;
 };
 
+
+const DEFAULT_ENGAGEMENT = {
+  likeCount: 0,
+  viewCount: 0,
+  isLiked: false,
+  isSaved: false,
+  averageRating: 0,
+  reviewCount: 0,
+};
+
 export class MobileAppService {
   constructor(
     private readonly deps: {
@@ -250,7 +260,7 @@ export class MobileAppService {
         rating: engagement?.averageRating ?? null,
         lastWatchedAt: null,
         series_id: t.series.id,
-        engagement: engagement ?? null,
+        engagement: engagement ?? DEFAULT_ENGAGEMENT,
         is_audio_series: t.series.isAudioSeries ?? false
       };
     });
@@ -288,7 +298,7 @@ export class MobileAppService {
             entitlements.episode,
             progressMap.get(item.id)
           ),
-          engagement: engagement ?? null,
+          engagement: engagement ?? DEFAULT_ENGAGEMENT,
         };
       });
 
@@ -297,7 +307,7 @@ export class MobileAppService {
         const engagement = engagementStates.get(item.id);
         return {
           ...this.toSectionEntry(item, undefined, engagement?.averageRating),
-          engagement: engagement ?? null
+          engagement: engagement ?? DEFAULT_ENGAGEMENT
         };
       }),
       continueWatch,
@@ -397,7 +407,7 @@ export class MobileAppService {
           entitlements.episode,
           progressMap.get(item.id)
         ),
-        engagement: engagement ?? null,
+        engagement: engagement ?? DEFAULT_ENGAGEMENT,
       };
     });
 
@@ -410,7 +420,7 @@ export class MobileAppService {
         const engagement = engagementStates.get(item.id);
         return {
           ...this.toSectionEntry(item, undefined, engagement?.averageRating),
-          engagement: engagement ?? null
+          engagement: engagement ?? DEFAULT_ENGAGEMENT
         };
       }),
       continueWatch,
@@ -518,7 +528,7 @@ export class MobileAppService {
       const item = this.toReelItem(reel, entitlements.reel, engagement?.averageRating);
       return {
         ...item,
-        engagement: engagement ?? null,
+        engagement: engagement ?? DEFAULT_ENGAGEMENT,
       };
     });
 
@@ -580,7 +590,7 @@ export class MobileAppService {
         const engagement = engagementStates?.get(feedItem.series.id);
         items.push({
           ...this.toCarouselItem(feedItem, entry.position, engagement?.averageRating),
-          engagement: engagement ?? null,
+          engagement: engagement ?? DEFAULT_ENGAGEMENT,
         });
         continue;
       }
@@ -588,7 +598,7 @@ export class MobileAppService {
         const engagement = engagementStates?.get(entry.series.id);
         items.push({
           ...this.toSeriesCarouselItem(entry.series, entry.position, engagement?.averageRating),
-          engagement: engagement ?? null,
+          engagement: engagement ?? DEFAULT_ENGAGEMENT,
         });
       }
     }
@@ -877,7 +887,7 @@ export class MobileAppService {
         : null,
       episodes,
       rating: seriesEngagement?.averageRating ?? null,
-      engagement: seriesEngagement ?? null,
+      engagement: seriesEngagement ?? DEFAULT_ENGAGEMENT,
       reviews: {
         summary: {
           average_rating: options.reviews?.summary.average_rating ?? averageRating,
