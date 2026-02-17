@@ -118,4 +118,29 @@ export default async function internalRoutes(app: FastifyInstance) {
       active_trials: trialUserCount,
     };
   });
+
+  app.get("/subscriptions/active-users", {
+    schema: {
+      querystring: z.object({
+        limit: z.coerce.number().optional().default(100),
+        offset: z.coerce.number().optional().default(0),
+      }),
+    },
+  }, async (request) => {
+    const { limit, offset } = request.query as { limit: number; offset: number };
+
+    // Find users with ACTIVE status and end date in the future
+    const subscriptions = await prisma.userSubscription.findMany({
+      where: {
+        status: "ACTIVE",
+        endsAt: { gt: new Date() }
+      },
+      select: { userId: true },
+      distinct: ['userId'],
+      take: limit,
+      skip: offset,
+    });
+
+    return { userIds: subscriptions.map(s => s.userId) };
+  });
 }

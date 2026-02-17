@@ -3,6 +3,8 @@ import { pushNotificationService } from './PushNotificationService';
 import prisma from '../prisma';
 import { NotificationType, CampaignStatus } from '@prisma/client';
 
+import { userProvider } from '../providers/UserProvider';
+
 export class CampaignService {
     /**
      * Create a new campaign
@@ -49,69 +51,99 @@ export class CampaignService {
         // 2. Update status to SENDING
         await CampaignRepository.updateStatus(id, 'SENDING');
 
-        const BATCH_SIZE = 500;
-        let totalSent = 0;
-        let totalFailed = 0;
-        let offset = 0;
-
         try {
-            if (campaign.type === 'PUSH') {
-                while (true) {
-                    // 3. Fetch Tokens in Batches
-                    const fcmTokens = await prisma.fcmToken.findMany({
-                        select: { token: true, userId: true },
-                        take: BATCH_SIZE,
-                        skip: offset
-                    });
+            // 3. Resolve Target Users
+            let targetUserIds: string[] = [];
+            const criteria = (campaign.targetCriteria as any) || {};
 
-                    if (fcmTokens.length === 0) break;
-
-                    const tokens = fcmTokens.map(t => t.token);
-
-                    // 4. Dispatch Push Batch
-                    const result = await pushNotificationService.sendToMultipleDevices(tokens, {
-                        title: campaign.title,
-                        body: campaign.body,
-                        data: (campaign.data as any) || {}
-                    });
-
-                    // 5. Update Campaign Stats Incrementally
-                    await CampaignRepository.incrementStats(id, result.successCount, result.failureCount);
-                    totalSent += result.successCount;
-                    totalFailed += result.failureCount;
-
-                    // 6. Create Notification Records for the batch
-                    const notificationsData = fcmTokens.map((t, idx) => {
-                        const resp = result.responses[idx];
-                        return {
-                            userId: t.userId,
-                            type: NotificationType.PUSH,
-                            title: campaign.title,
-                            body: campaign.body,
-                            data: campaign.data || {},
-                            status: resp.success ? 'SENT' : 'FAILED',
-                            campaignId: campaign.id,
-                            fcmMessageId: resp.messageId,
-                            fcmError: resp.error
-                        } as any;
-                    });
-
-                    await prisma.notification.createMany({
-                        data: notificationsData
-                    });
-
-                    offset += BATCH_SIZE;
-                    // Optional: Sleep briefly between batches to prevent DB/FCM overload
-                    // await new Promise(resolve => setTimeout(resolve, 50));
-                }
-
-                await CampaignRepository.updateStatus(id, 'COMPLETED');
-                return { success: true, sent: totalSent, failed: totalFailed };
+            if (criteria.segment === 'SUBSCRIBERS') {
+                targetUserIds = await userProvider.getActiveSubscribers();
+            } else if (criteria.segment === 'ALL') {
+                // For ALL, we might want to optimize, but for now let's fetch all IDs to ensure In-App consistency
+                // Or maybe we treat ALL differently.
+                // If it's PUSH only and ALL, the old logic was fine.
+                // But for IN_APP, we need IDs.
+                // Let's assume 'ALL' fetches from UserService without filters.
+                targetUserIds = await userProvider.getUsersByCriteria({});
+            } else if (Object.keys(criteria).length > 0) {
+                // Custom filters
+                targetUserIds = await userProvider.getUsersByCriteria(criteria);
+            } else {
+                // Default to ALL if no criteria? Or fail?
+                // Provide safe fallback: if no criteria, maybe it WAS meant for everyone?
+                targetUserIds = await userProvider.getUsersByCriteria({});
             }
 
-            // TODO: Support EMAIL and IN_APP campaign execution
+            console.log(`Campaign ${id}: Resolved ${targetUserIds.length} target users.`);
+
+            const BATCH_SIZE = 500;
+            let totalSent = 0;
+            let totalFailed = 0;
+
+            // 4. Process in Batches
+            for (let i = 0; i < targetUserIds.length; i += BATCH_SIZE) {
+                const batchUserIds = targetUserIds.slice(i, i + BATCH_SIZE);
+
+                // A. Handle PUSH
+                if (campaign.type === 'PUSH') {
+                    const fcmTokens = await prisma.fcmToken.findMany({
+                        where: { userId: { in: batchUserIds } },
+                        select: { token: true, userId: true }
+                    });
+
+                    if (fcmTokens.length > 0) {
+                        const tokens = fcmTokens.map(t => t.token);
+                        const result = await pushNotificationService.sendToMultipleDevices(tokens, {
+                            title: campaign.title,
+                            body: campaign.body,
+                            data: (campaign.data as any) || {}
+                        });
+
+                        totalSent += result.successCount;
+                        totalFailed += result.failureCount;
+
+                        // Create Notification Records for PUSH history
+                        const notificationsData = fcmTokens.map((t, idx) => {
+                            const resp = result.responses[idx];
+                            return {
+                                userId: t.userId,
+                                type: NotificationType.PUSH,
+                                title: campaign.title,
+                                body: campaign.body,
+                                data: campaign.data || {},
+                                status: resp.success ? 'SENT' : 'FAILED',
+                                campaignId: campaign.id,
+                                fcmMessageId: resp.messageId,
+                                fcmError: resp.error
+                            } as any;
+                        });
+
+                        await prisma.notification.createMany({ data: notificationsData });
+                    }
+                }
+
+                // B. Handle IN_APP
+                if (campaign.type === 'IN_APP') {
+                    const notificationsData = batchUserIds.map(userId => ({
+                        userId,
+                        type: NotificationType.IN_APP,
+                        title: campaign.title,
+                        body: campaign.body,
+                        data: campaign.data || {},
+                        status: 'SENT', // In-App is "Sent" as soon as DB record exists
+                        campaignId: campaign.id,
+                        priority: 'MEDIUM' // Could come from campaign
+                    } as any));
+
+                    await prisma.notification.createMany({ data: notificationsData });
+                    totalSent += batchUserIds.length;
+                }
+            }
+
             await CampaignRepository.updateStatus(id, 'COMPLETED');
-            return { success: true, sent: 0, failed: 0 };
+            await CampaignRepository.incrementStats(id, totalSent, totalFailed);
+
+            return { success: true, sent: totalSent, failed: totalFailed };
 
         } catch (error) {
             console.error(`Failed to execute campaign ${id}:`, error);

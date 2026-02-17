@@ -266,9 +266,9 @@
                   "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"title\": \"Account Update\",\n  \"body\": \"Your subscription has been upgraded!\",\n  \"type\": \"PUSH\",\n  \"priority\": \"HIGH\",\n  \"data\": {\n    \"screen\": \"subscription\"\n  }\n}"
                 },
                 "url": {
-                  "raw": "{{baseUrl}}/api/v1/admin/notifications/send",
+                  "raw": "{{baseUrl}}/api/v1/notifications/admin/send",
                   "host": ["{{baseUrl}}"],
-                  "path": ["api", "v1", "admin", "notifications", "send"]
+                  "path": ["api", "v1", "notifications", "admin", "send"]
                 },
                 "description": "Send a notification to a specific user. Supports EMAIL, PUSH, and IN_APP types."
               }
@@ -287,9 +287,9 @@
                   "raw": "{\n  \"title\": \"🎉 New Feature Launch!\",\n  \"body\": \"Check out our exciting new content library.\",\n  \"priority\": \"HIGH\",\n  \"data\": {\n    \"screen\": \"home\"\n  }\n}"
                 },
                 "url": {
-                  "raw": "{{baseUrl}}/api/v1/admin/notifications/broadcast",
+                  "raw": "{{baseUrl}}/api/v1/notifications/admin/broadcast",
                   "host": ["{{baseUrl}}"],
-                  "path": ["api", "v1", "admin", "notifications", "broadcast"]
+                  "path": ["api", "v1", "notifications", "admin", "broadcast"]
                 },
                 "description": "Broadcast a push notification to all users via FCM topic 'all-users'."
               }
@@ -303,9 +303,9 @@
                   { "key": "x-user-role", "value": "admin" }
                 ],
                 "url": {
-                  "raw": "{{baseUrl}}/api/v1/admin/notifications/stats",
+                  "raw": "{{baseUrl}}/api/v1/notifications/admin/stats",
                   "host": ["{{baseUrl}}"],
-                  "path": ["api", "v1", "admin", "notifications", "stats"]
+                  "path": ["api", "v1", "notifications", "admin", "stats"]
                 },
                 "description": "Get notification statistics: total, pending, sent, failed, read counts."
               }
@@ -329,9 +329,9 @@
                   "raw": "{\n  \"name\": \"Weekend Promo\",\n  \"title\": \"50% Off This Weekend!\",\n  \"body\": \"Use code WEEKEND50 for all premium content.\",\n  \"type\": \"PUSH\",\n  \"scheduledAt\": \"2026-02-15T10:00:00.000Z\",\n  \"idempotencyKey\": \"weekend-promo-feb-2026\",\n  \"data\": {\n    \"promoCode\": \"WEEKEND50\"\n  },\n  \"targetCriteria\": {\n    \"plan\": \"premium\"\n  }\n}"
                 },
                 "url": {
-                  "raw": "{{baseUrl}}/api/v1/admin/campaigns",
+                  "raw": "{{baseUrl}}/api/v1/notifications/admin/campaigns",
                   "host": ["{{baseUrl}}"],
-                  "path": ["api", "v1", "admin", "campaigns"]
+                  "path": ["api", "v1", "notifications", "admin", "campaigns"]
                 },
                 "description": "Create a new notification campaign. Set scheduledAt for future delivery, or omit for a draft."
               }
@@ -345,9 +345,9 @@
                   { "key": "x-user-role", "value": "admin" }
                 ],
                 "url": {
-                  "raw": "{{baseUrl}}/api/v1/admin/campaigns?limit=10&offset=0",
+                  "raw": "{{baseUrl}}/api/v1/notifications/admin/campaigns?limit=10&offset=0",
                   "host": ["{{baseUrl}}"],
-                  "path": ["api", "v1", "admin", "campaigns"],
+                  "path": ["api", "v1", "notifications", "admin", "campaigns"],
                   "query": [
                     { "key": "limit", "value": "10" },
                     { "key": "offset", "value": "0" }
@@ -365,9 +365,16 @@
                   { "key": "x-user-role", "value": "admin" }
                 ],
                 "url": {
-                  "raw": "{{baseUrl}}/api/v1/admin/campaigns/:id",
+                  "raw": "{{baseUrl}}/api/v1/notifications/admin/campaigns/:id",
                   "host": ["{{baseUrl}}"],
-                  "path": ["api", "v1", "admin", "campaigns", ":id"],
+                  "path": [
+                    "api",
+                    "v1",
+                    "notifications",
+                    "admin",
+                    "campaigns",
+                    ":id"
+                  ],
                   "variable": [
                     {
                       "key": "id",
@@ -393,9 +400,17 @@
                   "raw": "{\n  \"idempotencyKey\": \"exec-weekend-promo-1\"\n}"
                 },
                 "url": {
-                  "raw": "{{baseUrl}}/api/v1/admin/campaigns/:id/execute",
+                  "raw": "{{baseUrl}}/api/v1/notifications/admin/campaigns/:id/execute",
                   "host": ["{{baseUrl}}"],
-                  "path": ["api", "v1", "admin", "campaigns", ":id", "execute"],
+                  "path": [
+                    "api",
+                    "v1",
+                    "notifications",
+                    "admin",
+                    "campaigns",
+                    ":id",
+                    "execute"
+                  ],
                   "variable": [
                     {
                       "key": "id",
