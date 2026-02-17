@@ -55,4 +55,36 @@ export default async function internalRoutes(app: FastifyInstance) {
             trend: trendData,
         };
     });
+
+    app.post("/users/search", {
+        schema: {
+            body: z.object({
+                filters: z.object({
+                    platform: z.enum(["ios", "android", "web"]).optional(),
+                    createdAtStart: z.string().datetime().optional(),
+                    createdAtEnd: z.string().datetime().optional(),
+                }).optional(),
+                limit: z.number().default(100),
+                offset: z.number().default(0),
+            }),
+        },
+    }, async (request) => {
+        const { filters, limit, offset } = request.body as any;
+        const where: any = {};
+
+        if (filters?.createdAtStart || filters?.createdAtEnd) {
+            where.createdAt = {};
+            if (filters.createdAtStart) where.createdAt.gte = new Date(filters.createdAtStart);
+            if (filters.createdAtEnd) where.createdAt.lte = new Date(filters.createdAtEnd);
+        }
+
+        const users = await app.prisma.customerProfile.findMany({
+            where,
+            select: { id: true },
+            take: limit,
+            skip: offset,
+        });
+
+        return { userIds: users.map(u => u.id) };
+    });
 }
