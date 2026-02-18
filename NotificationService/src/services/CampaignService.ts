@@ -86,13 +86,11 @@ export class CampaignService {
 
                 // A. Handle PUSH
                 if (campaign.type === 'PUSH') {
-                    const fcmTokens = await prisma.fcmToken.findMany({
-                        where: { userId: { in: batchUserIds } },
-                        select: { token: true, userId: true }
-                    });
+                    // Fetch FCM tokens from UserService (where they're stored during mobile login)
+                    const fcmTokenEntries = await userProvider.getFcmTokensForUsers(batchUserIds);
 
-                    if (fcmTokens.length > 0) {
-                        const tokens = fcmTokens.map(t => t.token);
+                    if (fcmTokenEntries.length > 0) {
+                        const tokens = fcmTokenEntries.map(t => t.fcmToken);
                         const result = await pushNotificationService.sendToMultipleDevices(tokens, {
                             title: campaign.title,
                             body: campaign.body,
@@ -103,7 +101,7 @@ export class CampaignService {
                         totalFailed += result.failureCount;
 
                         // Create Notification Records for PUSH history
-                        const notificationsData = fcmTokens.map((t, idx) => {
+                        const notificationsData = fcmTokenEntries.map((t, idx) => {
                             const resp = result.responses[idx];
                             return {
                                 userId: t.userId,

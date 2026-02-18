@@ -65,5 +65,36 @@ export const CampaignRepository = {
                 failedCount: { increment: failedCount }
             }
         });
-    }
+    },
+
+    delete: async (id: string) => {
+        // Delete associated notifications first, then the campaign
+        await prisma.notification.deleteMany({ where: { campaignId: id } });
+        return prisma.campaign.delete({ where: { id } });
+    },
+
+    findNotifications: async (campaignId: string, opts: { status?: string; limit?: number; offset?: number } = {}) => {
+        const where: any = { campaignId };
+        if (opts.status) where.status = opts.status;
+
+        const [notifications, total] = await Promise.all([
+            prisma.notification.findMany({
+                where,
+                select: {
+                    id: true,
+                    userId: true,
+                    status: true,
+                    fcmError: true,
+                    fcmMessageId: true,
+                    createdAt: true,
+                },
+                orderBy: { createdAt: 'desc' },
+                take: opts.limit ?? 20,
+                skip: opts.offset ?? 0,
+            }),
+            prisma.notification.count({ where }),
+        ]);
+
+        return { notifications, total };
+    },
 };

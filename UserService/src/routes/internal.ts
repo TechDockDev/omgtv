@@ -87,4 +87,41 @@ export default async function internalRoutes(app: FastifyInstance) {
 
         return { userIds: users.map(u => u.id) };
     });
+
+    /**
+     * POST /internal/users/fcm-tokens
+     * Return FCM tokens for a list of customer profile IDs.
+     * Used by NotificationService to resolve push tokens during campaign execution.
+     */
+    app.post("/users/fcm-tokens", {
+        schema: {
+            body: z.object({
+                userIds: z.array(z.string().uuid()).min(1).max(1000),
+            }),
+        },
+    }, async (request) => {
+        const { userIds } = request.body as { userIds: string[] };
+
+        const links = await app.prisma.customerDeviceLink.findMany({
+            where: { customerId: { in: userIds } },
+            include: {
+                device: {
+                    select: {
+                        deviceId: true,
+                        fcmToken: true,
+                    },
+                },
+            },
+        });
+
+        const tokens = links
+            .filter(link => link.device.fcmToken)
+            .map(link => ({
+                userId: link.customerId,
+                fcmToken: link.device.fcmToken!,
+                deviceId: link.device.deviceId,
+            }));
+
+        return { tokens };
+    });
 }

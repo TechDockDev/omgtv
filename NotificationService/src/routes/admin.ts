@@ -21,24 +21,22 @@ const broadcastNotificationSchema = z.object({
 });
 
 export default async function adminRoutes(server: FastifyInstance) {
-    // Middleware check for admin role should be here
-    // For now assuming internal network or API gateway handles auth
+    // All admin routes require admin access
+    server.addHook('onRequest', server.requireAdmin);
 
     /**
-     * POST /admin/notifications/send
+     * POST /admin/send
      * Send notification to specific user
      */
     server.post('/send', {
         schema: { body: sendNotificationSchema },
-        preHandler: [(server as any).requireAdmin]
     }, async (request, reply) => {
         const { userId, title, body, data, type, priority } = sendNotificationSchema.parse(request.body);
 
         try {
-            // Create In-App Notification
             const notification = await NotificationRepository.create({
                 userId,
-                type: type === 'PUSH' ? 'PUSH' : 'IN_APP', // Mapping enum
+                type: type === 'PUSH' ? 'PUSH' : 'IN_APP',
                 title,
                 body,
                 data: data || {},
@@ -46,11 +44,8 @@ export default async function adminRoutes(server: FastifyInstance) {
                 status: 'PENDING'
             });
 
-            console.log("notificaion", notification)
-            // If Push, also trigger FCM
             if (type === 'PUSH') {
                 const fcmTokens = await prisma.fcmToken.findMany({ where: { userId } });
-                console.log("fcmTokens", fcmTokens)
                 if (fcmTokens.length > 0) {
                     pushNotificationService.sendToMultipleDevices(
                         fcmTokens.map((t: { token: string }) => t.token),
@@ -67,30 +62,21 @@ export default async function adminRoutes(server: FastifyInstance) {
     });
 
     /**
-     * POST /admin/notifications/broadcast
+     * POST /admin/broadcast
      * Send notification to ALL users
      */
     server.post('/broadcast', {
         schema: { body: broadcastNotificationSchema },
-        preHandler: [(server as any).requireAdmin]
     }, async (request, reply) => {
-        const { title, body, data, priority } = broadcastNotificationSchema.parse(request.body);
+        const { title, body, data } = broadcastNotificationSchema.parse(request.body);
 
         try {
-            // 1. Send via FCM Topic "all-users" (most efficient for push)
             const pushResult = await pushNotificationService.sendToTopic('all-users', {
                 title,
                 body,
                 data
             });
 
-            // 2. Create database records for In-App feed?
-            // Creating 1M records here is bad. Usually we create a "GlobalNotification" table
-            // and merge it on read. For MVP, we might just log it or skip DB for broadcast if strictly push.
-            // OR use a background job to fan-out.
-            // Let's create a single System Notification record for reference.
-
-            // For now, returning success of Push Broadcast
             return {
                 success: true,
                 pushResult
@@ -102,12 +88,10 @@ export default async function adminRoutes(server: FastifyInstance) {
     });
 
     /**
-     * GET /admin/notifications/stats
-     * Get simple stats
+     * GET /admin/stats
+     * Get notification statistics
      */
-    server.get('/stats', {
-        preHandler: [(server as any).requireAdmin]
-    }, async (request, reply) => {
+    server.get('/stats', async () => {
         const total = await prisma.notification.count();
         const pending = await prisma.notification.count({ where: { status: 'PENDING' } });
         const sent = await prisma.notification.count({ where: { status: 'SENT' } });

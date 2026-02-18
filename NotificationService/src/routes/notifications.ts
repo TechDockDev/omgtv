@@ -5,6 +5,9 @@ import { NotificationStatus } from '@prisma/client';
 import prisma from '../prisma';
 
 export default async function notificationRoutes(server: FastifyInstance) {
+    // All routes in this module require authentication
+    server.addHook('onRequest', server.authenticate);
+
     // GET /notifications
     server.get('/', {
         schema: {
@@ -13,19 +16,10 @@ export default async function notificationRoutes(server: FastifyInstance) {
                 offset: z.coerce.number().default(0),
             }),
         }
-    }, async (request, reply) => {
-        // In a real scenario, userId would be extracted from the request token (middleware)
-        // For this MVP, we might expect it in headers or assume a mechanism exists.
-        // Let's assume it's passed in header 'x-user-id' for now since we don't have full Auth middleware here.
-        const userId = request.headers['x-user-id'] as string;
-
-        if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized: Missing x-user-id' });
-        }
-
+    }, async (request) => {
+        const userId = request.user!.id;
         const { limit, offset } = request.query as { limit: number; offset: number };
         const notifications = await NotificationRepository.findByUser(userId, limit, offset);
-
         return { notifications };
     });
 
@@ -37,11 +31,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
             }),
         }
     }, async (request, reply) => {
-        const userId = request.headers['x-user-id'] as string;
-        if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized: Missing x-user-id' });
-        }
-
+        const userId = request.user!.id;
         const { id } = request.params as { id: string };
         const notification = await NotificationRepository.findById(id);
 
@@ -58,23 +48,15 @@ export default async function notificationRoutes(server: FastifyInstance) {
     });
 
     // GET /notifications/unread-count
-    server.get('/unread-count', async (request, reply) => {
-        const userId = request.headers['x-user-id'] as string;
-        if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized: Missing x-user-id' });
-        }
-
+    server.get('/unread-count', async (request) => {
+        const userId = request.user!.id;
         const count = await NotificationRepository.countUnread(userId);
         return { count };
     });
 
     // PATCH /notifications/read-all
-    server.patch('/read-all', async (request, reply) => {
-        const userId = request.headers['x-user-id'] as string;
-        if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized: Missing x-user-id' });
-        }
-
+    server.patch('/read-all', async (request) => {
+        const userId = request.user!.id;
         const result = await NotificationRepository.markAllAsRead(userId);
         return { success: true, count: result.count };
     });
@@ -87,11 +69,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
             }),
         }
     }, async (request, reply) => {
-        const userId = request.headers['x-user-id'] as string;
-        if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized: Missing x-user-id' });
-        }
-
+        const userId = request.user!.id;
         const { id } = request.params as { id: string };
         const notification = await NotificationRepository.findById(id);
 
@@ -103,7 +81,6 @@ export default async function notificationRoutes(server: FastifyInstance) {
             return reply.status(403).send({ error: 'Forbidden' });
         }
 
-        // Hard delete for now, or could soft delete if status changed
         await prisma.notification.delete({ where: { id } });
         return { success: true };
     });
