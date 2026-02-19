@@ -117,6 +117,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                   likes: likeResult.likes,
                   views: likeResult.views,
                   saves: likeResult.saves,
+                  averageRating: likeResult.averageRating,
+                  reviewCount: likeResult.reviewCount,
                 };
                 break;
               }
@@ -133,6 +135,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                   likes: unlikeResult.likes,
                   views: unlikeResult.views,
                   saves: unlikeResult.saves,
+                  averageRating: unlikeResult.averageRating,
+                  reviewCount: unlikeResult.reviewCount,
                 };
                 break;
               }

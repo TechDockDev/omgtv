@@ -16,5 +16,9 @@ spec:
               value: "projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-prod"
             - name: PUBSUB_READY_TOPIC
               value: "streaming-audit-prod"
+            - name: MEDIA_PROCESSED_TOPIC
+              value: "media.processed-prod"
+            - name: PREVIEW_GENERATION_TOPIC
+              value: "media.preview.requested-prod"
             - name: CDN_BASE_URL
               value: "https://storage.googleapis.com/videos-bucket-pocketlol"

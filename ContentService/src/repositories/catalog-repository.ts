@@ -1663,7 +1663,7 @@ export class CatalogRepository {
       status: PublicationStatus.PUBLISHED,
       visibility: Visibility.PUBLIC,
       OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
-      isAudioSeries: false, // Exclude audio series from home feed
+      // isAudioSeries: false, // Exclude audio series from home feed - removed to allow audio series in categories
     };
 
     if (params.tag) {

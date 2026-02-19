@@ -229,20 +229,51 @@ export class MobileAppService {
     const filteredItems = seriesFeed.items;
     const entitlements = await this.resolveEntitlements(options);
 
-    // Old progress map logic removed
+    // Fetch Carousel Items EARLY to collect IDs for engagement
+    let carouselItems: CarouselEntryView[] = [];
+    let carouselSeriesIds: string[] = [];
+    let carouselEpisodeIds: string[] = [];
 
-    // Load engagement for Series (Sections) AND Top 10
-    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
-      filteredItems.map((item) => ({ id: item.id, contentType: "series" as const }));
+    if (!parsed.tag) {
+      const carouselEntries = await this.deps.repository.listCarouselEntries();
+      // Extract IDs from carousel for engagement loading
+      carouselEntries.forEach(entry => {
+        if (entry.seriesId) carouselSeriesIds.push(entry.seriesId);
+        if (entry.episodeId) carouselEpisodeIds.push(entry.episodeId);
+      });
+    }
 
-    topTen.forEach((t) => {
-      engagementItems.push({ id: t.series.id, contentType: "series" as const });
+    // Load engagement for Carousel, Series (Sections) AND Top 10
+    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> = [];
+
+    // 1. Carousel Series & Episodes
+    carouselSeriesIds.forEach(id => engagementItems.push({ id, contentType: "series" }));
+    carouselEpisodeIds.forEach(id => engagementItems.push({ id, contentType: "reel" })); // Ep -> reel
+
+    // 2. Main Feed Series
+    filteredItems.forEach(item => {
+      engagementItems.push({ id: item.id, contentType: "series" });
     });
 
-    const engagementStates = await this.loadEngagementStates(engagementItems, options);
+    // 3. Top 10 Series
+    topTen.forEach((t) => {
+      engagementItems.push({ id: t.series.id, contentType: "series" });
+    });
 
-    let carouselItems: CarouselEntryView[] = [];
+    // Deduplicate engagement items to avoid redundant requests
+    const uniqueEngagementItems = Array.from(
+      new Map(engagementItems.map(item => [`${item.contentType}:${item.id}`, item])).values()
+    );
+
+    const engagementStates = await this.loadEngagementStates(uniqueEngagementItems, options);
+
     if (!parsed.tag) {
+      // Re-fetch carousel entries or pass the ones we already fetched?
+      // listCarouselEntries is fast, but let's be efficient.
+      // buildCarouselItems needs to be updated to accept pre-fetched entries or we just call it.
+      // Let's modify buildCarouselItems to accept entries optionally.
+
+      // For now, let's call it. It will call listCarouselEntries again, but we have engagementStates.
       carouselItems = await this.buildCarouselItems(filteredItems, engagementStates);
     }
 
@@ -268,15 +299,7 @@ export class MobileAppService {
     // Build Continue Watch from Targeted Episodes
     const continueWatchCandidates = continueWatchEpisodes;
     // Load Engagement for Continue Watch Episodes
-    const cwEngagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
-      continueWatchEpisodes.map((item) => ({ id: item.id, contentType: "reel" as const })); // Episodes treat as reel/video for engagement? Or series?
-    // Wait, episodes don't typically have engagement (likes/saves) in this app context, usually it's the series.
-    // User asked for "series object with progress and engagement data".
-    // ViewerFeedItem usually has `series: { id, title }`.
-    // Let's assume we want engagement for the EPISODE (if supported) or SERIES?
-    // User said "series object with progress and engagement data".
-    // This implies fetching engagement for the SERIES of the episode.
-
+    // (Existing logic for CW engagement seems okay as it uses its own states fetch)
     const cwSeriesEngagementItems: Array<{ id: string; contentType: "series" }> = [];
     continueWatchEpisodes.forEach(ep => {
       if (ep.series?.id) {

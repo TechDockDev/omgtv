@@ -8,6 +8,15 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: auth-service-config
+data:
+  FIREBASE_PROJECT_ID: "pocketlol-68ca6"
+  ACCESS_TOKEN_TTL: "864000"
+  REDIS_URL: "redis://10.244.194.227:6379"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: content-service-config
 data:
   CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol"
@@ -26,10 +35,35 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: auth-service-config
+  name: user-service-config
 data:
-  FIREBASE_PROJECT_ID: "pocketlol-68ca6"
-  ACCESS_TOKEN_TTL: "864000"
+  REDIS_URL: "redis://10.244.194.227:6379"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-service-config
+data:
+  REDIS_URL: "redis://10.244.194.227:6379"
+  GCP_PROJECT_ID: "pocketlol-68ca6"
+---
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: streaming-service-config
+data:
+  PUBSUB_UPLOAD_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/uploaded-media-sub-prod"
+  AUDIT_LOG_TOPIC: "projects/pocketlol-68ca6/topics/streaming-audit-prod"
+  CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: search-service-config
+data:
+  MEILI_MASTER_KEY: "pocketlolMasterKey2026Secure"
+  REDIS_URL: "redis://10.244.194.227:6379"
 ---
 apiVersion: v1
 kind: ConfigMap

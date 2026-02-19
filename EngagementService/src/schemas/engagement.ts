@@ -71,6 +71,8 @@ export const likeResponseSchema = z.object({
   likes: z.number().int().nonnegative(),
   views: z.number().int().nonnegative(),
   saves: z.number().int().nonnegative(),
+  averageRating: z.number().nonnegative().optional().default(0),
+  reviewCount: z.number().int().nonnegative().optional().default(0),
 });
 
 export const viewResponseSchema = z.object({
@@ -157,6 +159,8 @@ export const batchActionResultSchema = z.object({
       likes: z.number().int().nonnegative().optional(),
       views: z.number().int().nonnegative().optional(),
       saves: z.number().int().nonnegative().optional(),
+      averageRating: z.number().nonnegative().optional(),
+      reviewCount: z.number().int().nonnegative().optional(),
     })
     .optional(),
   error: z.string().optional(),
