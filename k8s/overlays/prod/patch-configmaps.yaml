@@ -19,9 +19,9 @@ kind: ConfigMap
 metadata:
   name: content-service-config
 data:
-  CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol"
+  CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol-prod"
   REDIS_URL: "redis://10.244.194.227:6379"
-  UPLOAD_BUCKET: "videos-bucket-pocketlol" # Unified bucket (hls, videos, images, thumbnails)
+  UPLOAD_BUCKET: "videos-bucket-pocketlol-prod" # Unified bucket (hls, videos, images, thumbnails)
   TRANSCODING_REQUESTS_TOPIC: "transcoding-requests-prod"
   MEDIA_READY_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/streaming-audit-sub-prod"
 ---
@@ -55,7 +55,7 @@ metadata:
 data:
   PUBSUB_UPLOAD_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/uploaded-media-sub-prod"
   AUDIT_LOG_TOPIC: "projects/pocketlol-68ca6/topics/streaming-audit-prod"
-  CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol"
+  CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol-prod"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -73,7 +73,7 @@ data:
   REDIS_URL: "redis://10.244.194.227:6379"
   GCP_PROJECT_ID: "pocketlol-68ca6"
   PUBSUB_PROJECT_ID: "pocketlol-68ca6"
-  UPLOAD_BUCKET: "videos-bucket-pocketlol" # Unified bucket
+  UPLOAD_BUCKET: "videos-bucket-pocketlol-prod" # Unified bucket
   CDN_UPLOAD_BASE_URL: "https://upload.pocketlol.example"
   MEDIA_UPLOADED_TOPIC: "uploaded-media-prod"
   PREVIEW_GENERATION_TOPIC: "media.preview.requested-prod"

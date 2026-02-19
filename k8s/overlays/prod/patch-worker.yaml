@@ -9,9 +9,9 @@ spec:
         - name: transcoding-worker
           env:
             - name: GCS_UPLOADS_BUCKET
-              value: "videos-bucket-pocketlol"
+              value: "videos-bucket-pocketlol-prod"
             - name: GCS_STREAMING_BUCKET
-              value: "videos-bucket-pocketlol"
+              value: "videos-bucket-pocketlol-prod"
             - name: PUBSUB_SUBSCRIPTION
               value: "projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-prod"
             - name: PUBSUB_READY_TOPIC
@@ -21,4 +21,4 @@ spec:
             - name: PREVIEW_GENERATION_TOPIC
               value: "media.preview.requested-prod"
             - name: CDN_BASE_URL
-              value: "https://storage.googleapis.com/videos-bucket-pocketlol"
+              value: "https://storage.googleapis.com/videos-bucket-pocketlol-prod"
