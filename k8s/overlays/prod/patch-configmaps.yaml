@@ -51,15 +51,6 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: streaming-service-config
-data:
-  PUBSUB_UPLOAD_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/uploaded-media-sub-prod"
-  AUDIT_LOG_TOPIC: "projects/pocketlol-68ca6/topics/streaming-audit-prod"
-  CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol-prod"
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
   name: search-service-config
 data:
   MEILI_MASTER_KEY: "pocketlolMasterKey2026Secure"
