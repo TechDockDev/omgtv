@@ -18,6 +18,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
         }
     }, async (request) => {
         const userId = request.user!.id;
+        console.log("userid", userId);
         const { limit, offset } = request.query as { limit: number; offset: number };
         const notifications = await NotificationRepository.findByUser(userId, limit, offset);
         return { notifications };
