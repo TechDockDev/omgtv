@@ -3,14 +3,12 @@ import { z } from 'zod';
 import { PreferenceRepository } from '../repositories/preference';
 
 export default async function preferenceRoutes(server: FastifyInstance) {
+    // All routes in this module require authentication
+    server.addHook('onRequest', server.authenticate);
+
     // GET /preferences
-    server.get('/', async (request, reply) => {
-        const userId = request.headers['x-user-id'] as string;
-
-        if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized: Missing x-user-id' });
-        }
-
+    server.get('/', async (request) => {
+        const userId = request.user!.id;
         const preferences = await PreferenceRepository.get(userId);
         return preferences;
     });
@@ -27,12 +25,8 @@ export default async function preferenceRoutes(server: FastifyInstance) {
                 allowNewContent: z.boolean().optional(),
             }),
         }
-    }, async (request, reply) => {
-        const userId = request.headers['x-user-id'] as string;
-        if (!userId) {
-            return reply.status(401).send({ error: 'Unauthorized: Missing x-user-id' });
-        }
-
+    }, async (request) => {
+        const userId = request.user!.id;
         const body = request.body as any;
         const updated = await PreferenceRepository.update(userId, body);
         return updated;

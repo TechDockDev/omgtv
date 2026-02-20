@@ -5,13 +5,15 @@ import helmet from '@fastify/helmet';
 import sensible from '@fastify/sensible';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { initializeFirebase } from './config/firebase';
+import { loadConfig } from './config';
 import prisma from './prisma';
 
+const config = loadConfig();
 
 const server = fastify({
     logger: {
-        level: process.env.LOG_LEVEL || 'info',
-        transport: process.env.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined,
+        level: config.LOG_LEVEL,
+        transport: config.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined,
     },
 });
 
@@ -19,11 +21,14 @@ const server = fastify({
 server.setValidatorCompiler(validatorCompiler);
 server.setSerializerCompiler(serializerCompiler);
 
-// Plugins
+// Core plugins
 server.register(cors);
 server.register(helmet);
 server.register(sensible);
+
+// Auth plugins
 server.register(import('./plugins/auth'));
+server.register(import('./plugins/service-auth'));
 server.register(import('./plugins/pubsub'));
 
 // Routes
@@ -33,8 +38,8 @@ server.register(import('./routes/push'), { prefix: '/api/v1/notifications/push' 
 server.register(import('./routes/admin'), { prefix: '/api/v1/notifications/admin' });
 server.register(import('./routes/campaigns'), { prefix: '/api/v1/notifications/admin/campaigns' });
 
-// Health check
-server.get('/health', async (request, reply) => {
+// Health check (unauthenticated)
+server.get('/health', async (_request, reply) => {
     try {
         await prisma.$queryRaw`SELECT 1`;
         return {
@@ -60,7 +65,7 @@ import { campaignService } from './services/CampaignService';
 
 const start = async () => {
     try {
-        // Initialize Firebase Admin SDK (non-fatal — service can still serve other routes)
+        // Initialize Firebase Admin SDK (non-fatal)
         try {
             initializeFirebase();
         } catch (err) {
@@ -72,16 +77,16 @@ const start = async () => {
         // Start Listeners
         startUserEventListeners(server);
 
-        const port = parseInt(process.env.HTTP_PORT || '5200');
-        const host = process.env.HTTP_HOST || '0.0.0.0';
+        const port = config.HTTP_PORT;
+        const host = config.HTTP_HOST;
 
-        const grpcPort = process.env.GRPC_BIND_ADDRESS?.split(':')[1] || '50072';
+        const grpcPort = config.GRPC_BIND_ADDRESS?.split(':')[1] || '50072';
         startGrpcServer(grpcPort);
 
         await server.listen({ port, host });
-        console.log(`Notification Service running at http://${host}:${port}`);
+        server.log.info({ http: `${host}:${port}` }, 'NotificationService ready');
 
-        // Start Campaign Scheduler (Check every minute)
+        // Campaign Scheduler (every minute)
         setInterval(() => {
             campaignService.processScheduledCampaigns().catch(err => {
                 server.log.error(err, 'Campaign scheduler error');

@@ -342,6 +342,8 @@ services:
       REDIS_URL: ${NOTIFICATION_SERVICE_REDIS_URL:-redis://redis:6379/4}
       SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
       FIREBASE_SERVICE_ACCOUNT_PATH: /app/secrets/firebase/notification-service-account.json
+      USER_SERVICE_URL: http://user-service:${USER_SERVICE_HTTP_PORT:-4500}
+      SUBSCRIPTION_SERVICE_URL: http://subscription-service:${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}
     volumes:
       - ./NotificationService/secrets/firebase/notification-service-account.json:/app/secrets/firebase/notification-service-account.json:ro
     ports:

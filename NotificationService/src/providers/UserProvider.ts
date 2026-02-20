@@ -57,6 +57,32 @@ export class UserProvider {
             return [];
         }
     }
+
+    /**
+     * Fetch FCM tokens for a list of user IDs from UserService.
+     * UserService stores FCM tokens on DeviceIdentity (populated during login).
+     */
+    async getFcmTokensForUsers(userIds: string[]): Promise<{ userId: string; fcmToken: string; deviceId: string }[]> {
+        if (userIds.length === 0) return [];
+
+        try {
+            const response = await fetch(`${this.userServiceUrl}/internal/users/fcm-tokens`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userIds })
+            });
+
+            if (!response.ok) {
+                throw new Error(`UserService returned ${response.status}`);
+            }
+
+            const data = await response.json() as { tokens: { userId: string; fcmToken: string; deviceId: string }[] };
+            return data.tokens;
+        } catch (error) {
+            console.error('Failed to fetch FCM tokens from UserService:', error);
+            return [];
+        }
+    }
 }
 
 export const userProvider = new UserProvider();

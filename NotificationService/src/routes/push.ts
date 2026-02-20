@@ -27,6 +27,9 @@ const sendTopicPushSchema = z.object({
 });
 
 export default async function pushRoutes(fastify: FastifyInstance) {
+    // All push routes require authentication
+    fastify.addHook('onRequest', fastify.authenticate);
+
     /**
      * POST /push/send
      * Send push notification to a specific user (all their devices)
