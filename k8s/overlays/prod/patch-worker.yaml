@@ -8,6 +8,11 @@ spec:
       containers:
         - name: transcoding-worker
           env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: content-service-secrets
+                  key: DATABASE_URL
             - name: GCS_UPLOADS_BUCKET
               value: "videos-bucket-pocketlol-prod"
             - name: GCS_STREAMING_BUCKET
@@ -22,3 +27,26 @@ spec:
               value: "media.preview.requested-prod"
             - name: CDN_BASE_URL
               value: "https://storage.googleapis.com/videos-bucket-pocketlol-prod"
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+          command: ["/cloud-sql-proxy"]
+          args:
+            [
+              "--address",
+              "0.0.0.0",
+              "--port",
+              "5432",
+              "$(CLOUD_SQL_CONNECTION_NAME)",
+            ]
+          envFrom:
+            - secretRef:
+                name: cloudsql-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 256Mi

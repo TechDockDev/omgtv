@@ -1,68 +1,31 @@
 
-// sync-production.js
-// Native fetch (Node 18+)
+// sync-production.js (Debug Version)
+const CONTENT_SERVICE_URL = process.env.CONTENT_SERVICE_URL || "http://content-service:4600/internal/series";
+const SEARCH_SERVICE_SYNC_URL = process.env.SEARCH_SERVICE_SYNC_URL || "http://localhost:4800/internal/sync";
+const TOKEN = process.argv[2] || process.env.SERVICE_AUTH_TOKEN;
 
-const CONTENT_SERVICE_URL = "http://localhost:4600/internal/series";
-const SEARCH_SERVICE_SYNC_URL = "http://localhost:4800/internal/sync";
-const TOKEN = "change-me"; // From .env
+if (!TOKEN || TOKEN === "change-me") {
+    console.error("Error: SERVICE_AUTH_TOKEN is not set.");
+    process.exit(1);
+}
 
 async function sync() {
-    console.log("1. Fetching all series from Content Service (Production Sync)...");
-
+    console.log(`1. Fetching from: ${CONTENT_SERVICE_URL}`);
     try {
         const res = await fetch(`${CONTENT_SERVICE_URL}?limit=100`, {
-            headers: {
-                "Authorization": `Bearer ${TOKEN}`,
-                "x-service-token": TOKEN
-            }
+            headers: { "Authorization": `Bearer ${TOKEN}`, "x-service-token": TOKEN }
         });
-
         if (!res.ok) {
-            throw new Error(`Failed to fetch series: ${res.status} ${await res.text()}`);
+            console.error(`Fetch from Content Service failed: ${res.status} ${await res.text()}`);
+            process.exit(1);
         }
-
-        const content = await res.json();
-        const items = content.data?.items || [];
+        const { data } = await res.json();
+        const items = data?.items || [];
         console.log(`   Fetched ${items.length} series.`);
 
-        // 2. Push to Search Service
-        console.log("2. Syncing to Search Service with FULL payloads...");
-
-        let successCount = 0;
-        let failCount = 0;
-
+        console.log(`2. Syncing to: ${SEARCH_SERVICE_SYNC_URL}`);
+        let success = 0, fail = 0;
         for (const item of items) {
-            console.log(`   Syncing: ${item.title} (${item.id})`);
-
-            // Map item to Search Schema payload
-            // Now we send the FULL object structure to support rich search results
-            const payload = {
-                id: item.id,
-                title: item.title,
-                slug: item.slug,
-                synopsis: item.synopsis || item.description,
-                tags: item.tags || [],
-                category: item.category?.name || item.category,
-                releaseYear: item.publishedAt ? new Date(item.publishedAt).getFullYear() : undefined,
-                heroImageUrl: item.heroImageUrl,
-                thumbnail: item.heroImageUrl || item.thumbnail, // Fallback
-
-                // Pass through rich fields
-                status: item.status,
-                visibility: item.visibility,
-                publishedAt: item.publishedAt,
-                createdAt: item.createdAt, // properties might differ in view model vs DB model, but item has what we need
-                updatedAt: item.updatedAt,
-
-                playback: item.playback,
-                localization: item.localization,
-                personalization: item.personalization,
-                ratings: item.ratings,
-                availability: item.availability,
-                season: item.season,
-                series: item.series
-            };
-
             try {
                 const syncRes = await fetch(SEARCH_SERVICE_SYNC_URL, {
                     method: "POST",
@@ -71,29 +34,23 @@ async function sync() {
                         "Authorization": `Bearer ${TOKEN}`,
                         "x-service-token": TOKEN
                     },
-                    body: JSON.stringify({
-                        action: "upsert",
-                        payload: payload
-                    })
+                    body: JSON.stringify({ action: "upsert", payload: item })
                 });
 
-                if (!syncRes.ok) {
-                    console.error(`   ❌ Failed to sync ${item.title}: ${syncRes.status}`);
-                    failCount++;
+                if (syncRes.ok) {
+                    success++;
+                    process.stdout.write("."); // Progress indicator
                 } else {
-                    successCount++;
+                    const errorText = await syncRes.text();
+                    console.error(`\n   ❌ Failed to sync ${item.title}: ${syncRes.status} - ${errorText}`);
+                    fail++;
                 }
-            } catch (err) {
-                console.error(`   ❌ Error syncing ${item.title}:`, err.message);
-                failCount++;
+            } catch (e) {
+                console.error(`\n   ❌ Network error syncing ${item.title}: ${e.message}`);
+                fail++;
             }
         }
-
-        console.log(`\nSync Complete. Success: ${successCount}, Failed: ${failCount}`);
-
-    } catch (err) {
-        console.error("Critical Error:", err);
-    }
+        console.log(`\n\nSync Complete. Success: ${success}, Failed: ${fail}`);
+    } catch (err) { console.error("Critical Error:", err.message); }
 }
-
 sync();
