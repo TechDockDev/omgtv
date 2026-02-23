@@ -87,9 +87,14 @@ async function forwardRequest(
       nextHeaders["x-forwarded-for"] = request.ip;
       nextHeaders["x-correlation-id"] = request.correlationId;
       if (request.user) {
-        nextHeaders["x-user-id"] = request.user.id;
+        let businessUserId = request.user.id; // Fallback to sub
+        if (request.user.userType === 'CUSTOMER' && request.user.userId) {
+          businessUserId = String(request.user.userId);
+        } else if (request.user.userType === 'GUEST' && request.user.guestId) {
+          businessUserId = String(request.user.guestId);
+        }
+        nextHeaders["x-user-id"] = businessUserId;
         nextHeaders["x-user-roles"] = request.user.roles.join(",");
-        nextHeaders["x-user-type"] = request.user.userType;
         if (request.user.languageId) {
           nextHeaders["x-user-language-id"] = request.user.languageId;
         }
@@ -158,8 +163,8 @@ function registerVariant(
       preHandlers.push(async (request, reply) => {
         const routeConfig = request.routeOptions.config as
           | (FastifyContextConfig & {
-              accessControl?: { allowAnyAuthenticated?: boolean };
-            })
+            accessControl?: { allowAnyAuthenticated?: boolean };
+          })
           | undefined;
 
         if (routeConfig?.accessControl?.allowAnyAuthenticated) {
@@ -178,8 +183,8 @@ function registerVariant(
       preHandlers.push(async (request, reply) => {
         const routeConfig = request.routeOptions.config as
           | (FastifyContextConfig & {
-              accessControl?: { allowAnyAuthenticated?: boolean };
-            })
+            accessControl?: { allowAnyAuthenticated?: boolean };
+          })
           | undefined;
 
         if (routeConfig?.accessControl?.allowAnyAuthenticated) {
@@ -231,8 +236,8 @@ export default fp(async function proxyRoutes(fastify) {
     ) {
       const existingConfig = (routeOptions.config ??
         {}) as FastifyContextConfig & {
-        accessControl?: { allowAnyAuthenticated?: boolean };
-      };
+          accessControl?: { allowAnyAuthenticated?: boolean };
+        };
 
       routeOptions.config = {
         ...existingConfig,
