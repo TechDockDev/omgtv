@@ -44,7 +44,7 @@ export default fp(async (fastify: FastifyInstance) => {
         request.user = {
             id: userId,
             roles: userRoles ? userRoles.split(',').map(r => r.trim()) : [],
-            userType: userType || 'CUSTOMER',
+            userType: userType,
         };
         console.log('[authenticate] resolved user:', request.user);
     });

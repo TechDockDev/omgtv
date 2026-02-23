@@ -87,13 +87,7 @@ async function forwardRequest(
       nextHeaders["x-forwarded-for"] = request.ip;
       nextHeaders["x-correlation-id"] = request.correlationId;
       if (request.user) {
-        let businessUserId = request.user.id; // Fallback to sub
-        if (request.user.userType === 'CUSTOMER' && request.user.userId) {
-          businessUserId = String(request.user.userId);
-        } else if (request.user.userType === 'GUEST' && request.user.guestId) {
-          businessUserId = String(request.user.guestId);
-        }
-        nextHeaders["x-user-id"] = businessUserId;
+        nextHeaders["x-user-id"] = request.user.id;
         nextHeaders["x-user-roles"] = request.user.roles.join(",");
         if (request.user.languageId) {
           nextHeaders["x-user-language-id"] = request.user.languageId;
