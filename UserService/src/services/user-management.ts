@@ -55,49 +55,88 @@ const ENGAGEMENT_SERVICE_URL = config.ENGAGEMENT_SERVICE_URL || "http://engageme
 const SUBSCRIPTION_SERVICE_URL = process.env.SUBSCRIPTION_SERVICE_URL || "http://subscription-service:5100";
 const SERVICE_AUTH_TOKEN = config.SERVICE_AUTH_TOKEN || "";
 
-// Fetch bulk user analytics from Engagement Service
+// Fetch user analytics from the existing Engagement Service per-user endpoint
 async function fetchBulkUserAnalytics(userIds: string[]): Promise<Record<string, { totalWatchTimeSeconds: number; contentViewed: number }>> {
     if (userIds.length === 0) return {};
+    const result: Record<string, { totalWatchTimeSeconds: number; contentViewed: number }> = {};
+
     try {
-        const res = await fetch(`${ENGAGEMENT_SERVICE_URL}/internal/analytics/users/bulk-stats`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-service-token": SERVICE_AUTH_TOKEN },
-            body: JSON.stringify({ userIds }),
-        });
-        if (res.ok) {
-            const data = await res.json();
-            return data.stats || {};
+        // Call the existing per-user analytics endpoint in parallel
+        const responses = await Promise.allSettled(
+            userIds.map(async (userId) => {
+                const url = `${ENGAGEMENT_SERVICE_URL}/internal/analytics/users/${userId}/content`;
+                const res = await fetch(url, {
+                    headers: { "x-service-token": SERVICE_AUTH_TOKEN },
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    // Extract from the existing response format: { stats: { totalWatchTimeSeconds, episodesStarted } }
+                    const stats = data?.data?.stats || data?.stats || {};
+                    return {
+                        userId,
+                        totalWatchTimeSeconds: stats.totalWatchTimeSeconds || 0,
+                        contentViewed: stats.episodesStarted || 0,
+                    };
+                }
+                return { userId, totalWatchTimeSeconds: 0, contentViewed: 0 };
+            })
+        );
+
+        for (const r of responses) {
+            if (r.status === "fulfilled" && r.value) {
+                result[r.value.userId] = {
+                    totalWatchTimeSeconds: r.value.totalWatchTimeSeconds,
+                    contentViewed: r.value.contentViewed,
+                };
+            }
         }
+
+        console.log(`[fetchBulkUserAnalytics] Got stats for ${Object.keys(result).length}/${userIds.length} users`);
     } catch (error) {
-        console.error("Failed to fetch bulk user analytics:", error);
+        console.error("[fetchBulkUserAnalytics] Failed to fetch:", error);
     }
-    return {};
+    return result;
 }
 
 // Fetch active subscriber and trial user IDs from Subscription Service
 async function fetchSubscriptionUserIds(): Promise<{ activeUserIds: Set<string>; trialUserIds: Set<string> }> {
     const result = { activeUserIds: new Set<string>(), trialUserIds: new Set<string>() };
     try {
+        const activeUrl = `${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/active-users?limit=10000`;
+        const trialUrl = `${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/trial-users?limit=10000`;
+        console.log(`[fetchSubscriptionUserIds] Active: ${activeUrl}`);
+        console.log(`[fetchSubscriptionUserIds] Trial: ${trialUrl}`);
+
         const [activeRes, trialRes] = await Promise.all([
-            fetch(`${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/active-users?limit=10000`, {
+            fetch(activeUrl, {
                 headers: { "x-service-token": SERVICE_AUTH_TOKEN },
             }),
-            fetch(`${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/trial-users?limit=10000`, {
+            fetch(trialUrl, {
                 headers: { "x-service-token": SERVICE_AUTH_TOKEN },
             }),
         ]);
 
+        console.log(`[fetchSubscriptionUserIds] Active status: ${activeRes.status}, Trial status: ${trialRes.status}`);
+
         if (activeRes.ok) {
             const data = await activeRes.json();
             (data.userIds || []).forEach((id: string) => result.activeUserIds.add(id));
+            console.log(`[fetchSubscriptionUserIds] Active users: ${result.activeUserIds.size}`);
+        } else {
+            const errorBody = await activeRes.text();
+            console.error(`[fetchSubscriptionUserIds] Active users error: ${errorBody}`);
         }
 
         if (trialRes.ok) {
             const data = await trialRes.json();
             (data.userIds || []).forEach((id: string) => result.trialUserIds.add(id));
+            console.log(`[fetchSubscriptionUserIds] Trial users: ${result.trialUserIds.size}`);
+        } else {
+            const errorBody = await trialRes.text();
+            console.error(`[fetchSubscriptionUserIds] Trial users error: ${errorBody}`);
         }
     } catch (error) {
-        console.error("Failed to fetch subscription user IDs:", error);
+        console.error("[fetchSubscriptionUserIds] Failed to fetch:", error);
     }
     return result;
 }

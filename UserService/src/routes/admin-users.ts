@@ -19,8 +19,10 @@ import {
 import { isAdminVerificationError } from "../types/auth-service";
 import { listUsers, getUserDetails, updateUser, blockUser, deleteUser } from "../services/user-management";
 import { z } from "zod";
+import { loadConfig } from "../config";
 
 export default async function adminUserRoutes(fastify: FastifyInstance) {
+  const config = loadConfig();
   const listUsersQuerySchema = z.object({
     page: z.coerce.number().min(1).default(1),
     limit: z.coerce.number().min(1).max(100).default(20),
@@ -47,17 +49,24 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       let subscriptionStats = { active_subscribers: 0, active_trials: 0 };
       try {
         const subServiceUrl = process.env.SUBSCRIPTION_SERVICE_URL || "http://subscription-service:5100";
-        const serviceToken = process.env.SERVICE_AUTH_TOKEN || "";
+        const serviceToken = config.SERVICE_AUTH_TOKEN || "";
+        const url = `${subServiceUrl}/internal/stats/users`;
 
-        const res = await fetch(`${subServiceUrl}/internal/stats/users`, {
+        console.log(`[adminUserRoutes] Fetching global subscription stats from ${url}`);
+        const res = await fetch(url, {
           headers: { "x-service-token": serviceToken }
         });
 
+        console.log(`[adminUserRoutes] Global stats response status: ${res.status}`);
         if (res.ok) {
           subscriptionStats = await res.json();
+          console.log(`[adminUserRoutes] Global stats:`, subscriptionStats);
+        } else {
+          const errBody = await res.text();
+          console.error(`[adminUserRoutes] Global stats error response: ${errBody}`);
         }
       } catch (error) {
-        request.log.error({ err: error }, "Failed to fetch subscription stats");
+        console.error("[adminUserRoutes] Failed to fetch global subscription stats:", error);
       }
 
       // Manual Global Response Wrapper (since UserService lacks the plugin currently)
