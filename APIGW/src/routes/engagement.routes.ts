@@ -279,6 +279,8 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
             ...item.engagement,
             likes: stats?.likes ?? 0,
             views: stats?.views ?? 0,
+            averageRating: stats?.averageRating ?? 0,
+            reviewCount: stats?.reviewCount ?? 0,
           },
         };
       });
@@ -386,6 +388,8 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
             ...item.engagement,
             likes: stats?.likes ?? 0,
             views: stats?.views ?? 0,
+            averageRating: stats?.averageRating ?? 0,
+            reviewCount: stats?.reviewCount ?? 0,
           },
         };
       });
@@ -549,6 +553,8 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
             ...item.engagement,
             likes: stats?.likes ?? 0,
             views: stats?.views ?? 0,
+            averageRating: stats?.averageRating ?? 0,
+            reviewCount: stats?.reviewCount ?? 0,
           },
         };
       });
@@ -655,6 +661,8 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
             ...item.engagement,
             likes: stats?.likes ?? 0,
             views: stats?.views ?? 0,
+            averageRating: stats?.averageRating ?? 0,
+            reviewCount: stats?.reviewCount ?? 0,
           },
         };
       });

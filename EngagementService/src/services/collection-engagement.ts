@@ -1,7 +1,40 @@
 import type Redis from "ioredis";
 import type { PrismaClient } from "@prisma/client";
+import { loadConfig } from "../config";
 
 type EntityType = "reel" | "series";
+
+/**
+ * Fetch user details (name, email, phone) from UserService in batch.
+ * Returns a map of userId -> { name, email, phone }.
+ */
+async function fetchUserDetailsBatch(
+  userIds: string[]
+): Promise<Record<string, { name: string; email: string | null; phone: string | null }>> {
+  if (userIds.length === 0) return {};
+  try {
+    const config = loadConfig();
+    const url = `${config.USER_SERVICE_URL}/internal/users/batch`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(config.SERVICE_AUTH_TOKEN ? { "x-service-token": config.SERVICE_AUTH_TOKEN } : {}),
+      },
+      body: JSON.stringify({ userIds }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) {
+      console.warn(`[getReviews] UserService batch call failed: HTTP ${response.status}`);
+      return {};
+    }
+    const data = (await response.json()) as { users: Record<string, { name: string; email: string | null; phone: string | null }> };
+    return data.users ?? {};
+  } catch (err) {
+    console.warn("[getReviews] Failed to fetch user details from UserService:", err);
+    return {};
+  }
+}
 
 type Stats = {
   likes: number;
@@ -703,15 +736,23 @@ export async function getReviews(params: {
       ...(params.cursor ? { cursor: { id: params.cursor }, skip: 1 } : {})
     });
 
-    const mappedReviews = reviews.map(r => ({
-      review_id: r.id,
-      user_id: r.userId,
-      user_name: r.userName,
-      user_phone: r.userPhone,
-      rating: r.rating,
-      comment: r.comment,
-      created_at: r.createdAt.toISOString()
-    }));
+    // Enrich reviews with live user details from UserService
+    const uniqueUserIds = [...new Set(reviews.map(r => r.userId))];
+    const userDetailsMap = await fetchUserDetailsBatch(uniqueUserIds);
+
+    const mappedReviews = reviews.map(r => {
+      const userInfo = userDetailsMap[r.userId];
+      return {
+        review_id: r.id,
+        user_id: r.userId,
+        user_name: userInfo?.name ?? r.userName,
+        user_phone: userInfo?.phone ?? r.userPhone ?? null,
+        user_email: userInfo?.email ?? null,
+        rating: r.rating,
+        comment: r.comment,
+        created_at: r.createdAt.toISOString()
+      };
+    });
 
     const nextCursor = reviews.length === limit ? reviews[reviews.length - 1].id : null;
 

@@ -1,8 +1,45 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CustomerService } from "../services/customer-service";
+import { getUserDetails } from "../services/user-management";
 
 export default async function internalRoutes(app: FastifyInstance) {
+    /**
+     * POST /internal/users/batch
+     * Batch fetch user details (name, email, phone) for a list of user IDs.
+     * Used by EngagementService to enrich review responses with live user data.
+     */
+    app.post("/users/batch", {
+        schema: {
+            body: z.object({
+                userIds: z.array(z.string().uuid()).min(1).max(50),
+            }),
+        },
+    }, async (request) => {
+        const { userIds } = request.body as { userIds: string[] };
+
+        const uniqueIds = [...new Set(userIds)];
+        const results: Record<string, { name: string; email: string | null; phone: string | null }> = {};
+
+        await Promise.all(
+            uniqueIds.map(async (id) => {
+                try {
+                    const user = await getUserDetails(request.server.prisma, id);
+                    if (user) {
+                        results[id] = {
+                            name: user.name,
+                            email: user.email,
+                            phone: user.phone,
+                        };
+                    }
+                } catch (err) {
+                    request.log.warn({ err, userId: id }, "Failed to fetch user details in batch");
+                }
+            })
+        );
+
+        return { users: results };
+    });
     app.get("/stats", {
         schema: {
             querystring: z.object({

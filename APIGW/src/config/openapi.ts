@@ -677,24 +677,6 @@ const userDocument: OpenAPIV3.Document = {
               default: "all",
             },
           },
-          {
-            name: "plan",
-            in: "query",
-            schema: {
-              type: "string",
-              enum: ["Free", "Basic", "Premium", "all"],
-              default: "all",
-            },
-          },
-          {
-            name: "userType",
-            in: "query",
-            schema: {
-              type: "string",
-              enum: ["registered", "guest", "all"],
-              default: "all",
-            },
-          },
         ],
         responses: {
           "200": {
@@ -1045,7 +1027,6 @@ const userDocument: OpenAPIV3.Document = {
           signupDate: { type: "string", format: "date-time" },
           lastActive: { type: "string", format: "date-time" },
           avatar: { type: "string" },
-          deviceId: { type: "string", nullable: true },
           watchTime: { type: "integer" },
           contentViewed: { type: "integer" },
         },

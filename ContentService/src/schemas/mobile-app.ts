@@ -172,6 +172,8 @@ export const mobileSeriesDataSchema = z.object({
         review_id: z.string(),
         user_id: z.string().nullable(),
         user_name: z.string().nullable(),
+        user_phone: z.string().nullable(),
+        user_email: z.string().nullable(),
         rating: z.number().nullable(),
         title: z.string().nullable(),
         comment: z.string().nullable(),

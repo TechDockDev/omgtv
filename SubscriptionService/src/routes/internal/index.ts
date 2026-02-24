@@ -143,4 +143,28 @@ export default async function internalRoutes(app: FastifyInstance) {
 
     return { userIds: subscriptions.map(s => s.userId) };
   });
+
+  app.get("/subscriptions/trial-users", {
+    schema: {
+      querystring: z.object({
+        limit: z.coerce.number().optional().default(100),
+        offset: z.coerce.number().optional().default(0),
+      }),
+    },
+  }, async (request) => {
+    const { limit, offset } = request.query as { limit: number; offset: number };
+
+    const subscriptions = await prisma.userSubscription.findMany({
+      where: {
+        status: "TRIAL",
+        endsAt: { gt: new Date() }
+      },
+      select: { userId: true },
+      distinct: ['userId'],
+      take: limit,
+      skip: offset,
+    });
+
+    return { userIds: subscriptions.map(s => s.userId) };
+  });
 }

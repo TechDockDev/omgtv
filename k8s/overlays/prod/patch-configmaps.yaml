@@ -53,7 +53,6 @@ kind: ConfigMap
 metadata:
   name: search-service-config
 data:
-  MEILI_MASTER_KEY: "pocketlolMasterKey2026Secure"
   REDIS_URL: "redis://10.244.194.227:6379"
 ---
 apiVersion: v1

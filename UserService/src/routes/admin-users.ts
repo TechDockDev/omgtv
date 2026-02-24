@@ -26,8 +26,6 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
     limit: z.coerce.number().min(1).max(100).default(20),
     search: z.string().optional(),
     status: z.enum(["active", "inactive", "blocked", "all"]).default("all"),
-    plan: z.enum(["Free", "Basic", "Premium", "all"]).default("all"),
-    userType: z.enum(["registered", "guest", "all"]).default("all"),
   });
 
   fastify.get("/app-users", {

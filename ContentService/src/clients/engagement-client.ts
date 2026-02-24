@@ -147,6 +147,7 @@ export class EngagementClient {
       user_id: string;
       user_name: string;
       user_phone?: string;
+      user_email?: string;
       rating: number;
       comment: string;
       created_at: string;
@@ -171,6 +172,7 @@ export class EngagementClient {
       user_id: z.string().uuid(),
       user_name: z.string(),
       user_phone: z.string().optional(),
+      user_email: z.string().optional(),
       rating: z.number(),
       comment: z.string(),
       created_at: z.string(),

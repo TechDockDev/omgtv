@@ -8,11 +8,13 @@ export type CustomerDetailsFnResult = {
     isProfileComplete: boolean;
 };
 
-// Singleton-ish client for Auth DB (copied from user-management.ts pattern)
+import { loadConfig } from "../config";
+
+// Singleton-ish client for Auth DB
 const authPrisma = new PrismaClient({
     datasources: {
         db: {
-            url: process.env.AUTH_DATABASE_URL || "postgresql://postgres:postgres@postgres:5432/pocketlol_auth?schema=public",
+            url: loadConfig().AUTH_DATABASE_URL,
         },
     },
 });

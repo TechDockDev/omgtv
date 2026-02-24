@@ -4,6 +4,8 @@ export const reviewSchema = z.object({
     review_id: z.string().uuid(),
     user_id: z.string().uuid(),
     user_name: z.string().min(1),
+    user_phone: z.string().optional(),
+    user_email: z.string().optional(),
     rating: z.number().int().min(1).max(5),
     comment: z.string().min(1).max(2000),
     created_at: z.string().datetime(),

@@ -36,16 +36,21 @@ export default async function customerRoutes(fastify: FastifyInstance) {
         }],
         handler: async (req, reply) => {
             const userId = req.headers["x-user-id"] as string;
-            const details = await service.getCustomerDetails(userId);
+            try {
+                const details = await service.getCustomerDetails(userId);
 
-            if (!details) {
-                return reply.code(404).send({ message: "Customer profile not found" });
+                if (!details) {
+                    return reply.code(404).send({ message: "Customer profile not found" });
+                }
+
+                return {
+                    success: true,
+                    data: details
+                };
+            } catch (error) {
+                req.log.error(error);
+                return reply.code(500).send({ message: "Internal server error" });
             }
-
-            return {
-                success: true,
-                data: details
-            };
         },
     });
 

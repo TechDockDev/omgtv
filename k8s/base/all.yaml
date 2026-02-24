@@ -31,6 +31,7 @@ data:
   ENGAGEMENT_SERVICE_URL: http://engagement-service:4700
   SEARCH_SERVICE_URL: http://search-service:4800
   SUBSCRIPTION_SERVICE_URL: http://subscription-service:5100
+  NOTIFICATION_SERVICE_URL: http://notification-service:5200
   ENABLE_TELEMETRY: "false"
   SERVICE_NAME: pocketlol-gateway
 ---

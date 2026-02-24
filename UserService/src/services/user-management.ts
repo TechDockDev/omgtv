@@ -1,30 +1,25 @@
 import { PrismaClient, Prisma } from "@prisma/client";
 
-export type UserTypeFilter = "registered" | "guest" | "all";
 export type UserStatusFilter = "active" | "inactive" | "blocked" | "all";
-export type PlanFilter = "Free" | "Basic" | "Premium" | "all";
 
 export type ListUsersParams = {
     page: number;
     limit: number;
     search?: string;
     status: UserStatusFilter;
-    plan: PlanFilter;
-    userType: UserTypeFilter;
 };
 
 export type UserListItem = {
     id: string;
     name: string;
     email: string | null;
-    phone: string | null; // From Profile
-    status: string;       // From Profile (or default active)
-    plan?: string;
+    phone: string | null;
+    status: string;
+    plan: string;
     userType: string;
     signupDate: string;
     lastActive: string;
     avatar: string;
-    deviceId: string | null;
     watchTime: number;
     contentViewed: number;
 };
@@ -43,67 +38,103 @@ export type UpdateUserParams = {
     status?: string;
 };
 
+import { loadConfig } from "../config";
+
+const config = loadConfig();
+
 // Singleton-ish client for Auth DB
 const authPrisma = new PrismaClient({
     datasources: {
         db: {
-            url: process.env.AUTH_DATABASE_URL || "postgresql://postgres:postgres@postgres:5432/pocketlol_auth?schema=public",
+            url: config.AUTH_DATABASE_URL,
         },
     },
 });
 
+const ENGAGEMENT_SERVICE_URL = config.ENGAGEMENT_SERVICE_URL || "http://engagement-service:5000";
+const SUBSCRIPTION_SERVICE_URL = process.env.SUBSCRIPTION_SERVICE_URL || "http://subscription-service:5100";
+const SERVICE_AUTH_TOKEN = config.SERVICE_AUTH_TOKEN || "";
+
+// Fetch bulk user analytics from Engagement Service
+async function fetchBulkUserAnalytics(userIds: string[]): Promise<Record<string, { totalWatchTimeSeconds: number; contentViewed: number }>> {
+    if (userIds.length === 0) return {};
+    try {
+        const res = await fetch(`${ENGAGEMENT_SERVICE_URL}/internal/analytics/users/bulk-stats`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-service-token": SERVICE_AUTH_TOKEN },
+            body: JSON.stringify({ userIds }),
+        });
+        if (res.ok) {
+            const data = await res.json();
+            return data.stats || {};
+        }
+    } catch (error) {
+        console.error("Failed to fetch bulk user analytics:", error);
+    }
+    return {};
+}
+
+// Fetch active subscriber and trial user IDs from Subscription Service
+async function fetchSubscriptionUserIds(): Promise<{ activeUserIds: Set<string>; trialUserIds: Set<string> }> {
+    const result = { activeUserIds: new Set<string>(), trialUserIds: new Set<string>() };
+    try {
+        const [activeRes, trialRes] = await Promise.all([
+            fetch(`${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/active-users?limit=10000`, {
+                headers: { "x-service-token": SERVICE_AUTH_TOKEN },
+            }),
+            fetch(`${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/trial-users?limit=10000`, {
+                headers: { "x-service-token": SERVICE_AUTH_TOKEN },
+            }),
+        ]);
+
+        if (activeRes.ok) {
+            const data = await activeRes.json();
+            (data.userIds || []).forEach((id: string) => result.activeUserIds.add(id));
+        }
+
+        if (trialRes.ok) {
+            const data = await trialRes.json();
+            (data.userIds || []).forEach((id: string) => result.trialUserIds.add(id));
+        }
+    } catch (error) {
+        console.error("Failed to fetch subscription user IDs:", error);
+    }
+    return result;
+}
+
 export async function listUsers(
-    prisma: PrismaClient, // Using generic prisma client for UserDB
+    prisma: PrismaClient,
     params: ListUsersParams
 ): Promise<ListUsersResult> {
-    const { page, limit, search, userType } = params;
+    const { page, limit, search } = params;
     const offset = (page - 1) * limit;
 
-    // 1. Fetch Identities from AuthDB
-    const conditions: Prisma.Sql[] = [];
-
-    if (userType === "registered") {
-        conditions.push(Prisma.sql`s.type = 'CUSTOMER'`);
-    } else if (userType === "guest") {
-        conditions.push(Prisma.sql`s.type = 'GUEST'`);
-    } else {
-        conditions.push(Prisma.sql`s.type IN ('CUSTOMER', 'GUEST')`);
-    }
-
-    // Note: Search on 'name' or 'status' is hard if data is in UserDB but pagination is on AuthDB.
-    // For now, we support searching fields available in AuthDB (firebaseUid, guestId, customerId).
-    // Searching by name/phone/status (UserDB fields) across pages requires a different architecture (e.g. sync to SearchService or join on UserDB driven query).
-    // user request: "search" -> we stick to AuthDB search for now.
+    // 1. Fetch CUSTOMER Identities from AuthDB (no guests)
+    const conditions: Prisma.Sql[] = [Prisma.sql`s.type = 'CUSTOMER'`];
 
     if (search) {
         const searchPattern = `%${search}%`;
         conditions.push(Prisma.sql`(
             c."firebaseUid" ILIKE ${searchPattern} OR 
-            g."guestId" ILIKE ${searchPattern} OR 
             c."customerId" ILIKE ${searchPattern}
         )`);
     }
 
-    const whereClause = conditions.length > 0
-        ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
-        : Prisma.empty;
+    const whereClause = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
 
     const countQuery = Prisma.sql`
         SELECT COUNT(*)::int as count 
         FROM "AuthSubject" s
-        LEFT JOIN "CustomerIdentity" c ON s.id = c."subjectId"
-        LEFT JOIN "GuestIdentity" g ON s.id = g."subjectId"
+        JOIN "CustomerIdentity" c ON s.id = c."subjectId"
         ${whereClause}
     `;
 
     const dataQuery = Prisma.sql`
         SELECT 
             s.id, s.type, s."createdAt", s."updatedAt", 
-            c."firebaseUid", c."customerId", 
-            g."guestId", g."deviceId" as "guestDeviceId"
+            c."firebaseUid", c."customerId"
         FROM "AuthSubject" s
-        LEFT JOIN "CustomerIdentity" c ON s.id = c."subjectId"
-        LEFT JOIN "GuestIdentity" g ON s.id = g."subjectId"
+        JOIN "CustomerIdentity" c ON s.id = c."subjectId"
         ${whereClause}
         ORDER BY s."createdAt" DESC
         LIMIT ${limit} OFFSET ${offset}
@@ -129,31 +160,34 @@ export async function listUsers(
             });
         }
 
-        // 3. Merge Data
-        const items: UserListItem[] = authUsers.map((u) => {
-            let name = "Unknown";
-            let email = null;
-            let phone = null;
-            let status = "active";
-            let userTypeLabel = "registered";
-            let plan: string | undefined;
+        // 3. Fetch real analytics + subscription data in parallel
+        const userIds = authUsers.map(u => u.id);
+        const [analyticsMap, subscriptionData] = await Promise.all([
+            fetchBulkUserAnalytics(userIds),
+            fetchSubscriptionUserIds(),
+        ]);
 
-            if (u.type === "CUSTOMER") {
-                const profile = profiles.find(p => p.firebaseUid === u.firebaseUid);
-                // @ts-ignore: Schema updated but client generation pending
-                name = profile?.name || u.firebaseUid || "Customer";
-                // @ts-ignore: Schema updated but client generation pending
-                email = profile?.email || null;
-                phone = profile?.phoneNumber || null;
-                // @ts-ignore: Schema updated but client generation pending
-                status = profile?.status || "active";
-                userTypeLabel = "registered";
-                // Mock Plan logic
-                plan = (name.length % 2 === 0) ? "Premium" : "Free";
-            } else if (u.type === "GUEST") {
-                name = `Guest ${u.guestId ? u.guestId.substring(0, 8) : ""}`;
-                userTypeLabel = "guest";
+        // 4. Merge Data
+        const items: UserListItem[] = authUsers.map((u) => {
+            const profile = profiles.find(p => p.firebaseUid === u.firebaseUid);
+            // @ts-ignore: Schema updated but client generation pending
+            const name = profile?.name || u.firebaseUid || "Customer";
+            // @ts-ignore: Schema updated but client generation pending
+            const email = profile?.email || null;
+            const phone = profile?.phoneNumber || null;
+            // @ts-ignore: Schema updated but client generation pending
+            const status = profile?.status || "active";
+
+            // Real plan from subscription data
+            let plan = "Free";
+            if (subscriptionData.activeUserIds.has(u.id)) {
+                plan = "Premium";
+            } else if (subscriptionData.trialUserIds.has(u.id)) {
+                plan = "Trial";
             }
+
+            // Real analytics from Engagement Service
+            const analytics = analyticsMap[u.id] || { totalWatchTimeSeconds: 0, contentViewed: 0 };
 
             // Generate Avatar
             const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name.replace(/\s/g, ''))}`;
@@ -165,13 +199,12 @@ export async function listUsers(
                 phone,
                 status,
                 plan,
-                userType: userTypeLabel,
+                userType: "registered",
                 signupDate: new Date(u.createdAt).toISOString(),
                 lastActive: new Date(u.updatedAt).toISOString(),
                 avatar,
-                deviceId: u.guestDeviceId || null,
-                watchTime: Math.floor(Math.random() * 5000), // Mock data
-                contentViewed: Math.floor(Math.random() * 100), // Mock data
+                watchTime: analytics.totalWatchTimeSeconds,
+                contentViewed: analytics.contentViewed,
             };
         });
 
@@ -190,12 +223,10 @@ export async function getUserDetails(
     const query = Prisma.sql`
         SELECT 
             s.id, s.type, s."createdAt", s."updatedAt", 
-            c."firebaseUid", c."customerId", 
-            g."guestId", g."deviceId" as "guestDeviceId"
+            c."firebaseUid", c."customerId"
         FROM "AuthSubject" s
-        LEFT JOIN "CustomerIdentity" c ON s.id = c."subjectId"
-        LEFT JOIN "GuestIdentity" g ON s.id = g."subjectId"
-        WHERE s.id = ${userId} AND s.type IN ('CUSTOMER', 'GUEST')
+        JOIN "CustomerIdentity" c ON s.id = c."subjectId"
+        WHERE s.id = ${userId} AND s.type = 'CUSTOMER'
         LIMIT 1
     `;
 
@@ -208,9 +239,8 @@ export async function getUserDetails(
         let email = null;
         let phone = null;
         let status = "active";
-        let userTypeLabel = "registered";
 
-        if (u.type === "CUSTOMER" && u.firebaseUid) {
+        if (u.firebaseUid) {
             const profile = await prisma.customerProfile.findUnique({
                 where: { firebaseUid: u.firebaseUid }
             });
@@ -221,19 +251,23 @@ export async function getUserDetails(
             phone = profile?.phoneNumber || null;
             // @ts-ignore: Schema updated
             status = profile?.status || "active";
-            userTypeLabel = "registered";
-        } else if (u.type === "GUEST") {
-            name = `Guest ${u.guestId ? u.guestId.substring(0, 8) : ""}`;
-            userTypeLabel = "guest";
         }
 
-        // Mock Plan logic
-        let plan: string | undefined;
-        if (u.type === "CUSTOMER") {
-            plan = (name.length % 2 === 0) ? "Premium" : "Free";
+        // Real analytics + subscription data
+        const [analyticsMap, subscriptionData] = await Promise.all([
+            fetchBulkUserAnalytics([u.id]),
+            fetchSubscriptionUserIds(),
+        ]);
+
+        let plan = "Free";
+        if (subscriptionData.activeUserIds.has(u.id)) {
+            plan = "Premium";
+        } else if (subscriptionData.trialUserIds.has(u.id)) {
+            plan = "Trial";
         }
 
-        // Generate Avatar
+        const analytics = analyticsMap[u.id] || { totalWatchTimeSeconds: 0, contentViewed: 0 };
+
         const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name.replace(/\s/g, ''))}`;
 
         return {
@@ -243,13 +277,12 @@ export async function getUserDetails(
             phone,
             status,
             plan,
-            userType: userTypeLabel,
+            userType: "registered",
             signupDate: new Date(u.createdAt).toISOString(),
             lastActive: new Date(u.updatedAt).toISOString(),
             avatar,
-            deviceId: u.guestDeviceId || null,
-            watchTime: Math.floor(Math.random() * 5000),
-            contentViewed: Math.floor(Math.random() * 100),
+            watchTime: analytics.totalWatchTimeSeconds,
+            contentViewed: analytics.contentViewed,
         };
     } catch (error) {
         console.error("Failed to get user details:", error);

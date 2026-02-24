@@ -145,4 +145,47 @@ export default async function adminRoutes(fastify: FastifyInstance) {
             return result;
         },
     });
+
+    // Bulk user stats for admin app-users listing
+    const bulkUserStatsSchema = z.object({
+        userIds: z.array(z.string().min(1)).min(1).max(100),
+    });
+
+    fastify.post("/analytics/users/bulk-stats", {
+        schema: {
+            body: bulkUserStatsSchema,
+        },
+        handler: async (request) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+
+            const { userIds } = bulkUserStatsSchema.parse(request.body);
+
+            // Aggregate watch time and episode count per user in one query
+            const watchStats = await prisma.viewProgress.groupBy({
+                by: ["userId"],
+                where: { userId: { in: userIds } },
+                _sum: { progressSeconds: true },
+                _count: { episodeId: true },
+            });
+
+            const stats: Record<string, { totalWatchTimeSeconds: number; contentViewed: number }> = {};
+
+            // Initialize all requested users with zeros
+            for (const uid of userIds) {
+                stats[uid] = { totalWatchTimeSeconds: 0, contentViewed: 0 };
+            }
+
+            // Fill in actual data
+            for (const row of watchStats) {
+                stats[row.userId] = {
+                    totalWatchTimeSeconds: row._sum.progressSeconds || 0,
+                    contentViewed: row._count.episodeId || 0,
+                };
+            }
+
+            return { stats };
+        },
+    });
 }
