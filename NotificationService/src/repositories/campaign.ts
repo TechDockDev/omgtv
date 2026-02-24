@@ -1,5 +1,6 @@
 import prisma from '../prisma';
 import { Campaign, CampaignStatus, Prisma } from '@prisma/client';
+import { userProvider } from '../providers/UserProvider';
 
 export type CreateCampaignInput = Prisma.CampaignCreateInput;
 
@@ -95,6 +96,15 @@ export const CampaignRepository = {
             prisma.notification.count({ where }),
         ]);
 
-        return { notifications, total };
+        // Enrich with user profiles
+        const userIds = Array.from(new Set(notifications.map(n => n.userId)));
+        const profiles = await userProvider.getUserProfiles(userIds);
+
+        const enrichedNotifications = notifications.map(n => ({
+            ...n,
+            user: profiles[n.userId] || null
+        }));
+
+        return { notifications: enrichedNotifications, total };
     },
 };

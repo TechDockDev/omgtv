@@ -31,19 +31,34 @@ export const NotificationRepository = {
     },
 
     findByUser: async (userId: string, limit = 20, offset = 0) => {
-        return prisma.notification.findMany({
+        const notifications = await prisma.notification.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
             take: limit,
             skip: offset,
         });
+
+        // Global Auto-read: Update ALL notifications for this user that are not yet READ
+        await prisma.notification.updateMany({
+            where: {
+                userId,
+                status: { in: [NotificationStatus.SENT, NotificationStatus.PENDING] }
+            },
+            data: { status: NotificationStatus.READ }
+        });
+
+        // Return the fetched notifications but marked as READ in-memory so the response is consistent
+        return notifications.map(n => ({
+            ...n,
+            status: NotificationStatus.READ
+        }));
     },
 
     countUnread: async (userId: string) => {
         return prisma.notification.count({
             where: {
                 userId,
-                status: 'PENDING' // Assuming PENDING matches unread logic, or we change status enum to include UNREAD
+                status: 'SENT' // Changed from PENDING since created notifications are immediately marked SENT
             }
         });
     },
@@ -52,7 +67,7 @@ export const NotificationRepository = {
         return prisma.notification.updateMany({
             where: {
                 userId,
-                status: 'PENDING'
+                status: 'SENT'
             },
             data: {
                 status: NotificationStatus.READ

@@ -89,6 +89,7 @@ async function forwardRequest(
       if (request.user) {
         nextHeaders["x-user-id"] = request.user.id;
         nextHeaders["x-user-roles"] = request.user.roles.join(",");
+        nextHeaders["x-customer-id"] = request.user.userId;
         // --- ADD THIS LINE ---
         nextHeaders["x-user-type"] = request.user.userType;
         // ---------------------

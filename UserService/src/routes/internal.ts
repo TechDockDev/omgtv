@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { CustomerService } from "../services/customer-service";
 
 export default async function internalRoutes(app: FastifyInstance) {
     app.get("/stats", {
@@ -123,5 +124,22 @@ export default async function internalRoutes(app: FastifyInstance) {
             }));
 
         return { tokens };
+    });
+
+    /**
+     * POST /internal/users/profiles
+     * Return detailed profiles for a list of customer profile IDs.
+     */
+    app.post("/users/profiles", {
+        schema: {
+            body: z.object({
+                userIds: z.array(z.string().uuid()).min(1).max(1000),
+            }),
+        },
+    }, async (request) => {
+        const { userIds } = request.body as { userIds: string[] };
+        const customerService = new CustomerService(app.prisma);
+        const profiles = await customerService.getBatchProfiles(userIds);
+        return { profiles };
     });
 }

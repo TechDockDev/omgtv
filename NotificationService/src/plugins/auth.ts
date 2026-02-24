@@ -7,6 +7,7 @@ declare module 'fastify' {
             id: string;
             roles: string[];
             userType: string;
+            customerId: string;
         };
     }
     interface FastifyInstance {
@@ -24,16 +25,19 @@ export default fp(async (fastify: FastifyInstance) => {
      *   x-user-id       — the authenticated user's ID
      *   x-user-roles    — comma-separated list of roles
      *   x-user-type     — "ADMIN" | "CUSTOMER"
+     *   x-customer-id   — the authenticated customer's ID
      */
     fastify.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
         const userId = request.headers['x-user-id'] as string;
         const userRoles = request.headers['x-user-roles'] as string;
         const userType = request.headers['x-user-type'] as string;
+        const customerId = request.headers['x-customer-id'] as string;
 
         console.log('[authenticate] incoming headers:', {
             'x-user-id': userId,
             'x-user-type': userType,
             'x-user-roles': userRoles,
+            'x-customer-id': customerId,
         });
 
         if (!userId) {
@@ -45,6 +49,7 @@ export default fp(async (fastify: FastifyInstance) => {
             id: userId,
             roles: userRoles ? userRoles.split(',').map(r => r.trim()) : [],
             userType: userType,
+            customerId: customerId,
         };
         console.log('[authenticate] resolved user:', request.user);
     });

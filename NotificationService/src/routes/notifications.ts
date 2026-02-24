@@ -17,11 +17,33 @@ export default async function notificationRoutes(server: FastifyInstance) {
             }),
         }
     }, async (request) => {
-        const userId = request.user!.id;
-        console.log("userid", userId);
+        const customerId = request.user!.customerId;
         const { limit, offset } = request.query as { limit: number; offset: number };
-        const notifications = await NotificationRepository.findByUser(userId, limit, offset);
-        return { notifications };
+        const notifications = await NotificationRepository.findByUser(customerId, limit, offset);
+
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        const grouped = {
+            today: [] as typeof notifications,
+            yesterday: [] as typeof notifications,
+            others: [] as typeof notifications
+        };
+
+        notifications.forEach(n => {
+            const date = new Date(n.createdAt);
+            if (date >= today) {
+                grouped.today.push(n);
+            } else if (date >= yesterday) {
+                grouped.yesterday.push(n);
+            } else {
+                grouped.others.push(n);
+            }
+        });
+
+        return grouped;
     });
 
     // PATCH /notifications/:id/read
@@ -32,7 +54,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
             }),
         }
     }, async (request, reply) => {
-        const userId = request.user!.id;
+        const customerId = request.user!.customerId;
         const { id } = request.params as { id: string };
         const notification = await NotificationRepository.findById(id);
 
@@ -40,7 +62,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
             return reply.status(404).send({ error: 'Notification not found' });
         }
 
-        if (notification.userId !== userId) {
+        if (notification.userId !== customerId) {
             return reply.status(403).send({ error: 'Forbidden' });
         }
 
@@ -51,14 +73,16 @@ export default async function notificationRoutes(server: FastifyInstance) {
     // GET /notifications/unread-count
     server.get('/unread-count', async (request) => {
         const userId = request.user!.id;
-        const count = await NotificationRepository.countUnread(userId);
+        const customerId = request.user!.customerId;
+        const count = await NotificationRepository.countUnread(customerId);
         return { count };
     });
 
     // PATCH /notifications/read-all
     server.patch('/read-all', async (request) => {
         const userId = request.user!.id;
-        const result = await NotificationRepository.markAllAsRead(userId);
+        const customerId = request.user!.customerId;
+        const result = await NotificationRepository.markAllAsRead(customerId);
         return { success: true, count: result.count };
     });
 
@@ -71,6 +95,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
         }
     }, async (request, reply) => {
         const userId = request.user!.id;
+        const customerId = request.user!.customerId;
         const { id } = request.params as { id: string };
         const notification = await NotificationRepository.findById(id);
 
@@ -78,7 +103,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
             return reply.status(404).send({ error: 'Notification not found' });
         }
 
-        if (notification.userId !== userId) {
+        if (notification.userId !== customerId) {
             return reply.status(403).send({ error: 'Forbidden' });
         }
 
