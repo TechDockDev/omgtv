@@ -9,6 +9,7 @@ export interface GatewayUser {
   roles: GatewayRole[];
   scopes: string[];
   deviceId?: string;
+  userId?: string;
   firebaseUid?: string;
   guestId?: string;
   tenantId?: string;

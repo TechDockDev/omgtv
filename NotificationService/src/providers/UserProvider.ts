@@ -83,6 +83,31 @@ export class UserProvider {
             return [];
         }
     }
+
+    /**
+     * Fetch user profiles for a list of user IDs from UserService.
+     */
+    async getUserProfiles(userIds: string[]): Promise<Record<string, { name: string | null; email: string | null; phone: string | null }>> {
+        if (userIds.length === 0) return {};
+
+        try {
+            const response = await fetch(`${this.userServiceUrl}/internal/users/profiles`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userIds })
+            });
+
+            if (!response.ok) {
+                throw new Error(`UserService returned ${response.status}`);
+            }
+
+            const data = await response.json() as { profiles: Record<string, { name: string | null; email: string | null; phone: string | null }> };
+            return data.profiles;
+        } catch (error) {
+            console.error('Failed to fetch user profiles from UserService:', error);
+            return {};
+        }
+    }
 }
 
 export const userProvider = new UserProvider();

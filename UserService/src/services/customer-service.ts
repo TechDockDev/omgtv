@@ -95,4 +95,23 @@ export class CustomerService {
             },
         });
     }
+
+    async getBatchProfiles(ids: string[]): Promise<Record<string, CustomerDetailsFnResult>> {
+        const profiles = await this.prisma.customerProfile.findMany({
+            where: { id: { in: ids } },
+        });
+
+        const results: Record<string, CustomerDetailsFnResult> = {};
+        profiles.forEach(profile => {
+            const { id, name, email, phoneNumber } = profile;
+            results[id] = {
+                name: name ?? null,
+                email: email ?? null,
+                phone: phoneNumber ?? null,
+                isProfileComplete: Boolean(name && email && phoneNumber),
+            };
+        });
+
+        return results;
+    }
 }
