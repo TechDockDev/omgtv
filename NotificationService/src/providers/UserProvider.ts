@@ -10,8 +10,8 @@ export class UserProvider {
     private subscriptionServiceUrl: string;
 
     constructor() {
-        this.userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4500';
-        this.subscriptionServiceUrl = process.env.SUBSCRIPTION_SERVICE_URL || 'http://localhost:4700';
+        this.userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
+        this.subscriptionServiceUrl = process.env.SUBSCRIPTION_SERVICE_URL || 'http://subscription-service:5100';
     }
 
     /**
