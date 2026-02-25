@@ -220,6 +220,8 @@ data:
   GRPC_BIND_ADDRESS: 0.0.0.0:50052
   LOG_LEVEL: info
   AUTH_SERVICE_ADDRESS: auth-service:50051
+  ENGAGEMENT_SERVICE_URL: http://engagement-service:4700
+  SUBSCRIPTION_SERVICE_URL: http://subscription-service:5100
   # AUTH_DATABASE_URL is set in user-service-secrets (same DB as AuthService uses)
 ---
 
