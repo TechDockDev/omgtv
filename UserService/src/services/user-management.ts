@@ -51,8 +51,8 @@ const authPrisma = new PrismaClient({
     },
 });
 
-const ENGAGEMENT_SERVICE_URL = config.ENGAGEMENT_SERVICE_URL || "http://engagement-service:5000";
-const SUBSCRIPTION_SERVICE_URL = process.env.SUBSCRIPTION_SERVICE_URL || "http://subscription-service:5100";
+const ENGAGEMENT_SERVICE_URL = config.ENGAGEMENT_SERVICE_URL;
+const SUBSCRIPTION_SERVICE_URL = config.SUBSCRIPTION_SERVICE_URL;
 const SERVICE_AUTH_TOKEN = config.SERVICE_AUTH_TOKEN || "";
 
 // Fetch user analytics from the existing Engagement Service per-user endpoint

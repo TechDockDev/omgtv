@@ -48,7 +48,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       // Fetch aggregated stats from Subscription Service
       let subscriptionStats = { active_subscribers: 0, active_trials: 0 };
       try {
-        const subServiceUrl = process.env.SUBSCRIPTION_SERVICE_URL || "http://subscription-service:5100";
+        const subServiceUrl = config.SUBSCRIPTION_SERVICE_URL;
         const serviceToken = config.SERVICE_AUTH_TOKEN || "";
         const url = `${subServiceUrl}/internal/stats/users`;
 

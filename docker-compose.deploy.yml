@@ -87,6 +87,8 @@ services:
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - AUTH_SERVICE_ADDRESS=auth-service:50051
       - AUTH_SERVICE_TOKEN=${SERVICE_AUTH_TOKEN}
+      - ENGAGEMENT_SERVICE_URL=http://engagement-service:4700
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
     depends_on:
       - cloud-sql-proxy
 
