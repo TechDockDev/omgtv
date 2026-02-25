@@ -40,7 +40,6 @@ kind: Deployment
 metadata:
   name: apigw
 spec:
-  replicas: 2
   selector:
     matchLabels:
       app: apigw
@@ -59,11 +58,11 @@ spec:
               name: http
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 250m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: apigw-config
@@ -119,9 +118,11 @@ kind: Deployment
 metadata:
   name: auth-service
 spec:
-  replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: auth-service
@@ -150,11 +151,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 25m
-              memory: 128Mi
+              cpu: 10m
+              memory: 64Mi
             limits:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
         - name: auth-service
           image: auth-service:latest
           imagePullPolicy: Always
@@ -165,11 +166,11 @@ spec:
               name: grpc
           resources:
             requests:
-              cpu: 150m
-              memory: 384Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 400m
-              memory: 768Mi
+              cpu: 250m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: auth-service-config
@@ -228,9 +229,11 @@ kind: Deployment
 metadata:
   name: user-service
 spec:
-  replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: user-service
@@ -274,11 +277,11 @@ spec:
               name: grpc
           resources:
             requests:
-              cpu: 150m
-              memory: 384Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 400m
-              memory: 768Mi
+              cpu: 250m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: user-service-config
@@ -350,9 +353,11 @@ kind: Deployment
 metadata:
   name: content-service
 spec:
-  replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: content-service
@@ -381,11 +386,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 25m
-              memory: 128Mi
+              cpu: 10m
+              memory: 64Mi
             limits:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
         - name: content-service
           image: content-service:latest
           imagePullPolicy: Always
@@ -394,11 +399,11 @@ spec:
               name: http
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 250m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: content-service-config
@@ -450,9 +455,11 @@ kind: Deployment
 metadata:
   name: engagement-service
 spec:
-  replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: engagement-service
@@ -481,11 +488,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 25m
-              memory: 128Mi
+              cpu: 10m
+              memory: 64Mi
             limits:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
         - name: engagement-service
           image: engagement-service:latest
           imagePullPolicy: Always
@@ -494,11 +501,11 @@ spec:
               name: http
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 250m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: engagement-service-config
@@ -578,11 +585,11 @@ spec:
               name: http
           resources:
             requests:
-              cpu: 100m
-              memory: 512Mi
+              cpu: 25m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 250m
+              memory: 512Mi
           env:
             - name: MEILI_MASTER_KEY
               valueFrom:
@@ -645,7 +652,6 @@ kind: Deployment
 metadata:
   name: search-service
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: search-service
@@ -664,11 +670,11 @@ spec:
               name: http
           resources:
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: 25m
+              memory: 64Mi
             limits:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 150m
+              memory: 256Mi
           envFrom:
             - configMapRef:
                 name: search-service-config
@@ -730,9 +736,11 @@ kind: Deployment
 metadata:
   name: upload-service
 spec:
-  replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: upload-service
@@ -761,11 +769,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 25m
-              memory: 128Mi
+              cpu: 10m
+              memory: 64Mi
             limits:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
         - name: upload-service
           image: upload-service:latest
           imagePullPolicy: Always
@@ -774,11 +782,11 @@ spec:
               name: http
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 250m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: upload-service-config
@@ -836,9 +844,11 @@ kind: Deployment
 metadata:
   name: subscription-service
 spec:
-  replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: subscription-service
@@ -867,11 +877,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 25m
-              memory: 128Mi
+              cpu: 10m
+              memory: 64Mi
             limits:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
         - name: subscription-service
           image: subscription-service:latest
           imagePullPolicy: Always
@@ -882,11 +892,11 @@ spec:
               name: grpc
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 250m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: subscription-service-config
@@ -930,7 +940,6 @@ kind: Deployment
 metadata:
   name: transcoding-worker
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: transcoding-worker
@@ -944,6 +953,13 @@ spec:
         - name: transcoding-worker
           image: transcoding-worker:latest
           imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
           env:
             - name: NODE_ENV
               value: "production"

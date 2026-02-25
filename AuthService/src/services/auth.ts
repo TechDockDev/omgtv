@@ -681,6 +681,17 @@ export async function rotateRefreshToken(params: {
     }
   }
 
+  // Update lastLoginAt for customers on token refresh (tracks "last active" from splash screen)
+  if (payload.userType === "CUSTOMER" && payload.firebaseUid) {
+    await prisma.customerIdentity.update({
+      where: { subjectId: session.subjectId },
+      data: { lastLoginAt: new Date() },
+    }).catch((err) => {
+      // Non-critical: don't fail the refresh if this update fails
+      console.error("[rotateRefreshToken] Failed to update lastLoginAt:", err);
+    });
+  }
+
   return issueSessionTokens({
     prisma,
     redis,

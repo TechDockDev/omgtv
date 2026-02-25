@@ -17,9 +17,11 @@ kind: Deployment
 metadata:
   name: notification-service
 spec:
-  replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: notification-service
@@ -48,11 +50,11 @@ spec:
             allowPrivilegeEscalation: false
           resources:
             requests:
-              cpu: 25m
-              memory: 128Mi
+              cpu: 10m
+              memory: 64Mi
             limits:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
         - name: notification-service
           image: notification-service:latest
           imagePullPolicy: Always
@@ -63,11 +65,11 @@ spec:
               name: grpc
           resources:
             requests:
-              cpu: 150m
-              memory: 384Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 400m
-              memory: 768Mi
+              cpu: 250m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: notification-service-config

@@ -117,7 +117,8 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             where: { id: existingSub.id },
                             data: {
                                 status: "ACTIVE",
-                                endsAt: new Date(subscriptionEntity.current_end * 1000)
+                                endsAt: new Date(subscriptionEntity.current_end * 1000),
+                                trialPlanId: null  // Trial is over, user is now on full premium plan
                             }
                         });
 
@@ -135,6 +136,26 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }
                         });
                     }
+                }
+            } else if (event === "subscription.cancelled" || event === "subscription.halted" || event === "subscription.completed") {
+                const subscriptionEntity = payload.subscription.entity;
+                const subscriptionId = subscriptionEntity.id;
+
+                // Mark the subscription as CANCELED or EXPIRED
+                const status: SubscriptionStatus = event === "subscription.completed" ? "EXPIRED" : "CANCELED";
+
+                const existingSub = await prisma.userSubscription.findFirst({
+                    where: { razorpayOrderId: subscriptionId }
+                });
+
+                if (existingSub) {
+                    await prisma.userSubscription.update({
+                        where: { id: existingSub.id },
+                        data: {
+                            status: status
+                        }
+                    });
+                    request.log.info({ msg: `Subscription ${event}`, subscriptionId, status });
                 }
             }
 

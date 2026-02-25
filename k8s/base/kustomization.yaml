@@ -5,6 +5,7 @@ resources:
   - all.yaml
   - ingress.yaml
   - notification-service.yaml
+  - hpa.yaml
 
 images:
   - name: apigw

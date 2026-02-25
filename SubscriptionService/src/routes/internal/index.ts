@@ -105,12 +105,20 @@ export default async function internalRoutes(app: FastifyInstance) {
   }, async (request) => {
     const activeUserCount = await prisma.userSubscription.groupBy({
       by: ["userId"],
-      where: { status: "ACTIVE", endsAt: { gt: new Date() } },
+      where: {
+        status: "ACTIVE",
+        endsAt: { gt: new Date() },
+        trialPlanId: null // Only full premium
+      },
     }).then(res => res.length);
 
     const trialUserCount = await prisma.userSubscription.groupBy({
       by: ["userId"],
-      where: { status: "TRIAL", endsAt: { gt: new Date() } },
+      where: {
+        status: "ACTIVE",
+        endsAt: { gt: new Date() },
+        trialPlanId: { not: null } // Users in trial
+      },
     }).then(res => res.length);
 
     return {
@@ -133,7 +141,8 @@ export default async function internalRoutes(app: FastifyInstance) {
     const subscriptions = await prisma.userSubscription.findMany({
       where: {
         status: "ACTIVE",
-        endsAt: { gt: new Date() }
+        endsAt: { gt: new Date() },
+        trialPlanId: null // Exclude trials
       },
       select: { userId: true },
       distinct: ['userId'],
@@ -156,8 +165,9 @@ export default async function internalRoutes(app: FastifyInstance) {
 
     const subscriptions = await prisma.userSubscription.findMany({
       where: {
-        status: "TRIAL",
-        endsAt: { gt: new Date() }
+        status: "ACTIVE", // They are saved as ACTIVE in new flow
+        endsAt: { gt: new Date() },
+        trialPlanId: { not: null } // Filter for trials
       },
       select: { userId: true },
       distinct: ['userId'],

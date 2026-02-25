@@ -119,7 +119,11 @@ export default async function customerRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { userId } = request.query as { userId: string };
     const subscription = await prisma.userSubscription.findFirst({
-      where: { userId },
+      where: {
+        userId,
+        status: "ACTIVE",
+        endsAt: { gt: new Date() } // Ensure subscription hasn't expired
+      },
       orderBy: { startsAt: "desc" },
       include: {
         plan: true,

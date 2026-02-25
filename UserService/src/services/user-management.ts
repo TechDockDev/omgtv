@@ -16,6 +16,7 @@ export type UserListItem = {
     phone: string | null;
     status: string;
     plan: string;
+    planType: "Free" | "Trial" | "Premium";
     userType: string;
     signupDate: string;
     lastActive: string;
@@ -171,7 +172,7 @@ export async function listUsers(
     const dataQuery = Prisma.sql`
         SELECT 
             s.id, s.type, s."createdAt", s."updatedAt", 
-            c."firebaseUid", c."customerId"
+            c."firebaseUid", c."customerId", c."lastLoginAt"
         FROM "AuthSubject" s
         JOIN "CustomerIdentity" c ON s.id = c."subjectId"
         ${whereClause}
@@ -218,12 +219,13 @@ export async function listUsers(
             const status = profile?.status || "active";
 
             // Real plan from subscription data
-            let plan = "Free";
+            let planType: "Free" | "Trial" | "Premium" = "Free";
             if (subscriptionData.activeUserIds.has(u.id)) {
-                plan = "Premium";
+                planType = "Premium";
             } else if (subscriptionData.trialUserIds.has(u.id)) {
-                plan = "Trial";
+                planType = "Trial";
             }
+            const plan = planType;
 
             // Real analytics from Engagement Service
             const analytics = analyticsMap[u.id] || { totalWatchTimeSeconds: 0, contentViewed: 0 };
@@ -238,9 +240,10 @@ export async function listUsers(
                 phone,
                 status,
                 plan,
+                planType,
                 userType: "registered",
                 signupDate: new Date(u.createdAt).toISOString(),
-                lastActive: new Date(u.updatedAt).toISOString(),
+                lastActive: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : new Date(u.createdAt).toISOString(),
                 avatar,
                 watchTime: analytics.totalWatchTimeSeconds,
                 contentViewed: analytics.contentViewed,
@@ -262,7 +265,7 @@ export async function getUserDetails(
     const query = Prisma.sql`
         SELECT 
             s.id, s.type, s."createdAt", s."updatedAt", 
-            c."firebaseUid", c."customerId"
+            c."firebaseUid", c."customerId", c."lastLoginAt"
         FROM "AuthSubject" s
         JOIN "CustomerIdentity" c ON s.id = c."subjectId"
         WHERE s.id = ${userId} AND s.type = 'CUSTOMER'
@@ -298,12 +301,13 @@ export async function getUserDetails(
             fetchSubscriptionUserIds(),
         ]);
 
-        let plan = "Free";
+        let planType: "Free" | "Trial" | "Premium" = "Free";
         if (subscriptionData.activeUserIds.has(u.id)) {
-            plan = "Premium";
+            planType = "Premium";
         } else if (subscriptionData.trialUserIds.has(u.id)) {
-            plan = "Trial";
+            planType = "Trial";
         }
+        const plan = planType;
 
         const analytics = analyticsMap[u.id] || { totalWatchTimeSeconds: 0, contentViewed: 0 };
 
@@ -316,9 +320,10 @@ export async function getUserDetails(
             phone,
             status,
             plan,
+            planType,
             userType: "registered",
             signupDate: new Date(u.createdAt).toISOString(),
-            lastActive: new Date(u.updatedAt).toISOString(),
+            lastActive: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : new Date(u.createdAt).toISOString(),
             avatar,
             watchTime: analytics.totalWatchTimeSeconds,
             contentViewed: analytics.contentViewed,
