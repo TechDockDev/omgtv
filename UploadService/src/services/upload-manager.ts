@@ -462,7 +462,6 @@ export class UploadManager {
   }
 
   private async publishMediaUploaded(session: UploadSession) {
-    const topicName = this.config.MEDIA_UPLOADED_TOPIC;
     const message = {
       uploadId: session.id,
       objectKey: session.objectKey,

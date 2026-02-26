@@ -55,7 +55,7 @@ const envSchema = z.object({
     .transform((value) =>
       value && value.trim().length > 0 ? value : undefined
     ),
-  MEDIA_UPLOADED_TOPIC: z.string().default("media.uploaded"),
+  MEDIA_READY_SUBSCRIPTION: z.string().optional(),
   CONTENT_SERVICE_URL: z.string().url(),
   MEDIA_READY_FOR_STREAM_TOPIC: z.string().default("streaming-audit"),
   PREVIEW_GENERATION_TOPIC: z.string().default("media.preview.requested"),

@@ -234,6 +234,11 @@ export class MobileAppService {
     let carouselSeriesIds: string[] = [];
     let carouselEpisodeIds: string[] = [];
 
+    let engagementStates = new Map<
+      string,
+      { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
+    >();
+
     if (!parsed.tag) {
       const carouselEntries = await this.deps.repository.listCarouselEntries();
       // Extract IDs from carousel for engagement loading
@@ -241,40 +246,36 @@ export class MobileAppService {
         if (entry.seriesId) carouselSeriesIds.push(entry.seriesId);
         if (entry.episodeId) carouselEpisodeIds.push(entry.episodeId);
       });
-    }
 
-    // Load engagement for Carousel, Series (Sections) AND Top 10
-    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> = [];
+      // Load engagement for Carousel, Series (Sections) AND Top 10
+      const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> = [];
 
-    // 1. Carousel Series & Episodes
-    carouselSeriesIds.forEach(id => engagementItems.push({ id, contentType: "series" }));
-    carouselEpisodeIds.forEach(id => engagementItems.push({ id, contentType: "reel" })); // Ep -> reel
+      // 1. Carousel Series & Episodes
+      carouselSeriesIds.forEach(id => engagementItems.push({ id, contentType: "series" }));
+      carouselEpisodeIds.forEach(id => engagementItems.push({ id, contentType: "reel" })); // Ep -> reel
 
-    // 2. Main Feed Series
-    filteredItems.forEach(item => {
-      engagementItems.push({ id: item.id, contentType: "series" });
-    });
+      // 2. Main Feed Series
+      filteredItems.forEach(item => {
+        engagementItems.push({ id: item.id, contentType: "series" });
+      });
 
-    // 3. Top 10 Series
-    topTen.forEach((t) => {
-      engagementItems.push({ id: t.series.id, contentType: "series" });
-    });
+      // 3. Top 10 Series
+      topTen.forEach((t) => {
+        engagementItems.push({ id: t.series.id, contentType: "series" });
+      });
 
-    // Deduplicate engagement items to avoid redundant requests
-    const uniqueEngagementItems = Array.from(
-      new Map(engagementItems.map(item => [`${item.contentType}:${item.id}`, item])).values()
-    );
+      // Deduplicate engagement items to avoid redundant requests
+      const uniqueEngagementItems = Array.from(
+        new Map(engagementItems.map(item => [`${item.contentType}:${item.id}`, item])).values()
+      );
 
-    const engagementStates = await this.loadEngagementStates(uniqueEngagementItems, options);
+      engagementStates = await this.loadEngagementStates(uniqueEngagementItems, options);
 
-    if (!parsed.tag) {
-      // Re-fetch carousel entries or pass the ones we already fetched?
-      // listCarouselEntries is fast, but let's be efficient.
-      // buildCarouselItems needs to be updated to accept pre-fetched entries or we just call it.
-      // Let's modify buildCarouselItems to accept entries optionally.
-
-      // For now, let's call it. It will call listCarouselEntries again, but we have engagementStates.
-      carouselItems = await this.buildCarouselItems(filteredItems, engagementStates);
+      carouselItems = await this.buildCarouselItems(filteredItems, engagementStates, carouselEntries);
+    } else {
+      // If tag is present, we still need engagement for the filtered series
+      const engagementItems: Array<{ id: string; contentType: "series" }> = filteredItems.map(item => ({ id: item.id, contentType: "series" }));
+      engagementStates = await this.loadEngagementStates(engagementItems, options);
     }
 
     const top10Items = topTen.map((t) => {
@@ -576,10 +577,11 @@ export class MobileAppService {
     engagementStates?: Map<
       string,
       { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
-    >
+    >,
+    existingEntries?: CarouselEntryWithContent[]
   ): Promise<CarouselEntryView[]> {
     const limit = this.deps.config.carouselLimit;
-    const entries = await this.deps.repository.listCarouselEntries();
+    const entries = existingEntries || await this.deps.repository.listCarouselEntries();
     if (entries.length === 0) {
       return [];
     }

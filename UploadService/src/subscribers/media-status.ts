@@ -35,7 +35,7 @@ async function mediaStatusSubscriber(fastify: FastifyInstance) {
         // Create subscription if not exists (in a real app, usually managed by TF/scripts)
         // Here we assume subscription might need to be created or attached
         topic: readyTopicName,
-        subscription: `streaming-audit-sub`,
+        subscription: config.MEDIA_READY_SUBSCRIPTION || `upload-service-streaming-sub`,
     };
 
     try {

@@ -398,14 +398,13 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 4600
-              name: http
           resources:
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: 200m
+              memory: 256Mi
             limits:
-              cpu: 250m
-              memory: 512Mi
+              cpu: 1000m
+              memory: 1024Mi
           envFrom:
             - configMapRef:
                 name: content-service-config
@@ -729,7 +728,7 @@ data:
   CONTENT_SERVICE_URL: http://content-service:4600
   GCP_PROJECT_ID: pocketlol-68ca6
   PUBSUB_PROJECT_ID: pocketlol-68ca6
-  MEDIA_UPLOADED_TOPIC: uploaded-media
+  MEDIA_READY_SUBSCRIPTION: projects/pocketlol-68ca6/subscriptions/upload-service-streaming-sub
 ---
 
 ---
@@ -781,14 +780,13 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 5000
-              name: http
           resources:
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: 100m
+              memory: 256Mi
             limits:
-              cpu: 250m
-              memory: 512Mi
+              cpu: 500m
+              memory: 1024Mi
           envFrom:
             - configMapRef:
                 name: upload-service-config

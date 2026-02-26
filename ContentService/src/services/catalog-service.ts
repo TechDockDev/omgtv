@@ -1564,7 +1564,7 @@ export class CatalogService {
         ? event.contentId
         : undefined;
 
-    await this.repo.upsertMediaAssetByUploadId({
+    const upsertedAsset = await this.repo.upsertMediaAssetByUploadId({
       uploadId: event.uploadId,
       type: reelId ? MediaAssetType.REEL : MediaAssetType.EPISODE,
       status: MediaAssetStatus.UPLOADED,
@@ -1575,6 +1575,15 @@ export class CatalogService {
       reelId,
       variants: [],
     });
+
+    // AUTO-TRIGGER TRANSCODING
+    try {
+      this.processMediaAsset("SYSTEM", upsertedAsset.id).catch(err => {
+        console.error(`Failed to auto-trigger transcoding for asset ${upsertedAsset.id}:`, err);
+      });
+    } catch (err) {
+      console.error(`Error initiating auto-transcoding for asset ${upsertedAsset.id}:`, err);
+    }
   }
 
   async assignImageAsset(
