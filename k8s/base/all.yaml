@@ -15,7 +15,6 @@ data:
   SERVER_TRUST_PROXY: "true"
   LOG_LEVEL: info
   ENABLE_REQUEST_LOGGING: "true"
-  ENABLE_REQUEST_LOGGING: "true"
   AUTH_JWKS_URL: http://auth-service:4000/.well-known/jwks.json
   AUTH_AUDIENCE: pocketlol-services
   AUTH_ISSUER: auth-service
