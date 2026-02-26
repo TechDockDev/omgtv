@@ -398,6 +398,7 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 4600
+              name: http
           resources:
             requests:
               cpu: 200m
@@ -780,6 +781,7 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 5000
+              name: http
           resources:
             requests:
               cpu: 100m
