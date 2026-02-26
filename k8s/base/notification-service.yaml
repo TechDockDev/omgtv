@@ -10,7 +10,6 @@ data:
   HTTP_PORT: "5200"
   GRPC_BIND_ADDRESS: 0.0.0.0:50072
   LOG_LEVEL: info
-  REDIS_URL: ""
 ---
 apiVersion: apps/v1
 kind: Deployment

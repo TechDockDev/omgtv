@@ -42,6 +42,10 @@ async function mediaStatusSubscriber(fastify: FastifyInstance) {
         // Just create a handle to the subscription - don't call .get() or .create() to avoid permission issues
         const subscription = pubsub.subscription(readyParams.subscription);
 
+        subscription.on("error", (error) => {
+            fastify.log.error({ err: error }, "Subscription error in media-status-subscriber");
+        });
+
         subscription.on("message", async (message: Message) => {
             try {
                 const data = JSON.parse(message.data.toString());

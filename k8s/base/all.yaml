@@ -15,10 +15,7 @@ data:
   SERVER_TRUST_PROXY: "true"
   LOG_LEVEL: info
   ENABLE_REQUEST_LOGGING: "true"
-  REDIS_URL: ""
-  RATE_LIMIT_ANON: "20"
-  RATE_LIMIT_AUTH: "100"
-  RATE_LIMIT_ADMIN: "500"
+  ENABLE_REQUEST_LOGGING: "true"
   AUTH_JWKS_URL: http://auth-service:4000/.well-known/jwks.json
   AUTH_AUDIENCE: pocketlol-services
   AUTH_ISSUER: auth-service
@@ -111,7 +108,6 @@ data:
   REFRESH_TOKEN_ROTATION: "true"
   USER_SERVICE_ADDRESS: user-service:50052
   LOG_LEVEL: info
-  FIREBASE_PROJECT_ID: ""
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -334,7 +330,6 @@ data:
   LOG_LEVEL: info
   CDN_BASE_URL: ""
   DEFAULT_OWNER_ID: 00000000-0000-0000-0000-000000000001
-  REDIS_URL: ""
   ENGAGEMENT_SERVICE_URL: http://engagement-service:4700
   SUBSCRIPTION_SERVICE_URL: http://subscription-service:5100
   SEARCH_SERVICE_URL: http://search-service:4800
@@ -343,10 +338,10 @@ data:
   SERIES_CACHE_TTL_SECONDS: "120"
   RELATED_CACHE_TTL_SECONDS: "180"
   UPLOAD_SERVICE_URL: http://upload-service:5000
-  TRANSCODING_REQUESTS_TOPIC: transcoding-requests
+  TRANSCODING_REQUESTS_TOPIC: transcoding-requests-prod
   GCP_PROJECT_ID: pocketlol-68ca6
-  UPLOAD_BUCKET: videos-bucket-pocketlol
-  MEDIA_READY_SUBSCRIPTION: projects/pocketlol-68ca6/subscriptions/streaming-audit-sub
+  UPLOAD_BUCKET: videos-bucket-pocketlol-prod
+  MEDIA_READY_SUBSCRIPTION: projects/pocketlol-68ca6/subscriptions/streaming-audit-sub-prod
 ---
 
 ---
@@ -722,14 +717,11 @@ data:
   HTTP_HOST: 0.0.0.0
   HTTP_PORT: "5000"
   LOG_LEVEL: info
-  REDIS_URL: ""
-  UPLOAD_BUCKET: videos-bucket-pocketlol
-  CDN_UPLOAD_BASE_URL: ""
-  SIGNED_UPLOAD_TTL_SECONDS: "600"
   CONTENT_SERVICE_URL: http://content-service:4600
   GCP_PROJECT_ID: pocketlol-68ca6
+  MEDIA_READY_SUBSCRIPTION: projects/pocketlol-68ca6/subscriptions/upload-service-streaming-sub-prod
   PUBSUB_PROJECT_ID: pocketlol-68ca6
-  MEDIA_READY_SUBSCRIPTION: projects/pocketlol-68ca6/subscriptions/upload-service-streaming-sub
+  UPLOAD_BUCKET: videos-bucket-pocketlol-prod
 ---
 
 ---
@@ -970,15 +962,15 @@ spec:
             - name: GCP_PROJECT_ID
               value: "pocketlol-68ca6"
             - name: GCS_UPLOADS_BUCKET
-              value: "videos-bucket-pocketlol"
+              value: "videos-bucket-pocketlol-prod"
             - name: GCS_STREAMING_BUCKET
-              value: "videos-bucket-pocketlol"
+              value: "videos-bucket-pocketlol-prod"
             - name: PUBSUB_SUBSCRIPTION
-              value: "projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub"
+              value: "projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-prod"
             - name: PUBSUB_READY_TOPIC
-              value: "streaming-audit"
+              value: "streaming-audit-prod"
             - name: CDN_BASE_URL
-              value: "https://storage.googleapis.com/videos-bucket-pocketlol"
+              value: "https://storage.googleapis.com/videos-bucket-pocketlol-prod"
           envFrom:
             - secretRef:
                 name: shared-secrets
