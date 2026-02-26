@@ -718,7 +718,7 @@ data:
   LOG_LEVEL: info
   CONTENT_SERVICE_URL: http://content-service:4600
   GCP_PROJECT_ID: pocketlol-68ca6
-  MEDIA_READY_SUBSCRIPTION: projects/pocketlol-68ca6/subscriptions/upload-service-streaming-sub-prod
+  MEDIA_UPLOADED_TOPIC: uploaded-media-prod
   PUBSUB_PROJECT_ID: pocketlol-68ca6
   UPLOAD_BUCKET: videos-bucket-pocketlol-prod
 ---
@@ -964,6 +964,14 @@ spec:
               value: "videos-bucket-pocketlol-prod"
             - name: GCS_STREAMING_BUCKET
               value: "videos-bucket-pocketlol-prod"
+            - name: PREVIEW_GENERATION_TOPIC
+              value: "media.preview.requested-prod"
+            - name: MEDIA_PROCESSED_TOPIC
+              value: "media.processed-prod"
+            - name: TRANSCODING_REQUESTS_TOPIC
+              value: "transcoding-requests-prod"
+            - name: MEDIA_READY_SUBSCRIPTION
+              value: "projects/pocketlol-68ca6/subscriptions/streaming-audit-sub-prod"
             - name: PUBSUB_SUBSCRIPTION
               value: "projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-prod"
             - name: PUBSUB_READY_TOPIC
