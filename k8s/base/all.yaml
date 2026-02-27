@@ -173,18 +173,22 @@ spec:
                 name: auth-service-secrets
             - secretRef:
                 name: shared-secrets
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 3
 ---
@@ -407,18 +411,22 @@ spec:
                 name: content-service-secrets
             - secretRef:
                 name: shared-secrets
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 3
 ---
