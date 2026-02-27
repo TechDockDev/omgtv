@@ -21,7 +21,15 @@ export async function syncSeriesToSearch(action: "upsert" | "delete", series: Se
     }
 
     try {
-        const payload = action === "delete" ? { id: series.id } : {
+        let effectiveAction = action;
+        // Rule: Only PUBLISHED and PUBLIC series should be in search index
+        if (action === "upsert") {
+            if (series.status !== "PUBLISHED" || series.visibility !== "PUBLIC") {
+                effectiveAction = "delete";
+            }
+        }
+
+        const payload = effectiveAction === "delete" ? { id: series.id } : {
             id: series.id,
             title: series.title,
             slug: series.slug,
@@ -45,17 +53,15 @@ export async function syncSeriesToSearch(action: "upsert" | "delete", series: Se
         };
 
         const body = {
-            action,
+            action: effectiveAction,
             payload,
         };
 
         // Fire and forget (or await if strict, user plan said "soft fail")
-        // We await it but catch error to soft fail
         const response = await fetch(`${searchUrl}/internal/sync`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                // Add service auth token if needed
                 ...(config.SERVICE_AUTH_TOKEN ? { "Authorization": `Bearer ${config.SERVICE_AUTH_TOKEN}` } : {}),
             },
             body: JSON.stringify(body),
@@ -66,5 +72,48 @@ export async function syncSeriesToSearch(action: "upsert" | "delete", series: Se
         }
     } catch (error) {
         console.error("Search sync error:", error);
+    }
+}
+
+export async function syncReelToSearch(action: "upsert" | "delete", reel: any) {
+    const config = loadConfig();
+    const searchUrl = config.SEARCH_SERVICE_URL;
+
+    if (!searchUrl) return;
+
+    try {
+        let effectiveAction = action;
+        // Reels are only in search if PUBLISHED and PUBLIC
+        if (action === "upsert") {
+            if (reel.status !== "PUBLISHED" || reel.visibility !== "PUBLIC") {
+                effectiveAction = "delete";
+            }
+        }
+
+        const body = {
+            action: effectiveAction,
+            payload: effectiveAction === "delete" ? { id: reel.id } : {
+                id: reel.id,
+                title: reel.title,
+                description: reel.description,
+                tags: reel.tags,
+                category: reel.category?.name,
+                status: reel.status,
+                visibility: reel.visibility,
+                type: "reel",
+                // Add other fields as needed by search service
+            }
+        };
+
+        await fetch(`${searchUrl}/internal/sync`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                ...(config.SERVICE_AUTH_TOKEN ? { "Authorization": `Bearer ${config.SERVICE_AUTH_TOKEN}` } : {}),
+            },
+            body: JSON.stringify(body),
+        });
+    } catch (err) {
+        console.error("Reel Search Sync Error:", err);
     }
 }

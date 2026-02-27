@@ -17,6 +17,7 @@ import clientRoutes from "./routes/client";
 import adminRoutes from "./routes/admin";
 import { startProgressSyncWorker } from "./workers/progress-sync";
 import { startStatsSyncWorker } from "./workers/stats-sync";
+import { startUserActionSyncWorker } from "./workers/user-action-sync";
 
 export async function buildApp() {
   const config = loadConfig();
@@ -58,6 +59,7 @@ export async function buildApp() {
   // Start background workers
   startProgressSyncWorker();
   startStatsSyncWorker();
+  startUserActionSyncWorker();
 
   return app;
 }

@@ -362,5 +362,24 @@ export class EngagementClient {
 
     return results;
   }
+
+  async notifyVisibilityChange(params: {
+    contentType: "reel" | "series";
+    contentId: string;
+    visibility: string;
+    status: string;
+  }): Promise<{ success: boolean; isDiscoverable: boolean }> {
+    const response: ServiceRequestResult<unknown> = await performServiceRequest({
+      serviceName: "engagement",
+      baseUrl: this.options.baseUrl,
+      path: "/internal/visibility/sync",
+      method: "POST",
+      body: params,
+      timeoutMs: this.options.timeoutMs,
+      spanName: "client:engagement:notifyVisibilityChange",
+    });
+
+    return (response.payload as any)?.data ?? response.payload;
+  }
 }
 

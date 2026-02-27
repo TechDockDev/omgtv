@@ -150,6 +150,10 @@ function redisProgressDirtyKey() {
   return `sync:progress:dirty`; // ZSET (Score: timestamp, Member: userId:episodeId)
 }
 
+function redisActionQueueKey() {
+  return `sync:actions:pending`; // LIST of JSON strings
+}
+
 async function markDirty(redis: Redis, entityType: EntityType, entityId: string) {
   await redis.sadd(DIRTY_STATS_SET, `${entityType}:${entityId}`);
 }
@@ -199,17 +203,17 @@ async function getStatsRedis(
         likes: dbStat?.likeCount ?? 0,
         views: dbStat?.viewCount ?? 0,
         saves: dbStat?.saveCount ?? 0,
-        reviewCount: reviewAgg._count.rating ?? 0,
-        averageRating: reviewAgg._avg.rating ?? 0,
+        reviewCount: reviewAgg?._count?.rating ?? 0,
+        averageRating: reviewAgg?._avg?.rating ?? 0,
       };
 
-      // Populate Redis
-      const pipe = redis.pipeline()
-        .set(keys[0], stats.likes)
-        .set(keys[1], stats.views)
-        .set(keys[2], stats.saves);
+      // Populate Redis ONLY for missing keys to avoid overwriting fresh increments
+      const pipe = redis.pipeline();
+      if (likesRaw === null) pipe.set(keys[0], stats.likes);
+      if (viewsRaw === null) pipe.set(keys[1], stats.views);
+      if (savesRaw === null) pipe.set(keys[2], stats.saves);
 
-      if (stats.reviewCount > 0) {
+      if (stats.reviewCount > 0 && !reviewStatsRaw.count) {
         pipe.hset(keys[3], {
           count: stats.reviewCount,
           sum: stats.averageRating * stats.reviewCount
@@ -217,7 +221,22 @@ async function getStatsRedis(
       }
 
       await pipe.exec();
-      return stats;
+
+      // Return merged results: preferred Redis if it existed
+      return {
+        likes: likesRaw !== null ? clampNonNegative(parseRedisInt(likesRaw)) : stats.likes,
+        views: viewsRaw !== null ? clampNonNegative(parseRedisInt(viewsRaw)) : stats.views,
+        saves: savesRaw !== null ? clampNonNegative(parseRedisInt(savesRaw)) : stats.saves,
+        reviewCount: reviewStatsRaw.count ? parseInt(reviewStatsRaw.count, 10) : stats.reviewCount,
+        averageRating: reviewStatsRaw.count ? (parseFloat(reviewStatsRaw.sum ?? "0") / parseInt(reviewStatsRaw.count, 10)) : stats.averageRating,
+      };
+    } else {
+      // Negative Caching: If DB returns nothing, set 0 in Redis with TTL to prevent DB spam
+      const pipe = redis.pipeline();
+      if (likesRaw === null) pipe.setex(keys[0], 60 * 60 * 6, "0"); // 6h TTL
+      if (viewsRaw === null) pipe.setex(keys[1], 60 * 60 * 6, "0");
+      if (savesRaw === null) pipe.setex(keys[2], 60 * 60 * 6, "0");
+      await pipe.exec();
     }
   }
 
@@ -278,29 +297,20 @@ export async function likeEntity(params: {
     await markDirty(redis, entityType, entityId);
   }
 
-  if (prisma) {
-    // Immediate per-user state (critical for UI)
-    void prisma.userAction.upsert({
-      where: {
-        userId_contentType_contentId_actionType: {
-          userId,
-          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-          contentId: entityId,
-          actionType: "LIKE",
-        },
-      },
-      create: {
-        userId,
-        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-        contentId: entityId,
-        actionType: "LIKE",
-        isActive: true,
-      },
-      update: {
-        isActive: true,
-      },
-    }).catch((err) => console.error("DB like user-action failed:", err));
+  if (added === 1) {
+    await redis.incr(redisLikesKey(entityType, entityId));
+    await markDirty(redis, entityType, entityId);
   }
+
+  // Push to write-behind queue instead of immediate DB hit
+  await redis.lpush(redisActionQueueKey(), JSON.stringify({
+    userId,
+    contentType: entityType.toUpperCase(),
+    contentId: entityId,
+    actionType: "LIKE",
+    isActive: true,
+    timestamp: Date.now()
+  }));
 
   const stats = await getStatsRedis(redis, entityType, entityId, prisma);
   return { ...stats, liked: true };
@@ -337,17 +347,23 @@ export async function unlikeEntity(params: {
     await markDirty(redis, entityType, entityId);
   }
 
-  if (prisma) {
-    void prisma.userAction.updateMany({
-      where: {
-        userId,
-        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-        contentId: entityId,
-        actionType: "LIKE",
-      },
-      data: { isActive: false },
-    }).catch((err) => console.error("DB unlike user-action failed:", err));
+  if (removed === 1) {
+    const newCount = await redis.decr(redisLikesKey(entityType, entityId));
+    if (newCount < 0) {
+      await redis.set(redisLikesKey(entityType, entityId), "0");
+    }
+    await markDirty(redis, entityType, entityId);
   }
+
+  // Push to write-behind queue
+  await redis.lpush(redisActionQueueKey(), JSON.stringify({
+    userId,
+    contentType: entityType.toUpperCase(),
+    contentId: entityId,
+    actionType: "LIKE",
+    isActive: false,
+    timestamp: Date.now()
+  }));
 
   const stats = await getStatsRedis(redis, entityType, entityId, prisma);
   return { ...stats, liked: false };
@@ -375,26 +391,15 @@ export async function saveEntity(params: {
   }
 
   if (prisma) {
-    void prisma.userAction.upsert({
-      where: {
-        userId_contentType_contentId_actionType: {
-          userId,
-          contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-          contentId: entityId,
-          actionType: "SAVE",
-        },
-      },
-      create: {
-        userId,
-        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-        contentId: entityId,
-        actionType: "SAVE",
-        isActive: true,
-      },
-      update: {
-        isActive: true,
-      },
-    }).catch((err) => console.error("DB save user-action failed:", err));
+    // Push to write-behind queue
+    await redis.lpush(redisActionQueueKey(), JSON.stringify({
+      userId,
+      contentType: entityType.toUpperCase(),
+      contentId: entityId,
+      actionType: "SAVE",
+      isActive: true,
+      timestamp: Date.now()
+    }));
   }
 
   await redis.sadd(redisUserSavedKey(entityType, userId), entityId);
@@ -424,15 +429,15 @@ export async function unsaveEntity(params: {
   }
 
   if (prisma) {
-    void prisma.userAction.updateMany({
-      where: {
-        userId,
-        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
-        contentId: entityId,
-        actionType: "SAVE",
-      },
-      data: { isActive: false },
-    }).catch((err) => console.error("DB unsave user-action failed:", err));
+    // Push to write-behind queue
+    await redis.lpush(redisActionQueueKey(), JSON.stringify({
+      userId,
+      contentType: entityType.toUpperCase(),
+      contentId: entityId,
+      actionType: "SAVE",
+      isActive: false,
+      timestamp: Date.now()
+    }));
   }
 
   const removedCount = await redis.srem(redisUserSavedKey(entityType, userId), entityId);
@@ -961,8 +966,12 @@ export async function getUserStateBatch(params: {
     idx += 2;
   }
 
-  // 2. Database Fallback / Enrichment
-  if (prisma) {
+  // Determine if we need to hit the DB at all
+  const needsStatsFallback = Object.values(result).some(e => e.likeCount === 0 || e.viewCount === 0);
+  const needsUserFallback = Object.values(result).some(e => !e.isLiked || !e.isSaved);
+
+  // 2. Database Fallback / Enrichment (ONLY if Redis was incomplete)
+  if (prisma && (needsStatsFallback || needsUserFallback)) {
     try {
       // Fetch stats from DB
       const dbStats = await prisma.contentStats.findMany({
@@ -1332,4 +1341,32 @@ export async function syncProgressToDb(redis: Redis, prisma: PrismaClient, batch
   }
 
   return processedKeys.length;
+}
+
+export async function syncVisibility(params: {
+  prisma: any;
+  contentType: "reel" | "series";
+  contentId: string;
+  visibility: string;
+  status: string;
+}) {
+  const { prisma, contentType, contentId, visibility, status } = params;
+
+  // Rule: Content is "active" if it is PUBLISHED AND PUBLIC
+  // If it is UNLISTED, it is removed from lists (per requirements)
+  const isDiscoverable = status === "PUBLISHED" && visibility === "PUBLIC";
+
+  console.log(`[syncVisibility] Content ${contentType}:${contentId} visibility=${visibility} status=${status} => isDiscoverable=${isDiscoverable}`);
+
+  await prisma.userAction.updateMany({
+    where: {
+      contentType: contentType.toUpperCase() as any,
+      contentId: contentId,
+    },
+    data: {
+      isActive: isDiscoverable,
+    },
+  });
+
+  return { success: true, isDiscoverable };
 }

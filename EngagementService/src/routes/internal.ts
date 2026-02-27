@@ -19,6 +19,7 @@ import {
   batchActionResponseSchema,
   userStateRequestSchema,
   userStateResponseSchema,
+  visibilitySyncRequestSchema,
   type EngagementEventMetrics,
   type BatchActionResult,
 } from "../schemas/engagement";
@@ -49,6 +50,7 @@ import {
   getViewProgressBatch,
   upsertViewProgress,
   getUserProgressList,
+  syncVisibility,
 } from "../services/collection-engagement";
 
 function requireUserId(headers: Record<string, unknown>) {
@@ -760,7 +762,33 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       return continueWatchResponseSchema.parse(payload);
     },
   });
-  fastify.post("/series/:seriesId/reviews", {
+
+  fastify.post("/visibility/sync", {
+    schema: {
+      body: visibilitySyncRequestSchema,
+    },
+    handler: async (request) => {
+      if (!prisma) throw new Error("Database not available");
+      const body = visibilitySyncRequestSchema.parse(request.body);
+
+      const result = await syncVisibility({
+        prisma,
+        contentType: body.contentType,
+        contentId: body.contentId,
+        visibility: body.visibility,
+        status: body.status,
+      });
+
+      request.log.info(
+        { contentType: body.contentType, contentId: body.contentId, isVisible: result.isDiscoverable },
+        "Processed visibility sync"
+      );
+
+      return result;
+    },
+  });
+
+  fastify.post("/reels/:reelId/reviews", {
     schema: {
       params: seriesIdParamsSchema,
       body: addReviewBodySchema,

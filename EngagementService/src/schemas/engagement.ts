@@ -205,3 +205,13 @@ export type UserStateItem = z.infer<typeof userStateItemSchema>;
 export type UserStateRequest = z.infer<typeof userStateRequestSchema>;
 export type UserStateEntry = z.infer<typeof userStateEntrySchema>;
 export type UserStateResponse = z.infer<typeof userStateResponseSchema>;
+
+// Visibility Sync schema
+export const visibilitySyncRequestSchema = z.object({
+  contentType: z.enum(["reel", "series"]),
+  contentId: z.string(),
+  visibility: z.string(),
+  status: z.string(),
+});
+
+export type VisibilitySyncRequest = z.infer<typeof visibilitySyncRequestSchema>;

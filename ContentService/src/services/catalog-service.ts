@@ -135,6 +135,38 @@ export class CatalogService {
     });
   }
 
+  private async syncToEngagementService(params: {
+    contentType: "reel" | "series";
+    contentId: string;
+    visibility: Visibility;
+    status: PublicationStatus;
+  }) {
+    const config = this.config ?? loadConfig();
+    const engagementUrl = config.ENGAGEMENT_SERVICE_URL;
+    if (!engagementUrl || !config.SERVICE_AUTH_TOKEN) {
+      console.warn("ENGAGEMENT_SERVICE_URL or SERVICE_AUTH_TOKEN not configured, skipping engagement sync");
+      return;
+    }
+
+    try {
+      await fetch(`${engagementUrl}/api/v1/engagement/internal/visibility/sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.SERVICE_AUTH_TOKEN}`,
+        },
+        body: JSON.stringify({
+          contentType: params.contentType,
+          contentId: params.contentId,
+          visibility: params.visibility,
+          status: params.status,
+        }),
+      });
+    } catch (err) {
+      console.error("[CatalogService] Failed to sync to EngagementService:", err);
+    }
+  }
+
   private ensureCarouselEpisodeSelectable(episode: EpisodeWithRelations) {
     if (episode.status !== PublicationStatus.PUBLISHED) {
       throw new CatalogServiceError(
@@ -756,6 +788,16 @@ export class CatalogService {
       }
       const seriesToSync = { ...updatedSeries, category: categoryForSync };
       syncSeriesToSearch("upsert", seriesToSync).catch(err => console.error("Search Sync Error", err));
+
+      // Sync to Engagement Service
+      if (input.visibility !== undefined || input.status !== undefined) {
+        this.syncToEngagementService({
+          contentType: "series",
+          contentId: updatedSeries.id,
+          visibility: updatedSeries.visibility,
+          status: updatedSeries.status,
+        }).catch(err => console.error("Engagement Sync Error", err));
+      }
 
       return updatedSeries;
     } catch (error) {
@@ -1852,10 +1894,31 @@ export class CatalogService {
     const existing = await this.repo.findReelById(id);
     if (!existing) throw new CatalogServiceError("NOT_FOUND", "Reel not found");
 
-    return this.repo.updateReel(id, {
+    const updated = await this.repo.updateReel(id, {
       ...data,
       updatedByAdminId: adminId,
     });
+
+    // Sync to Search Service
+    const { syncReelToSearch } = await import("./search-sync");
+    let categoryForSync = undefined;
+    if (updated.categoryId) {
+      categoryForSync = await this.repo.findCategoryById(updated.categoryId);
+    }
+    const reelToSync = { ...updated, category: categoryForSync };
+    syncReelToSearch("upsert", reelToSync).catch(err => console.error("Reel Search Sync Error", err));
+
+    // Sync to Engagement Service
+    if (data.visibility !== undefined || data.status !== undefined) {
+      this.syncToEngagementService({
+        contentType: "reel",
+        contentId: updated.id,
+        visibility: updated.visibility,
+        status: updated.status,
+      }).catch(err => console.error("Engagement Sync Error", err));
+    }
+
+    return updated;
   }
 
   private isTransitionAllowed(

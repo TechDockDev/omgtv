@@ -373,15 +373,22 @@ export class CatalogRepository {
     });
   }
 
-  async findSeriesByIds(ids: string[]) {
+  async findSeriesByIds(ids: string[], options: { includeNonPublic?: boolean } = {}) {
     if (ids.length === 0) {
       return [] as Array<Series & { category: Category | null; mediaAssets: MediaAsset[] }>;
     }
+    const where: Prisma.SeriesWhereInput = {
+      id: { in: ids },
+      deletedAt: null,
+    };
+
+    if (!options.includeNonPublic) {
+      where.status = PublicationStatus.PUBLISHED;
+      where.visibility = Visibility.PUBLIC;
+    }
+
     return this.prisma.series.findMany({
-      where: {
-        id: { in: ids },
-        deletedAt: null,
-      },
+      where,
       include: {
         category: true,
         mediaAssets: true,
@@ -632,15 +639,22 @@ export class CatalogRepository {
     });
   }
 
-  async findEpisodesWithRelationsByIds(ids: string[]) {
+  async findEpisodesWithRelationsByIds(ids: string[], options: { includeNonPublic?: boolean } = {}) {
     if (ids.length === 0) {
       return [] as EpisodeWithRelations[];
     }
+    const where: Prisma.EpisodeWhereInput = {
+      id: { in: ids },
+      deletedAt: null,
+    };
+
+    if (!options.includeNonPublic) {
+      where.status = PublicationStatus.PUBLISHED;
+      where.visibility = { in: [Visibility.PUBLIC, Visibility.UNLISTED] };
+    }
+
     const rows = await this.prisma.episode.findMany({
-      where: {
-        id: { in: ids },
-        deletedAt: null,
-      },
+      where,
       include: {
         mediaAsset: {
           include: { variants: true },
@@ -668,10 +682,20 @@ export class CatalogRepository {
     });
   }
 
-  async findReelsByIds(ids: string[]) {
+  async findReelsByIds(ids: string[], options: { includeNonPublic?: boolean } = {}) {
     if (ids.length === 0) return [];
+    const where: Prisma.ReelWhereInput = {
+      id: { in: ids },
+      deletedAt: null,
+    };
+
+    if (!options.includeNonPublic) {
+      where.status = PublicationStatus.PUBLISHED;
+      where.visibility = { in: [Visibility.PUBLIC, Visibility.UNLISTED] };
+    }
+
     return this.prisma.reel.findMany({
-      where: { id: { in: ids }, deletedAt: null },
+      where,
       include: {
         mediaAsset: {
           include: { variants: true },
