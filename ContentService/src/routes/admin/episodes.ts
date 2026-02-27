@@ -39,10 +39,7 @@ const transitionSchema = z.object({
 });
 
 export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
-  const config = loadConfig();
-  const catalog = new CatalogService({
-    defaultOwnerId: config.DEFAULT_OWNER_ID,
-  });
+  const catalog = fastify.catalogService;
 
   const requireAdminId = (request: FastifyRequest, reply: FastifyReply) => {
     const value = request.headers["x-admin-id"];

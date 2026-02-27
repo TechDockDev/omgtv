@@ -41,9 +41,7 @@ const updateReelSchema = z.object({
 
 export default async function adminReelRoutes(fastify: FastifyInstance) {
   const config = loadConfig();
-  const catalog = new CatalogService({
-    defaultOwnerId: config.DEFAULT_OWNER_ID,
-  });
+  const catalog = fastify.catalogService;
 
   fastify.log.info("Registering Admin Reel Routes");
 

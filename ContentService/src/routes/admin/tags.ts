@@ -26,10 +26,7 @@ const listTagsQuerySchema = z.object({
 
 export default async function adminTagRoutes(fastify: FastifyInstance) {
   console.log("Registering Admin Tag Routes...");
-  const config = loadConfig();
-  const catalog = new CatalogService({
-    defaultOwnerId: config.DEFAULT_OWNER_ID,
-  });
+  const catalog = fastify.catalogService;
 
   const requireAdminId = (request: FastifyRequest, reply: FastifyReply) => {
     const value = request.headers["x-admin-id"];

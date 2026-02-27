@@ -107,10 +107,7 @@ function requireAdminId(request: FastifyRequest, reply: FastifyReply) {
 }
 
 export default async function adminCarouselRoutes(fastify: FastifyInstance) {
-  const config = loadConfig();
-  const catalog = new CatalogService({
-    defaultOwnerId: config.DEFAULT_OWNER_ID,
-  });
+  const catalog = fastify.catalogService;
 
   fastify.get("/", {
     handler: async (request, reply) => {

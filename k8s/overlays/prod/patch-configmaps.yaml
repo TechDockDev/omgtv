@@ -24,6 +24,7 @@ data:
   UPLOAD_BUCKET: "videos-bucket-pocketlol-prod" # Unified bucket (hls, videos, images, thumbnails)
   TRANSCODING_REQUESTS_TOPIC: "transcoding-requests-prod"
   MEDIA_READY_SUBSCRIPTION: "projects/pocketlol-68ca6/subscriptions/streaming-audit-sub-prod"
+  UPLOAD_SERVICE_URL: "http://upload-service:5000"
 ---
 apiVersion: v1
 kind: ConfigMap

@@ -24,18 +24,11 @@ import { DataQualityMonitor } from "../services/data-quality-monitor";
 export default async function internalRoutes(fastify: FastifyInstance) {
   const config = loadConfig();
   const redis = getRedis();
-  const eventsPublisher = new RedisCatalogEventsPublisher(
-    redis,
-    config.CATALOG_EVENT_STREAM_KEY
-  );
   const trendingService = new TrendingService(redis, {
     trendingKey: config.TRENDING_SORTED_SET_KEY,
     ratingsKey: config.RATINGS_HASH_KEY,
   });
-  const catalog = new CatalogService({
-    defaultOwnerId: config.DEFAULT_OWNER_ID,
-    eventsPublisher,
-  });
+  const catalog = fastify.catalogService;
   const viewerCatalog = new ViewerCatalogService({
     feedCacheTtlSeconds: config.FEED_CACHE_TTL_SECONDS,
     seriesCacheTtlSeconds: config.SERIES_CACHE_TTL_SECONDS,

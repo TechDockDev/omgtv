@@ -13,10 +13,7 @@ const updateTopTenSchema = z.object({
 });
 
 export default async function adminTopTenRoutes(fastify: FastifyInstance) {
-    const config = loadConfig();
-    const service = new CatalogService({
-        defaultOwnerId: config.DEFAULT_OWNER_ID,
-    });
+    const service = fastify.catalogService;
 
     fastify.get("/", async (request, reply) => {
         const list = await service.getAdminTopTenSeries();
