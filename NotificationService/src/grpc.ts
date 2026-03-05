@@ -54,6 +54,26 @@ const sendNotification = async (call: any, callback: any) => {
     }
 };
 
+const sendEmail = async (call: any, callback: any) => {
+    const { to, subject, body, isHtml } = call.request;
+    console.log(`gRPC SendEmail request received for: ${to} (Subject: ${subject})`);
+
+    try {
+        const result = await getNotificationManager().sendDirectEmail(
+            to,
+            subject,
+            body,
+            isHtml
+        );
+
+        console.log(`gRPC SendEmail handled successfully: ${result.messageId}`);
+        callback(null, { success: true, notificationId: result.messageId });
+    } catch (error: any) {
+        console.error('gRPC SendEmail Error:', error);
+        callback(null, { success: false, error: error.message });
+    }
+};
+
 const updatePreferences = async (call: any, callback: any) => {
     // TODO: Implement preference updates via PreferenceRepository
     callback(null, { success: true });
@@ -64,6 +84,7 @@ export const startGrpcServer = (port: string) => {
 
     server.addService(notificationProto.NotificationService.service, {
         SendNotification: sendNotification,
+        SendEmail: sendEmail,
         UpdatePreferences: updatePreferences
     });
 

@@ -21,7 +21,7 @@ export function getServiceRegistry(): readonly ServiceDefinition[] {
       access: "public",
       rateLimitPolicy: "anonymous",
       internalBasePath: "/api/v1/auth",
-      publicPrefixes: ["/public"],
+      publicPrefixes: ["/public", "/admin/forgot-password"],
       adminPrefixes: ["/admin"],
       documentationBasePath: "",
       exposeViaProxy: true,

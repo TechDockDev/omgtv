@@ -59,6 +59,17 @@ model UserRoleAssignment {
   @@unique([userId, roleId, scope])
 }
 
+model AdminProfile {
+  id          String   @id @default(uuid())
+  subjectId   String   @unique
+  name        String?
+  bio         String?
+  phoneNumber String?
+  avatarUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 enum GuestStatus {
   ACTIVE
   MIGRATED

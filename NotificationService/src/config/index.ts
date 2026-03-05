@@ -31,6 +31,11 @@ const envSchema = z.object({
     GRPC_BIND_ADDRESS: z.string().optional(),
     PUBSUB_EMULATOR_HOST: z.string().optional(),
     GOOGLE_CLOUD_PROJECT: z.string().optional(),
+    SMTP_HOST: z.string().min(1, "SMTP_HOST is required"),
+    SMTP_PORT: z.coerce.number().int().positive().default(587),
+    SMTP_USER: z.string().min(1, "SMTP_USER is required"),
+    SMTP_PASS: z.string().min(1, "SMTP_PASS is required"),
+    SMTP_FROM: z.string().email().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
@@ -46,6 +51,8 @@ export function loadConfig(): Env {
         const message = parsed.error.issues
             .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
             .join("; ");
+
+        console.error("Configuration validation failed. Available env keys:", Object.keys(process.env).filter(k => k.startsWith("SMTP") || k.includes("PORT") || k.includes("HOST")));
         throw new Error(`NotificationService configuration invalid: ${message}`);
     }
     cachedConfig = parsed.data;

@@ -365,8 +365,9 @@ export async function loginAdmin(params: {
   logger: FastifyBaseLogger;
   redis: Redis;
 }): Promise<TokenResponse> {
-  const { prisma, email, password, signAccessToken, userService, logger, redis } =
+  const { prisma, email: rawEmail, password, signAccessToken, userService, logger, redis } =
     params;
+  const email = rawEmail.toLowerCase().trim();
 
   const credential = await prisma.adminCredential.findUnique({
     where: { email },
@@ -419,8 +420,9 @@ export async function registerAdmin(params: {
   logger: FastifyBaseLogger;
   redis: Redis;
 }): Promise<TokenResponse> {
-  const { prisma, email, password, signAccessToken, userService, logger, redis } =
+  const { prisma, email: rawEmail, password, signAccessToken, userService, logger, redis } =
     params;
+  const email = rawEmail.toLowerCase().trim();
 
   const existing = await prisma.adminCredential.findUnique({
     where: { email },

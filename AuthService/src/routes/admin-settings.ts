@@ -1,6 +1,7 @@
-import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
 import { generalSettingSchema, generalSettingResponseSchema, type GeneralSettingBody } from "../schemas/settings";
+import { authenticateAdmin } from "../utils/auth";
+import fp from "fastify-plugin";
 
 export default fp(async function adminSettingsRoutes(fastify: FastifyInstance) {
     fastify.get("/general-settings", {
@@ -9,6 +10,7 @@ export default fp(async function adminSettingsRoutes(fastify: FastifyInstance) {
                 200: generalSettingResponseSchema,
             },
         },
+        preHandler: [authenticateAdmin],
         handler: async (request, reply) => {
             const prisma = request.server.prisma;
             let settings = await prisma.generalSetting.findUnique({
@@ -41,6 +43,7 @@ export default fp(async function adminSettingsRoutes(fastify: FastifyInstance) {
                     200: generalSettingResponseSchema,
                 },
             },
+            preHandler: [authenticateAdmin],
         },
         async (request, reply) => {
             const prisma = request.server.prisma;
