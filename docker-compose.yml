@@ -315,6 +315,7 @@ services:
       PRISMA_AUTO_RESET: ${AUTH_SERVICE_PRISMA_AUTO_RESET:-true}
       GOOGLE_CLOUD_QUOTA_PROJECT: pocketlol-68ca6
       REDIS_URL: ${AUTH_SERVICE_REDIS_URL:-redis://redis:6379}
+      NOTIFICATION_SERVICE_ADDRESS: notification-service:50072
     ports:
       - "${AUTH_SERVICE_HTTP_HOST_PORT:-4000}:${AUTH_SERVICE_HTTP_PORT:-4000}"
       - "${AUTH_SERVICE_GRPC_HOST_PORT:-50051}:${AUTH_SERVICE_GRPC_PORT:-50051}"
@@ -346,6 +347,11 @@ services:
       FIREBASE_SERVICE_ACCOUNT_PATH: /app/secrets/firebase/notification-service-account.json
       USER_SERVICE_URL: http://user-service:${USER_SERVICE_HTTP_PORT:-4500}
       SUBSCRIPTION_SERVICE_URL: http://subscription-service:${SUBSCRIPTION_SERVICE_HTTP_PORT:-5100}
+      SMTP_HOST: ${SMTP_HOST:?SMTP_HOST is required}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:?SMTP_USER is required}
+      SMTP_PASS: ${SMTP_PASS:?SMTP_PASS is required}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@omgtv.in}
     volumes:
       - ./NotificationService/secrets/firebase/notification-service-account.json:/app/secrets/firebase/notification-service-account.json:ro
     ports:

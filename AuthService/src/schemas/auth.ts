@@ -107,6 +107,34 @@ export const deviceSyncBodySchemaMinimal = z.object({
   }),
 });
 
+export const forgotPasswordRequestSchema = z.object({
+  email: z.string().trim().email(),
+});
+
+export const verifyOtpSchema = z.object({
+  email: z.string().trim().email(),
+  otp: z.string().length(6),
+});
+
+export const resetPasswordSchema = z.object({
+  resetToken: z.string().min(1),
+  newPassword: z.string().trim().min(8),
+});
+
+export const emailUpdateOptionsSchema = z.object({
+  newEmail: z.string().trim().email(),
+});
+
+export const verifyEmailOtpSchema = z.object({
+  newEmail: z.string().trim().email(),
+  otp: z.string().length(6),
+});
+
+export const updatePasswordSchema = z.object({
+  oldPassword: z.string().trim().min(1),
+  newPassword: z.string().trim().min(8),
+});
+
 export type AdminLoginBody = z.infer<typeof adminLoginBodySchema>;
 export type AdminRegisterBody = z.infer<typeof adminRegisterBodySchema>;
 export type CustomerLoginBody = z.infer<typeof customerLoginBodySchema>;
@@ -116,3 +144,9 @@ export type RefreshBody = z.infer<typeof refreshBodySchema>;
 export type LogoutBody = z.infer<typeof logoutBodySchema>;
 export type TokenResponse = z.infer<typeof tokenResponseSchema>;
 export type DeviceSyncBody = z.infer<typeof deviceSyncBodySchemaMinimal>;
+export type ForgotPasswordRequestBody = z.infer<typeof forgotPasswordRequestSchema>;
+export type VerifyOtpBody = z.infer<typeof verifyOtpSchema>;
+export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>;
+export type EmailUpdateOptionsBody = z.infer<typeof emailUpdateOptionsSchema>;
+export type VerifyEmailOtpBody = z.infer<typeof verifyEmailOtpSchema>;
+export type UpdatePasswordBody = z.infer<typeof updatePasswordSchema>;

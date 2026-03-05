@@ -11,10 +11,14 @@ import { loadConfig } from "./config";
 import prismaPlugin from "./plugins/prisma";
 import jwtPlugin from "./plugins/jwt";
 import userServicePlugin from "./plugins/user-service";
+import notificationServicePlugin from "./plugins/notification-service";
 import firebasePlugin from "./plugins/firebase";
 import { redisPlugin } from "./plugins/redis";
 import publicAuthRoutes from "./routes/public-auth";
+import forgotPasswordRoutes from "./routes/forgot-password";
+import emailUpdateRoutes from "./routes/email-update";
 import adminSettingsRoutes from "./routes/admin-settings";
+import adminSecurityRoutes from "./routes/admin-security";
 import { buildJwks } from "./utils/jwks";
 import formbody from "@fastify/formbody";
 
@@ -52,7 +56,11 @@ export async function buildApp() {
   await fastify.register(redisPlugin);
   await fastify.register(firebasePlugin);
   await fastify.register(userServicePlugin);
+  await fastify.register(notificationServicePlugin);
   await fastify.register(publicAuthRoutes);
+  await fastify.register(forgotPasswordRoutes);
+  await fastify.register(emailUpdateRoutes);
+  await fastify.register(adminSecurityRoutes);
   await fastify.register(adminSettingsRoutes, { prefix: "/api/v1/auth/admin" });
 
   fastify.get("/health", async () => ({ status: "ok" }));

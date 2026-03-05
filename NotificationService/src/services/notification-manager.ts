@@ -2,16 +2,26 @@ import { NotificationType, NotificationStatus } from '@prisma/client';
 import { NotificationRepository } from '../repositories/notification';
 import { PreferenceRepository } from '../repositories/preference';
 import { FcmProvider } from '../providers/fcm';
-import { ConsoleEmailProvider } from '../providers/email';
+import { SmtpEmailProvider } from '../providers/smtp';
 import { EmailPayload, PushPayload } from '../providers/interfaces';
 
 export class NotificationManager {
-    private emailProvider: ConsoleEmailProvider;
+    private emailProvider: SmtpEmailProvider;
     private pushProvider: FcmProvider;
 
     constructor() {
-        this.emailProvider = new ConsoleEmailProvider();
+        this.emailProvider = new SmtpEmailProvider();
         this.pushProvider = new FcmProvider();
+    }
+
+    async sendDirectEmail(to: string, subject: string, body: string, isHtml: boolean = true) {
+        const payload: EmailPayload = {
+            to,
+            subject,
+            html: isHtml ? body : body.replace(/\n/g, '<br>'),
+            text: isHtml ? undefined : body,
+        };
+        return await this.emailProvider.send(payload);
     }
 
     async sendNotification(

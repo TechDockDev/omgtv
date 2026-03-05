@@ -35,6 +35,9 @@ function isKnownPublicEndpoint(pathname: string, method: string): boolean {
     if (
       pathname === "/api/v1/auth/admin/login" ||
       pathname === "/api/v1/auth/admin/register" ||
+      pathname === "/api/v1/auth/admin/forgot-password/request" ||
+      pathname === "/api/v1/auth/admin/forgot-password/verify" ||
+      pathname === "/api/v1/auth/admin/forgot-password/reset" ||
       pathname === "/api/v1/auth/customer/login" ||
       pathname === "/api/v1/auth/guest/init" ||
       pathname === "/api/v1/auth/token/refresh"
