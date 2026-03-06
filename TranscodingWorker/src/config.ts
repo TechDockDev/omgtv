@@ -6,6 +6,7 @@ const configSchema = z.object({
     GCP_PROJECT_ID: z.string().min(1),
     GCS_UPLOADS_BUCKET: z.string().min(1),
     GCS_STREAMING_BUCKET: z.string().min(1),
+    FIREBASE_CREDENTIALS_B64: z.string().optional(),
 
     // Pub/Sub (using existing topics)
     PUBSUB_SUBSCRIPTION: z.string().default("uploaded-media-sub").or(z.undefined()).transform((val) => {
