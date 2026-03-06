@@ -15,7 +15,7 @@ export function initializeFirebase(): admin.app.App | null {
 
     try {
         const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '/app/secrets/firebase/notification-service-account.json';
-        const serviceAccountB64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
+        const serviceAccountB64 = process.env.FIREBASE_CREDENTIALS_B64 || process.env.FIREBASE_SERVICE_ACCOUNT_B64;
 
         let credential;
 
@@ -25,7 +25,7 @@ export function initializeFirebase(): admin.app.App | null {
                 const serviceAccount = JSON.parse(buffer.toString('utf8'));
                 credential = admin.credential.cert(serviceAccount);
             } catch (e) {
-                console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT_B64', e);
+                console.error('❌ Failed to parse FIREBASE_CREDENTIALS_B64', e);
                 throw e;
             }
         } else {

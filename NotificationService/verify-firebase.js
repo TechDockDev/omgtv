@@ -7,17 +7,31 @@ async function verifyFirebase() {
     process.stdout.write('--- Firebase Verification Script (JS) ---\n');
 
     const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './secrets/firebase/notification-service-account.json';
-    const absolutePath = path.resolve(serviceAccountPath);
+    const serviceAccountB64 = process.env.FIREBASE_CREDENTIALS_B64 || process.env.FIREBASE_SERVICE_ACCOUNT_B64;
 
-    process.stdout.write(`Checking service account file at: ${absolutePath}\n`);
+    let serviceAccount;
 
-    if (!fs.existsSync(absolutePath)) {
-        process.stderr.write('❌ Service account file not found!\n');
-        process.exit(1);
+    if (serviceAccountB64) {
+        process.stdout.write('Using Base64 credentials from environment...\n');
+        try {
+            const buffer = Buffer.from(serviceAccountB64, 'base64');
+            serviceAccount = JSON.parse(buffer.toString('utf8'));
+        } catch (e) {
+            process.stderr.write('❌ Failed to parse Base64 credentials!\n');
+            process.exit(1);
+        }
+    } else {
+        const absolutePath = path.resolve(serviceAccountPath);
+        process.stdout.write(`Checking service account file at: ${absolutePath}\n`);
+
+        if (!fs.existsSync(absolutePath)) {
+            process.stderr.write('❌ Service account file not found and no Base64 credentials provided!\n');
+            process.exit(1);
+        }
+        serviceAccount = JSON.parse(fs.readFileSync(absolutePath, 'utf8'));
     }
 
     try {
-        const serviceAccount = JSON.parse(fs.readFileSync(absolutePath, 'utf8'));
         process.stdout.write(`Project ID: ${serviceAccount.project_id}\n`);
         process.stdout.write(`Client Email: ${serviceAccount.client_email}\n`);
 
