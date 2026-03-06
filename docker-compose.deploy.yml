@@ -74,6 +74,7 @@ services:
       - USER_SERVICE_TOKEN=${SERVICE_AUTH_TOKEN}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
       - FIREBASE_CREDENTIALS_B64=${FIREBASE_CREDENTIALS_B64}
+      - NOTIFICATION_SERVICE_ADDRESS=notification-service:50072
     depends_on:
       - cloud-sql-proxy
 
@@ -205,6 +206,8 @@ services:
       - FIREBASE_SERVICE_ACCOUNT_PATH=/app/secrets/firebase/notification-service-account.json
       - FIREBASE_SERVICE_ACCOUNT_B64=${FIREBASE_SERVICE_ACCOUNT_B64}
       - FIREBASE_CREDENTIALS_B64=${FIREBASE_CREDENTIALS_B64}
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
     depends_on:
       - cloud-sql-proxy
 
