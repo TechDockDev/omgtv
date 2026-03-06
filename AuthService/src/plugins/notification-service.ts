@@ -32,7 +32,7 @@ const notificationServicePlugin = fp(async function notificationServicePlugin(
     fastify: FastifyInstance
 ) {
     const config = loadConfig();
-    const NOTIFICATION_SERVICE_ADDRESS = process.env.NOTIFICATION_SERVICE_ADDRESS || "localhost:50051";
+    const NOTIFICATION_SERVICE_ADDRESS = config.NOTIFICATION_SERVICE_ADDRESS;
 
     const packageDefinition = loadSync(PROTO_PATH, {
         keepCase: true,

@@ -67,6 +67,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value && value.length > 0 ? value : undefined)),
+  NOTIFICATION_SERVICE_ADDRESS: z.string().default("localhost:50072"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
 });
 

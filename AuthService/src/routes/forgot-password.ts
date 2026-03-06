@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
+import { loadConfig } from "../config";
 import {
     forgotPasswordRequestSchema,
     verifyOtpSchema,
@@ -54,10 +55,13 @@ export default fp(async function forgotPasswordRoutes(fastify: FastifyInstance) 
                 }
 
                 request.log.info({ email, notificationId: response.notificationId }, "OTP email request sent successfully to NotificationService");
-            } catch (error) {
+            } catch (error: any) {
                 request.log.error({ err: error, email }, "Failed to send reset OTP email via gRPC");
-                // In production, we should throw if the email cannot be sent
-                throw fastify.httpErrors.internalServerError("Notification service unavailable. Please try again later.");
+                const config = loadConfig();
+                const message = config.NODE_ENV === 'development'
+                    ? `Notification service unavailable: ${error.message}`
+                    : "Notification service unavailable. Please try again later.";
+                throw fastify.httpErrors.internalServerError(message);
             }
 
             return { success: true, message: "OTP sent successfully." };
