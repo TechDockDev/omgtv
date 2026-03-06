@@ -28,6 +28,7 @@ const envSchema = z.object({
     SUBSCRIPTION_SERVICE_URL: z.string().default("http://subscription-service:5100"),
     FIREBASE_SERVICE_ACCOUNT_PATH: z.string().optional(),
     FIREBASE_SERVICE_ACCOUNT_B64: z.string().optional(),
+    FIREBASE_CREDENTIALS_B64: z.string().optional(),
     GRPC_BIND_ADDRESS: z.string().optional(),
     PUBSUB_EMULATOR_HOST: z.string().optional(),
     GOOGLE_CLOUD_PROJECT: z.string().optional(),

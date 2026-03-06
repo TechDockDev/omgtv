@@ -204,6 +204,7 @@ services:
       - HTTP_PORT=5200
       - FIREBASE_SERVICE_ACCOUNT_PATH=/app/secrets/firebase/notification-service-account.json
       - FIREBASE_SERVICE_ACCOUNT_B64=${FIREBASE_SERVICE_ACCOUNT_B64}
+      - FIREBASE_CREDENTIALS_B64=${FIREBASE_CREDENTIALS_B64}
     depends_on:
       - cloud-sql-proxy
 
