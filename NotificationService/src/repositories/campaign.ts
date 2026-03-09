@@ -39,6 +39,19 @@ export const CampaignRepository = {
         });
     },
 
+    claimForProcessing: async (id: string): Promise<boolean> => {
+        const result = await prisma.campaign.updateMany({
+            where: {
+                id,
+                status: 'SCHEDULED'
+            },
+            data: {
+                status: 'SENDING'
+            }
+        });
+        return result.count === 1;
+    },
+
     list: async (limit = 10, offset = 0) => {
         return prisma.campaign.findMany({
             orderBy: { createdAt: 'desc' },

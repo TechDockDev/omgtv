@@ -19,5 +19,11 @@ export const PreferenceRepository = {
             create: { userId, ...data },
             update: data,
         });
+    },
+
+    getBatch: async (userIds: string[]) => {
+        return prisma.userNotificationPreference.findMany({
+            where: { userId: { in: userIds } }
+        });
     }
 };

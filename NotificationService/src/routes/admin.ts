@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { NotificationRepository } from '../repositories/notification';
+import { NotificationManager } from '../services/notification-manager';
 import { pushNotificationService } from '../services/PushNotificationService';
 import prisma from '../prisma';
 
@@ -30,34 +31,24 @@ export default async function adminRoutes(server: FastifyInstance) {
      */
     server.post('/send', {
         schema: { body: sendNotificationSchema },
-    }, async (request, reply) => {
+    }, async (request) => {
         const { userId, title, body, data, type, priority } = sendNotificationSchema.parse(request.body);
 
         try {
-            const notification = await NotificationRepository.create({
+            const manager = new NotificationManager();
+            const notification = await manager.sendNotification(
                 userId,
-                type: type === 'PUSH' ? 'PUSH' : 'IN_APP',
+                type as any,
                 title,
                 body,
-                data: data || {},
-                priority,
-                status: 'PENDING'
-            });
+                data,
+                priority as any
+            );
 
-            if (type === 'PUSH') {
-                const fcmTokens = await prisma.fcmToken.findMany({ where: { userId } });
-                if (fcmTokens.length > 0) {
-                    pushNotificationService.sendToMultipleDevices(
-                        fcmTokens.map((t: { token: string }) => t.token),
-                        { title, body, data }
-                    ).catch(err => server.log.error(err, 'Failed to send push in admin flow'));
-                }
-            }
-
-            return { success: true, notificationId: notification.id };
+            return { success: true, notificationId: notification?.id };
         } catch (error) {
             server.log.error(error, 'Failed to send admin notification');
-            return reply.code(500).send({ error: 'Failed to send notification' });
+            throw server.httpErrors.internalServerError('Failed to send notification');
         }
     });
 
