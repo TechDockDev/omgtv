@@ -14,53 +14,49 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
     app.post("/razorpay", async (request, reply) => {
         const signature = request.headers["x-razorpay-signature"] as string;
         const body = request.body as any;
+        const rawBody = (request as any).rawBody;
 
         if (!signature) {
             return reply.code(400).send({ error: "Missing signature" });
         }
 
-        // Verify signature
+        // Verify signature using raw body if available, fallback to stringified body
         const hmac = crypto.createHmac("sha256", config.RAZORPAY_WEBHOOK_SECRET);
-        hmac.update(JSON.stringify(body));
+        if (rawBody) {
+            hmac.update(rawBody);
+        } else {
+            hmac.update(JSON.stringify(body));
+        }
         const generatedSignature = hmac.digest("hex");
 
         if (generatedSignature !== signature) {
-            request.log.warn({ msg: "Invalid webhook signature", signature, generatedSignature });
+            request.log.warn({
+                msg: "Invalid webhook signature",
+                signature,
+                generatedSignature,
+                hasRawBody: !!rawBody
+            });
             return reply.code(400).send({ error: "Invalid signature" });
         }
 
         const event = body.event;
         const payload = body.payload;
 
-        request.log.info({ msg: "Received Razorpay webhook", event, payloadId: payload?.payment?.entity?.id });
+        request.log.info({ msg: "Received Razorpay webhook", event, subscriptionId: payload?.subscription?.entity?.id });
 
         try {
-            if (event === "payment.captured") {
-                const payment = payload.payment.entity;
-                // Check if this payment is for a subscription or an order
-                // For new flow, we might receive subscription events like 'subscription.charged'
-                // But let's handle 'payment.captured' first as it's common.
-                // However, for subscriptions, 'subscription.charged' is better.
-                // Let's stick to what was likely planned: handling payment success.
+            if (event === "subscription.charged" || event === "invoice.paid") {
+                const subscriptionEntity = payload.subscription?.entity || payload.invoice?.entity;
+                const payment = payload.payment?.entity || payload.invoice?.entity?.payment_id;
 
-                // Note: With subscriptions, 'order_id' in payment entity corresponds to the specific order for that billing cycle.
-                // The 'subscription_id' field in payment entity links to our transaction/subscription.
-
-                // Let's handle 'subscription.charged' which is critical for recurring.
-                // And also 'order.paid' or 'payment.captured'.
-            } else if (event === "subscription.charged") {
-                const subscriptionEntity = payload.subscription.entity;
-                const payment = payload.payment.entity;
+                if (!subscriptionEntity) {
+                    return reply.send({ status: "skipped", reason: "no_subscription_entity" });
+                }
 
                 const subscriptionId = subscriptionEntity.id;
-                const paymentId = payment.id;
+                const paymentId = typeof payment === 'string' ? payment : payment?.id;
 
-                // Find transaction by subscription ID (stored in razorpayOrderId)
-                // OR find UserSubscription by razorpayOrderId
-
-                // In our intent, we did:
-                // Transaction.razorpayOrderId = subscription.id
-
+                // 1. Try to find a pending transaction for this subscription (Initial purchase)
                 const transaction = await prisma.transaction.findFirst({
                     where: {
                         subscriptionId: subscriptionId,
@@ -69,13 +65,12 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 });
 
                 if (transaction) {
-                    // Update transaction
                     await prisma.transaction.update({
                         where: { id: transaction.id },
                         data: {
                             status: "SUCCESS",
                             razorpayPaymentId: paymentId,
-                            razorpaySignature: signature // saving webhook signature as proof? or empty
+                            razorpaySignature: signature
                         }
                     });
 
@@ -92,57 +87,57 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         }
                     });
 
-                    request.log.info({ msg: "Subscription activated", userSubscriptionId: userSubscription.id });
+                    request.log.info({ msg: "Subscription activated from pending transaction", userSubscriptionId: userSubscription.id });
                 } else {
-                    // Might be a renewal
-                    request.log.info({ msg: "Subscription charged for renewal or unknown transaction", subscriptionId });
-                    // Handle renewal logic here: find existing UserSubscription and update endsAt + create new Transaction
+                    // 2. Might be a renewal or trial transition
+                    request.log.info({ msg: "Subscription charged for renewal or trial transition", subscriptionId });
 
                     const existingSub = await prisma.userSubscription.findFirst({
-                        where: {
-                            OR: [
-                                { razorpayOrderId: subscriptionId },
-                                // In new schema, we might store subscriptionId explicitly if we had a field, 
-                                // but UserSubscription mainly has razorpayOrderId as the external ID.
-                                // Let's check if we need to migrate this look up.
-                                // UserSubscription schema: razorpayOrderId String?
-                                // So we keep checking razorpayOrderId here as that's where we store the sub ID in UserSubscription table.
-                                { razorpayOrderId: subscriptionId }
-                            ]
-                        }
+                        where: { razorpayOrderId: subscriptionId }
                     });
 
                     if (existingSub) {
+                        // Check if we already processed this exact payment
+                        let existingTx = null;
+                        if (paymentId) {
+                            existingTx = await prisma.transaction.findFirst({
+                                where: { razorpayPaymentId: paymentId, status: "SUCCESS" }
+                            });
+                        }
+
+                        if (existingTx) {
+                            request.log.info({ msg: "Duplicate webhook for payment already processed", paymentId });
+                            return reply.send({ status: "ok" });
+                        }
+
                         await prisma.userSubscription.update({
                             where: { id: existingSub.id },
                             data: {
                                 status: "ACTIVE",
                                 endsAt: new Date(subscriptionEntity.current_end * 1000),
-                                trialPlanId: null  // Trial is over, user is now on full premium plan
+                                trialPlanId: null  // Critical: Trial is over, user is now on full premium plan
                             }
                         });
 
-                        // Record new transaction
+                        // Record new transaction for the charge
                         await prisma.transaction.create({
                             data: {
                                 userId: existingSub.userId,
                                 planId: existingSub.planId,
-                                amountPaise: payment.amount,
-                                currency: payment.currency,
+                                amountPaise: payload.payment?.entity?.amount || 0,
+                                currency: payload.payment?.entity?.currency || "INR",
                                 status: "SUCCESS",
-                                subscriptionId: subscriptionId, // Was razorpayOrderId
+                                subscriptionId: subscriptionId,
                                 razorpayPaymentId: paymentId,
                                 createdAt: new Date(),
                             }
                         });
+                        request.log.info({ msg: "Subscription updated for renewal/trial transition", subId: existingSub.id });
                     }
                 }
-            } else if (event === "subscription.cancelled" || event === "subscription.halted" || event === "subscription.completed") {
+            } else if (event === "subscription.activated") {
                 const subscriptionEntity = payload.subscription.entity;
                 const subscriptionId = subscriptionEntity.id;
-
-                // Mark the subscription as CANCELED or EXPIRED
-                const status: SubscriptionStatus = event === "subscription.completed" ? "EXPIRED" : "CANCELED";
 
                 const existingSub = await prisma.userSubscription.findFirst({
                     where: { razorpayOrderId: subscriptionId }
@@ -152,10 +147,50 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     await prisma.userSubscription.update({
                         where: { id: existingSub.id },
                         data: {
-                            status: status
+                            status: "ACTIVE",
+                            startsAt: new Date(subscriptionEntity.current_start * 1000),
+                            endsAt: new Date(subscriptionEntity.current_end * 1000)
                         }
                     });
+                }
+            } else if (
+                event === "subscription.cancelled" ||
+                event === "subscription.halted" ||
+                event === "subscription.completed"
+            ) {
+                const subscriptionEntity = payload.subscription.entity;
+                const subscriptionId = subscriptionEntity.id;
+
+                const status: SubscriptionStatus = event === "subscription.completed" ? "EXPIRED" : "CANCELED";
+
+                const existingSub = await prisma.userSubscription.findFirst({
+                    where: { razorpayOrderId: subscriptionId }
+                });
+
+                if (existingSub) {
+                    await prisma.userSubscription.update({
+                        where: { id: existingSub.id },
+                        data: { status }
+                    });
                     request.log.info({ msg: `Subscription ${event}`, subscriptionId, status });
+                }
+            } else if (event === "payment.failed") {
+                const payment = payload.payment.entity;
+                request.log.warn({
+                    msg: "Razorpay payment failed",
+                    paymentId: payment.id,
+                    reason: payment.error_description,
+                    subscriptionId: payment.subscription_id
+                });
+
+                if (payment.subscription_id) {
+                    const existingSub = await prisma.userSubscription.findFirst({
+                        where: { razorpayOrderId: payment.subscription_id }
+                    });
+
+                    if (existingSub && event === "subscription.halted") {
+                        // This is handled above, but payment.failed often precedes it
+                    }
                 }
             }
 

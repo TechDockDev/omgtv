@@ -22,14 +22,15 @@ export default async function internalRoutes(app: FastifyInstance) {
         endsAt: { gt: new Date() } // Ensure subscription hasn't expired
       },
       orderBy: { startsAt: "desc" },
-      include: { plan: true },
+      include: { plan: true, trialPlan: true },
     });
 
-    if (subscription && subscription.plan) {
+    if (subscription && (subscription.plan || subscription.trialPlan)) {
       return {
         allowed: true,
-        planId: subscription.planId,
+        planId: subscription.planId || subscription.trialPlanId,
         status: subscription.status,
+        isTrial: !!subscription.trialPlan,
         contentType,
       };
     }

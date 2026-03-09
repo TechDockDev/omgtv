@@ -40,6 +40,22 @@ export async function buildApp() {
   await app.register(sensible);
   await app.register(cors, { origin: false });
   await app.register(helmet, { contentSecurityPolicy: false });
+
+  // Custom parser to capture raw body for Razorpay webhooks (required for signature verification)
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
+    try {
+      if (request.url.includes("/webhooks/razorpay")) {
+        // Store raw body for signature verification
+        (request as any).rawBody = body;
+      }
+      const json = JSON.parse(body.toString());
+      done(null, json);
+    } catch (err: any) {
+      err.statusCode = 400;
+      done(err, undefined);
+    }
+  });
+
   await app.register(serviceAuthPlugin);
   await app.register(internalRoutes, { prefix: "/internal" });
 
