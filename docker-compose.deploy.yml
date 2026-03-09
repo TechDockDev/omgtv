@@ -74,6 +74,7 @@ services:
       - USER_SERVICE_TOKEN=${SERVICE_AUTH_TOKEN}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
       - FIREBASE_CREDENTIALS_B64=${FIREBASE_CREDENTIALS_B64}
+      - NOTIFICATION_SERVICE_ADDRESS=notification-service:50072
     depends_on:
       - cloud-sql-proxy
 
@@ -204,7 +205,13 @@ services:
       - HTTP_PORT=5200
       - FIREBASE_SERVICE_ACCOUNT_PATH=/app/secrets/firebase/notification-service-account.json
       - FIREBASE_SERVICE_ACCOUNT_B64=${FIREBASE_SERVICE_ACCOUNT_B64}
-      - FIREBASE_CREDENTIALS_B64=${FIREBASE_CREDENTIALS_B64}
+      - USER_SERVICE_URL=http://user-service:4500
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=serverpocketlol@gmail.com
+      - SMTP_PASS=rawmjzeifmjamhvm
+      - SMTP_FROM=serverpocketlol@gmail.com
     depends_on:
       - cloud-sql-proxy
 

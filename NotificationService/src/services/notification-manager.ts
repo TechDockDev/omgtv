@@ -67,25 +67,69 @@ export class NotificationManager {
         // 3. Dispatch to Provider
         try {
             if (type === 'EMAIL') {
+                let recipientEmail = payload?.email;
+
+                if (!recipientEmail) {
+                    try {
+                        const userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
+                        const response = await fetch(`${userServiceUrl}/internal/users/batch`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ userIds: [userId] }),
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json() as any;
+                            if (data.users && data.users[userId]) {
+                                recipientEmail = data.users[userId].email;
+                                console.log(`Resolved email for user ${userId} from UserService: ${recipientEmail}`);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Error fetching email from UserService:', err);
+                    }
+                }
+
+                if (!recipientEmail) {
+                    console.warn(`No email found for user ${userId} — skipping email notification`);
+                    await NotificationRepository.updateStatus(notification.id, NotificationStatus.FAILED, 'No email address found');
+                    return notification;
+                }
+
                 const emailPayload: EmailPayload = {
-                    to: 'user-email@example.com', // TODO: Fetch user email from User Service
+                    to: recipientEmail,
                     subject: title,
                     html: body,
                     text: body
                 };
-                // In a real scenario, we'd need the user's email address here. 
-                // We might need to fetch it from UserService via gRPC if it's not passed in.
 
                 await this.emailProvider.send(emailPayload);
             } else if (type === 'PUSH') {
-                // We need the user's FCM token. 
-                // This usually implies looking up the user's active sessions or device tokens.
-                // For now, assuming the token might be passed in payload or we need a way to fetch it.
-                // Let's assume for this MVP that 'payload' contains a 'token' if it's a direct push, 
-                // OR we have a device token stored in a Device/Session table (which we don't have access to directly here).
+                let token = payload?.token;
 
-                // TODO: Integrate with User/Auth service to get device tokens
-                const token = payload?.token;
+                if (!token) {
+                    try {
+                        const userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
+                        const response = await fetch(`${userServiceUrl}/internal/users/fcm-tokens`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ userIds: [userId] }),
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json() as any;
+                            if (data.tokens && data.tokens.length > 0) {
+                                token = data.tokens[0].fcmToken;
+                                console.log(`Resolved FCM token for user ${userId} from UserService`);
+                            }
+                        } else {
+                            console.warn(`Failed to fetch FCM token from UserService: ${response.status}`);
+                        }
+                    } catch (err) {
+                        console.error('Error fetching FCM token from UserService:', err);
+                    }
+                }
+
                 if (token) {
                     await this.pushProvider.send({
                         token,
@@ -93,6 +137,10 @@ export class NotificationManager {
                         body,
                         data: payload as any
                     });
+                } else {
+                    console.warn(`No FCM token found for user ${userId} — skipping push notification`);
+                    await NotificationRepository.updateStatus(notification.id, NotificationStatus.FAILED, 'No FCM token found');
+                    return notification;
                 }
             }
 
