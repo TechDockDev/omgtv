@@ -13,6 +13,7 @@ data:
   FIREBASE_PROJECT_ID: "pocketlol-68ca6"
   ACCESS_TOKEN_TTL: "864000"
   REDIS_URL: "redis://10.244.194.227:6379"
+  NOTIFICATION_SERVICE_ADDRESS: "notification-service:50072"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -47,6 +48,13 @@ metadata:
 data:
   REDIS_URL: "redis://10.244.194.227:6379"
   GCP_PROJECT_ID: "pocketlol-68ca6"
+  USER_SERVICE_URL: "http://user-service:4500"
+  SUBSCRIPTION_SERVICE_URL: "http://subscription-service:5100"
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"
+  SMTP_USER: "serverpocketlol@gmail.com"
+  SMTP_PASS: "rawmjzeifmjamhvm"
+  SMTP_FROM: "serverpocketlol@gmail.com"
 ---
 ---
 apiVersion: v1

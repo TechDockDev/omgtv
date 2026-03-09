@@ -12,6 +12,15 @@ interface SendEmailRequest {
     isHtml: boolean;
 }
 
+interface SendNotificationRequest {
+    userId: string;
+    type: string;
+    title: string;
+    body: string;
+    payloadJson?: string;
+    priority?: string;
+}
+
 interface SendNotificationResponse {
     success: boolean;
     notificationId?: string;
@@ -21,6 +30,11 @@ interface SendNotificationResponse {
 interface NotificationServiceClient extends grpc.Client {
     SendEmail(
         request: SendEmailRequest,
+        metadata: grpc.Metadata,
+        callback: (error: grpc.ServiceError | null, response: SendNotificationResponse) => void
+    ): void;
+    SendNotification(
+        request: SendNotificationRequest,
         metadata: grpc.Metadata,
         callback: (error: grpc.ServiceError | null, response: SendNotificationResponse) => void
     ): void;
@@ -60,6 +74,17 @@ const notificationServicePlugin = fp(async function notificationServicePlugin(
                     resolve(response);
                 });
             });
+        },
+        sendNotification: (params: SendNotificationRequest): Promise<SendNotificationResponse> => {
+            return new Promise((resolve, reject) => {
+                const metadata = new grpc.Metadata();
+                client.SendNotification(params, metadata, (error, response) => {
+                    if (error) {
+                        return reject(error);
+                    }
+                    resolve(response);
+                });
+            });
         }
     };
 
@@ -74,6 +99,7 @@ declare module "fastify" {
     interface FastifyInstance {
         notificationService: {
             sendEmail(params: SendEmailRequest): Promise<SendNotificationResponse>;
+            sendNotification(params: SendNotificationRequest): Promise<SendNotificationResponse>;
         };
     }
 }
