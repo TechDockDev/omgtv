@@ -382,32 +382,47 @@ export default async function customerRoutes(app: FastifyInstance) {
         startsAt = new Date(sub.current_start * 1000);
         endsAt = new Date(sub.current_end * 1000);
       } else {
-        // Fallback if not active yet (should be active after payment)
-        // or calculate from plan
+        // Fallback for trial or pending sub
+        // If it's a trial, we should calculate endsAt based on trial duration
+        const metadata = transaction.metadata as Record<string, any> | null;
+        if (metadata?.trialPlanId) {
+          const trialPlan = await prisma.trialPlan.findUnique({ where: { id: metadata.trialPlanId } });
+          if (trialPlan) {
+            endsAt = new Date(Date.now() + trialPlan.durationDays * 24 * 60 * 60 * 1000);
+          }
+        } else {
+          const plan = await prisma.subscriptionPlan.findUnique({ where: { id: transaction.planId! } });
+          if (plan) {
+            endsAt = new Date(Date.now() + plan.durationDays * 24 * 60 * 60 * 1000);
+          }
+        }
+      }
+    } catch (e) {
+      request.log.error(e, "Failed to fetch subscription details");
+      const metadata = transaction.metadata as Record<string, any> | null;
+      if (metadata?.trialPlanId) {
+        const trialPlan = await prisma.trialPlan.findUnique({ where: { id: metadata.trialPlanId } });
+        if (trialPlan) {
+          endsAt = new Date(Date.now() + trialPlan.durationDays * 24 * 60 * 60 * 1000);
+        }
+      } else {
         const plan = await prisma.subscriptionPlan.findUnique({ where: { id: transaction.planId! } });
         if (plan) {
           endsAt = new Date(Date.now() + plan.durationDays * 24 * 60 * 60 * 1000);
         }
       }
-    } catch (e) {
-      request.log.error(e, "Failed to fetch subscription details");
-      // Fallback
-      const plan = await prisma.subscriptionPlan.findUnique({ where: { id: transaction.planId! } });
-      if (plan) {
-        endsAt = new Date(Date.now() + plan.durationDays * 24 * 60 * 60 * 1000);
-      }
     }
 
-    // Extract trialPlanId from metadata if available
+    // Extract trialPlanId from metadata or transaction
     const metadata = transaction.metadata as Record<string, any> | null;
-    const trialPlanId = metadata?.trialPlanId;
+    const trialPlanId = transaction.trialPlanId || metadata?.trialPlanId;
 
     await prisma.userSubscription.create({
       data: {
         userId: transaction.userId,
         planId: transaction.planId,
-        trialPlanId: trialPlanId, // Link the trial plan if this was a trial purchase
-        status: "ACTIVE",
+        trialPlanId: trialPlanId,
+        status: trialPlanId ? "ACTIVE" : "ACTIVE", // Always active here, but we could set "TRIAL" if we wanted to be specific
         razorpayOrderId: subscriptionId,
         transactionId: transaction.id,
         startsAt,

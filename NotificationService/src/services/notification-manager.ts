@@ -105,9 +105,10 @@ export class NotificationManager {
 
                 await this.emailProvider.send(emailPayload);
             } else if (type === 'PUSH') {
-                let token = payload?.token;
+                let tokens: string[] = [];
+                if (payload?.token) tokens.push(payload.token);
 
-                if (!token) {
+                if (tokens.length === 0) {
                     try {
                         const userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
                         const response = await fetch(`${userServiceUrl}/internal/users/fcm-tokens`, {
@@ -119,8 +120,8 @@ export class NotificationManager {
                         if (response.ok) {
                             const data = await response.json() as any;
                             if (data.tokens && data.tokens.length > 0) {
-                                token = data.tokens[0].fcmToken;
-                                console.log(`Resolved FCM token for user ${userId} from UserService`);
+                                tokens = data.tokens.map((t: any) => t.fcmToken);
+                                console.log(`Resolved ${tokens.length} FCM token(s) for user ${userId} from UserService`);
                             }
                         } else {
                             console.warn(`Failed to fetch FCM token from UserService: ${response.status}`);
@@ -130,13 +131,19 @@ export class NotificationManager {
                     }
                 }
 
-                if (token) {
-                    await this.pushProvider.send({
-                        token,
-                        title,
-                        body,
-                        data: payload as any
-                    });
+                if (tokens.length > 0) {
+                    // De-duplicate tokens to ensure one push per unique token
+                    const uniqueTokens = [...new Set(tokens)];
+
+                    // Send to all registered tokens
+                    await Promise.all(uniqueTokens.map(token =>
+                        this.pushProvider.send({
+                            token,
+                            title,
+                            body,
+                            data: payload as any
+                        })
+                    ));
                 } else {
                     console.warn(`No FCM token found for user ${userId} — skipping push notification`);
                     await NotificationRepository.updateStatus(notification.id, NotificationStatus.FAILED, 'No FCM token found');

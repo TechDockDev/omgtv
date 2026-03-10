@@ -1,7 +1,8 @@
 import { CampaignRepository, CreateCampaignInput } from '../repositories/campaign';
 import { pushNotificationService } from './PushNotificationService';
+import { PreferenceRepository } from '../repositories/preference';
 import prisma from '../prisma';
-import { NotificationType, CampaignStatus } from '@prisma/client';
+import { NotificationType, CampaignStatus, UserNotificationPreference } from '@prisma/client';
 
 import { userProvider } from '../providers/UserProvider';
 
@@ -43,13 +44,20 @@ export class CampaignService {
         const campaign = await CampaignRepository.findById(id);
         if (!campaign) throw new Error('Campaign not found');
 
-        if (campaign.status === 'COMPLETED' || campaign.status === 'SENDING') {
+        // 2. Atomic claim if SCHEDULED
+        if (campaign.status === 'SCHEDULED') {
+            const claimed = await CampaignRepository.claimForProcessing(id);
+            if (!claimed) {
+                console.log(`Campaign ${id} already claimed by another instance.`);
+                return { success: true, claimedByOther: true };
+            }
+        } else if (campaign.status === 'COMPLETED' || campaign.status === 'SENDING') {
             console.log(`Campaign ${id} already processed or in progress. Status: ${campaign.status}`);
             return { success: true, status: campaign.status };
+        } else {
+            // DRAFT or other manual triggers
+            await CampaignRepository.updateStatus(id, 'SENDING');
         }
-
-        // 2. Update status to SENDING
-        await CampaignRepository.updateStatus(id, 'SENDING');
 
         try {
             // 3. Resolve Target Users
@@ -84,57 +92,119 @@ export class CampaignService {
             for (let i = 0; i < targetUserIds.length; i += BATCH_SIZE) {
                 const batchUserIds = targetUserIds.slice(i, i + BATCH_SIZE);
 
+                // Fetch preferences for the batch to respect user opt-outs
+                const preferences: UserNotificationPreference[] = await PreferenceRepository.getBatch(batchUserIds);
+                const prefMap = new Map<string, UserNotificationPreference>(preferences.map(p => [p.userId, p]));
+
                 // A. Handle PUSH
                 if (campaign.type === 'PUSH') {
-                    // Fetch FCM tokens from UserService (where they're stored during mobile login)
-                    const fcmTokenEntries = await userProvider.getFcmTokensForUsers(batchUserIds);
+                    // Filter out users who have push disabled (default to enabled if no record)
+                    const allowedPushUserIds = batchUserIds.filter(uid => prefMap.get(uid)?.pushEnabled !== false);
 
-                    if (fcmTokenEntries.length > 0) {
-                        const tokens = fcmTokenEntries.map(t => t.fcmToken);
-                        const result = await pushNotificationService.sendToMultipleDevices(tokens, {
-                            title: campaign.title,
-                            body: campaign.body,
-                            data: (campaign.data as any) || {}
-                        });
+                    if (allowedPushUserIds.length > 0) {
+                        const fcmTokenEntries = await userProvider.getFcmTokensForUsers(allowedPushUserIds);
 
-                        totalSent += result.successCount;
-                        totalFailed += result.failureCount;
+                        if (fcmTokenEntries.length > 0) {
+                            // De-duplicate tokens to ensure one push per unique token for this campaign
+                            const uniqueTokens = [...new Set(fcmTokenEntries.map(t => t.fcmToken))];
 
-                        // Create Notification Records for PUSH history
-                        const notificationsData = fcmTokenEntries.map((t, idx) => {
-                            const resp = result.responses[idx];
-                            return {
-                                userId: t.userId,
-                                type: NotificationType.PUSH,
+                            const result = await pushNotificationService.sendToMultipleDevices(uniqueTokens, {
                                 title: campaign.title,
                                 body: campaign.body,
-                                data: campaign.data || {},
-                                status: resp.success ? 'SENT' : 'FAILED',
-                                campaignId: campaign.id,
-                                fcmMessageId: resp.messageId,
-                                fcmError: resp.error
-                            } as any;
-                        });
+                                data: (campaign.data as any) || {}
+                            });
 
-                        await prisma.notification.createMany({ data: notificationsData });
+                            totalSent += result.successCount;
+                            totalFailed += result.failureCount;
+
+                            // Create Notification Records for PUSH history
+                            // Map back to users - note: multiple tokens might exist for one user
+                            const notificationsData = fcmTokenEntries.map((t) => {
+                                // Find if this token was successful in the bulk result
+                                // Note: sendEachForMulticast returns responses in same order as tokens
+                                const tokenIdx = uniqueTokens.indexOf(t.fcmToken);
+                                const resp = result.responses[tokenIdx];
+
+                                return {
+                                    userId: t.userId,
+                                    type: NotificationType.PUSH,
+                                    title: campaign.title,
+                                    body: campaign.body,
+                                    data: campaign.data || {},
+                                    status: resp?.success ? 'SENT' : 'FAILED',
+                                    campaignId: campaign.id,
+                                    fcmMessageId: resp?.messageId,
+                                    fcmError: resp?.error
+                                } as any;
+                            });
+
+                            await prisma.notification.createMany({ data: notificationsData });
+                        }
                     }
                 }
 
                 // B. Handle IN_APP
                 if (campaign.type === 'IN_APP') {
-                    const notificationsData = batchUserIds.map(userId => ({
-                        userId,
-                        type: NotificationType.IN_APP,
-                        title: campaign.title,
-                        body: campaign.body,
-                        data: campaign.data || {},
-                        status: 'SENT', // In-App is "Sent" as soon as DB record exists
-                        campaignId: campaign.id,
-                        priority: 'MEDIUM' // Could come from campaign
-                    } as any));
+                    // Filter out users who have in-app disabled
+                    const allowedInAppUserIds = batchUserIds.filter(uid => prefMap.get(uid)?.inAppEnabled !== false);
 
-                    await prisma.notification.createMany({ data: notificationsData });
-                    totalSent += batchUserIds.length;
+                    if (allowedInAppUserIds.length > 0) {
+                        const notificationsData = allowedInAppUserIds.map(userId => ({
+                            userId,
+                            type: NotificationType.IN_APP,
+                            title: campaign.title,
+                            body: campaign.body,
+                            data: campaign.data || {},
+                            status: 'SENT',
+                            campaignId: campaign.id,
+                            priority: 'MEDIUM'
+                        } as any));
+
+                        await prisma.notification.createMany({ data: notificationsData });
+                        totalSent += allowedInAppUserIds.length;
+                    }
+                }
+
+                // C. Handle EMAIL
+                if (campaign.type === 'EMAIL') {
+                    // Filter out users who have email disabled
+                    const allowedEmailUserIds = batchUserIds.filter(uid => prefMap.get(uid)?.emailEnabled !== false);
+
+                    if (allowedEmailUserIds.length > 0) {
+                        const profiles = await userProvider.getUserProfiles(allowedEmailUserIds);
+                        const { NotificationManager } = await import('./notification-manager');
+                        const manager = new NotificationManager();
+
+                        await Promise.all(allowedEmailUserIds.map(async (userId) => {
+                            const profile = profiles[userId];
+                            if (profile && profile.email) {
+                                try {
+                                    await manager.sendDirectEmail(profile.email, campaign.title, campaign.body);
+
+                                    // Record the notification
+                                    await prisma.notification.create({
+                                        data: {
+                                            userId,
+                                            type: NotificationType.EMAIL,
+                                            title: campaign.title,
+                                            body: campaign.body,
+                                            data: campaign.data || {},
+                                            status: 'SENT',
+                                            campaignId: campaign.id,
+                                            priority: 'MEDIUM'
+                                        }
+                                    });
+                                    totalSent++;
+                                } catch (err) {
+                                    console.error(`Failed to send campaign email to ${profile.email}:`, err);
+                                    totalFailed++;
+                                }
+                            } else {
+                                console.warn(`Skipping campaign email for user ${userId} — no email address found`);
+                                totalFailed++;
+                            }
+                        }));
+                    }
                 }
             }
 
