@@ -47,6 +47,14 @@ import {
   seriesStats,
   seriesUnlike,
   seriesUnsave,
+  episodeAddView,
+  episodeLikedList,
+  episodeLike,
+  episodeSave,
+  episodeSavedList,
+  episodeStats,
+  episodeUnlike,
+  episodeUnsave,
   processBatchActions,
   saveProgress,
   getProgress,
@@ -719,6 +727,280 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     async handler(request) {
       const { id } = engagementIdParamsSchema.parse(request.params);
       return seriesStats(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  
+  // Episodes
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementSaveData;
+  }>({
+    method: "POST",
+    url: "/episodes/:id/save",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementSaveSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return episodeSave(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementSaveData;
+  }>({
+    method: "DELETE",
+    url: "/episodes/:id/save",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementSaveSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return episodeUnsave(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Reply: EngagementListData;
+  }>({
+    method: "GET",
+    url: "/episodes/saved",
+    schema: {
+      response: {
+        200: engagementListSuccessResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const items = await episodeSavedList(
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+      if (items.length === 0) {
+        return { items: [] };
+      }
+
+      const ids = items.map((i) => i.id);
+      const contentResponse = await getBatchContent({
+        ids,
+        type: "episode",
+        correlationId: request.correlationId,
+        user: request.user!,
+        span: request.telemetrySpan,
+      });
+
+      const statsMap = new Map(items.map((i) => [i.id, i]));
+      const mergedItems = contentResponse.items.map((item: any) => {
+        const stats = statsMap.get(item.id);
+        return {
+          ...item,
+          engagement: {
+            ...item.engagement,
+            likes: stats?.likes ?? 0,
+            views: stats?.views ?? 0,
+            averageRating: stats?.averageRating ?? 0,
+            reviewCount: stats?.reviewCount ?? 0,
+          },
+        };
+      });
+
+      return { items: mergedItems };
+    },
+  });
+
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementLikeData;
+  }>({
+    method: "POST",
+    url: "/episodes/:id/like",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementLikeSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return episodeLike(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementLikeData;
+  }>({
+    method: "DELETE",
+    url: "/episodes/:id/like",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementLikeSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return episodeUnlike(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Reply: EngagementListData;
+  }>({
+    method: "GET",
+    url: "/episodes/liked",
+    schema: {
+      response: {
+        200: engagementListSuccessResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const items = await episodeLikedList(
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+      if (items.length === 0) {
+        return { items: [] };
+      }
+
+      const ids = items.map((i) => i.id);
+      const contentResponse = await getBatchContent({
+        ids,
+        type: "episode",
+        correlationId: request.correlationId,
+        user: request.user!,
+        span: request.telemetrySpan,
+      });
+
+      const statsMap = new Map(items.map((i) => [i.id, i]));
+      const mergedItems = contentResponse.items.map((item: any) => {
+        const stats = statsMap.get(item.id);
+        return {
+          ...item,
+          engagement: {
+            ...item.engagement,
+            likes: stats?.likes ?? 0,
+            views: stats?.views ?? 0,
+            averageRating: stats?.averageRating ?? 0,
+            reviewCount: stats?.reviewCount ?? 0,
+          },
+        };
+      });
+
+      return { items: mergedItems };
+    },
+  });
+
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementViewData;
+  }>({
+    method: "POST",
+    url: "/episodes/:id/view",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementViewSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return episodeAddView(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Params: EngagementIdParams;
+    Reply: EngagementStatsData;
+  }>({
+    method: "GET",
+    url: "/episodes/:id/stats",
+    schema: {
+      params: engagementIdParamsSchema,
+      response: {
+        200: engagementStatsSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const { id } = engagementIdParamsSchema.parse(request.params);
+      return episodeStats(
         id,
         request.correlationId,
         request.user!,

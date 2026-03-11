@@ -955,11 +955,13 @@ spec:
           image: transcoding-worker:latest
           imagePullPolicy: Always
           resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
             limits:
-              cpu: 500m
+              cpu: "2"
+              ephemeral-storage: 4Gi
+              memory: 2Gi
+            requests:
+              cpu: "1"
+              ephemeral-storage: 2Gi
               memory: 1Gi
           env:
             - name: NODE_ENV

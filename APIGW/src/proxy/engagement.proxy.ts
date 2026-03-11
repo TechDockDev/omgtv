@@ -499,6 +499,189 @@ export function seriesSavedList(
   });
 }
 
+
+export function episodeLike(
+  episodeId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<EngagementLikeData> {
+  return requestEngagement({
+    path: `/internal/episodes/${episodeId}/like`,
+    method: "POST",
+    correlationId,
+    user,
+    span,
+    spanName: "proxy:engagement:episodeLike",
+    parse: (payload) => {
+      const parsed = engagementLikeDataSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new Error("Invalid response from engagement service");
+      }
+      return parsed.data;
+    },
+  });
+}
+
+export function episodeUnlike(
+  episodeId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<EngagementLikeData> {
+  return requestEngagement({
+    path: `/internal/episodes/${episodeId}/like`,
+    method: "DELETE",
+    correlationId,
+    user,
+    span,
+    spanName: "proxy:engagement:episodeUnlike",
+    parse: (payload) => {
+      const parsed = engagementLikeDataSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new Error("Invalid response from engagement service");
+      }
+      return parsed.data;
+    },
+  });
+}
+
+export function episodeSave(
+  episodeId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<EngagementSaveData> {
+  return requestEngagement({
+    path: `/internal/episodes/${episodeId}/save`,
+    method: "POST",
+    correlationId,
+    user,
+    span,
+    spanName: "proxy:engagement:episodeSave",
+    parse: (payload) => {
+      const parsed = engagementSaveDataSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new Error("Invalid response from engagement service");
+      }
+      return parsed.data;
+    },
+  });
+}
+
+export function episodeUnsave(
+  episodeId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<EngagementSaveData> {
+  return requestEngagement({
+    path: `/internal/episodes/${episodeId}/save`,
+    method: "DELETE",
+    correlationId,
+    user,
+    span,
+    spanName: "proxy:engagement:episodeUnsave",
+    parse: (payload) => {
+      const parsed = engagementSaveDataSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new Error("Invalid response from engagement service");
+      }
+      return parsed.data;
+    },
+  });
+}
+
+export function episodeAddView(
+  episodeId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<EngagementViewData> {
+  return requestEngagement({
+    path: `/internal/episodes/${episodeId}/view`,
+    method: "POST",
+    correlationId,
+    user,
+    span,
+    spanName: "proxy:engagement:episodeView",
+    parse: (payload) => {
+      const parsed = engagementViewDataSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new Error("Invalid response from engagement service");
+      }
+      return parsed.data;
+    },
+  });
+}
+
+export function episodeStats(
+  episodeId: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<EngagementStatsData> {
+  return requestEngagement({
+    path: `/internal/episodes/${episodeId}/stats`,
+    method: "GET",
+    correlationId,
+    user,
+    span,
+    spanName: "proxy:engagement:episodeStats",
+    parse: (payload) => {
+      const parsed = engagementStatsDataSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new Error("Invalid response from engagement service");
+      }
+      return parsed.data;
+    },
+  });
+}
+
+export function episodeLikedList(
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<UpstreamListItem[]> {
+  return requestEngagement({
+    path: "/internal/episodes/liked",
+    method: "GET",
+    correlationId,
+    user,
+    span,
+    spanName: "proxy:engagement:episodeLikedList",
+    parse: (payload) => {
+      const parsed = upstreamListWithStatsSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new Error("Invalid response from engagement service");
+      }
+      return parsed.data.items;
+    },
+  });
+}
+
+export function episodeSavedList(
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<UpstreamListItem[]> {
+  return requestEngagement({
+    path: "/internal/episodes/saved",
+    method: "GET",
+    correlationId,
+    user,
+    span,
+    spanName: "proxy:engagement:episodeSavedList",
+    parse: (payload) => {
+      const parsed = upstreamListWithStatsSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new Error("Invalid response from engagement service");
+      }
+      return parsed.data.items;
+    },
+  });
+}
+
 // Import batch schemas
 import {
   batchInteractionBodySchema,

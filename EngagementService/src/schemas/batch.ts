@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const contentTypeSchema = z.enum(["reel", "series"]);
+export const contentTypeSchema = z.enum(["reel", "series", "episode"]);
 export type ContentType = z.infer<typeof contentTypeSchema>;
 
 export const actionSchema = z.enum(["like", "unlike", "save", "unsave", "view"]);

@@ -32,7 +32,7 @@ interface SetCarouselArgs {
 
 interface GetBatchContentArgs {
   ids: string[];
-  type: "reel" | "series";
+  type: "reel" | "series" | "episode";
   correlationId: string;
   user: GatewayUser;
   span?: Span;

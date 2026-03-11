@@ -2,7 +2,7 @@ import type Redis from "ioredis";
 import type { PrismaClient } from "@prisma/client";
 import type { ContentType, Action } from "../schemas/batch";
 
-type EntityType = "reel" | "series";
+export type EntityType = "reel" | "series" | "episode";
 
 interface BatchActionItem {
     contentType: ContentType;

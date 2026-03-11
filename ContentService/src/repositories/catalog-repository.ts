@@ -1013,7 +1013,8 @@ export class CatalogRepository {
     seriesId?: string | null;
     limit?: number;
     cursor?: string | null;
-  }): Promise<PaginatedResult<EpisodeWithRelations>> {
+    page?: number;
+  }): Promise<PaginatedResult<EpisodeWithRelations> & { totalCounts?: number; totalPages?: number; page?: number }> {
     const limit = normalizeLimit(params.limit);
     const where: Prisma.EpisodeWhereInput = {
       deletedAt: null, // Only active episodes
@@ -1023,26 +1024,32 @@ export class CatalogRepository {
       where.seriesId = params.seriesId;
     }
 
-    const rows = await this.prisma.episode.findMany({
-      where,
-      include: {
-        mediaAsset: {
-          include: { variants: true },
+    // Optional: if cursor is provided, we can't easily do offset-based pagination page numbers, 
+    // but the user asked for page, limit, totalCounts. 
+    // Since this uses cursor-based pagination, we'll return totalCounts.
+    const [rows, totalCounts] = await Promise.all([
+      this.prisma.episode.findMany({
+        where,
+        include: {
+          mediaAsset: {
+            include: { variants: true },
+          },
+          series: {
+            include: { category: true },
+          },
+          season: true,
         },
-        series: {
-          include: { category: true },
-        },
-        season: true,
-      },
-      orderBy: [
-        { seasonId: "asc" }, // Nulls last usually by default but specific to DB
-        { publishedAt: "desc" },
-        { createdAt: "desc" },
-      ],
-      take: limit + 1,
-      cursor: params.cursor ? { id: params.cursor } : undefined,
-      skip: params.cursor ? 1 : 0,
-    });
+        orderBy: [
+          { seasonId: "asc" }, // Nulls last usually by default but specific to DB
+          { publishedAt: "desc" },
+          { createdAt: "desc" },
+        ],
+        take: limit + 1,
+        cursor: params.cursor ? { id: params.cursor } : undefined,
+        skip: params.cursor ? 1 : (params.page && params.page > 1 ? (params.page - 1) * limit : 0),
+      }),
+      this.prisma.episode.count({ where })
+    ]);
 
     let nextCursor: string | null = null;
     if (rows.length > limit) {
@@ -1053,6 +1060,7 @@ export class CatalogRepository {
     return {
       items: rows as EpisodeWithRelations[],
       nextCursor,
+      totalCounts,
     };
   }
 

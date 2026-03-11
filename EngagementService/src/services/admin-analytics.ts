@@ -17,10 +17,12 @@ export interface UserContentStats {
     likes: {
         reels: any[];
         series: any[];
+        episodes: any[];
     };
     saves: {
         reels: any[];
         series: any[];
+        episodes: any[];
     };
     ongoingSeries: any[];
     completedSeries: any[];
@@ -74,8 +76,10 @@ export async function getUserContentStats(params: {
 
     const likedReelIds = likedActions.filter(a => a.contentType === "REEL").map(a => a.contentId);
     const likedSeriesIds = likedActions.filter(a => a.contentType === "SERIES").map(a => a.contentId);
+    const likedEpisodeIds = likedActions.filter(a => (a.contentType as string) === "EPISODE").map(a => a.contentId);
     const savedReelIds = savedActions.filter(a => a.contentType === "REEL").map(a => a.contentId);
     const savedSeriesIds = savedActions.filter(a => a.contentType === "SERIES").map(a => a.contentId);
+    const savedEpisodeIds = savedActions.filter(a => (a.contentType as string) === "EPISODE").map(a => a.contentId);
     const episodeIds = watchHistory.map(h => h.episodeId);
 
     const fetchMetadata = async (ids: string[], type: "reel" | "series" | "episode") => {
@@ -100,14 +104,18 @@ export async function getUserContentStats(params: {
         episodeMeta,
         likedReelsMeta,
         likedSeriesMeta,
+        likedEpisodesMeta,
         savedReelsMeta,
-        savedSeriesMeta
+        savedSeriesMeta,
+        savedEpisodesMeta
     ] = await Promise.all([
         fetchMetadata(episodeIds, "episode"),
         fetchMetadata(likedReelIds, "reel"),
         fetchMetadata(likedSeriesIds, "series"),
+        fetchMetadata(likedEpisodeIds, "episode"),
         fetchMetadata(savedReelIds, "reel"),
-        fetchMetadata(savedSeriesIds, "series")
+        fetchMetadata(savedSeriesIds, "series"),
+        fetchMetadata(savedEpisodeIds, "episode")
     ]);
 
     const mapContent = (ids: string[], items: any[], type: string) => {
@@ -194,10 +202,12 @@ export async function getUserContentStats(params: {
         likes: {
             reels: mapContent(likedReelIds, likedReelsMeta, "reel"),
             series: mapContent(likedSeriesIds, likedSeriesMeta, "series"),
+            episodes: mapContent(likedEpisodeIds, likedEpisodesMeta, "episode"),
         },
         saves: {
             reels: mapContent(savedReelIds, savedReelsMeta, "reel"),
             series: mapContent(savedSeriesIds, savedSeriesMeta, "series"),
+            episodes: mapContent(savedEpisodeIds, savedEpisodesMeta, "episode"),
         },
         ongoingSeries,
         completedSeries,

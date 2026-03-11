@@ -83,7 +83,7 @@ export type EngagementListData = z.infer<typeof engagementListDataSchema>;
 
 // Batch interaction schemas (from origin - simple version)
 export const batchInteractionItemSchema = z.object({
-  contentType: z.enum(["reel", "series"]),
+  contentType: z.enum(["reel", "series", "episode"]),
   contentId: z.string().uuid(),
   action: z.enum(["like", "unlike", "save", "unsave", "view"]),
 });
@@ -115,7 +115,7 @@ export const appEventItemSchema = z.object({
 
 // Batch action schemas (detailed version with results)
 export const batchActionItemSchema = z.object({
-  contentType: z.enum(["reel", "series"]),
+  contentType: z.enum(["reel", "series", "episode"]),
   contentId: z.string().uuid(),
   action: z.enum(["like", "unlike", "save", "unsave", "view"]),
 });
@@ -128,7 +128,7 @@ export const batchActionRequestSchema = z.object({
 });
 
 export const batchActionResultSchema = z.object({
-  contentType: z.enum(["reel", "series"]),
+  contentType: z.enum(["reel", "series", "episode"]),
   contentId: z.string().uuid(),
   action: z.enum(["like", "unlike", "save", "unsave", "view"]),
   success: z.boolean(),
@@ -207,10 +207,12 @@ export const userContentAnalyticsResponseSchema = z.object({
   likes: z.object({
     reels: z.array(contentDetailSchema),
     series: z.array(contentDetailSchema),
+    episodes: z.array(contentDetailSchema),
   }),
   saves: z.object({
     reels: z.array(contentDetailSchema),
     series: z.array(contentDetailSchema),
+    episodes: z.array(contentDetailSchema),
   }),
   ongoingSeries: z.array(z.any()),
   completedSeries: z.array(z.any()),

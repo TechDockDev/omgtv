@@ -46,6 +46,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
         try {
             if (event === "subscription.charged" || event === "invoice.paid") {
+                const isInvoice = !!payload.invoice?.entity && !payload.subscription?.entity;
                 const subscriptionEntity = payload.subscription?.entity || payload.invoice?.entity;
                 const payment = payload.payment?.entity || payload.invoice?.entity?.payment_id;
 
@@ -53,7 +54,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     return reply.send({ status: "skipped", reason: "no_subscription_entity" });
                 }
 
-                const subscriptionId = subscriptionEntity.id;
+                const subscriptionId = isInvoice ? subscriptionEntity.subscription_id : subscriptionEntity.id;
                 const paymentId = typeof payment === 'string' ? payment : payment?.id;
 
                 // 1. Try to find a pending transaction for this subscription (Initial purchase)
@@ -79,6 +80,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         data: {
                             userId: transaction.userId,
                             planId: transaction.planId,
+                            trialPlanId: transaction.trialPlanId, // Fix: Include trial plan if present
                             status: "ACTIVE",
                             razorpayOrderId: subscriptionId,
                             transactionId: transaction.id,
@@ -136,7 +138,9 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     }
                 }
             } else if (event === "subscription.activated") {
-                const subscriptionEntity = payload.subscription.entity;
+                const subscriptionEntity = payload.subscription?.entity;
+                if (!subscriptionEntity) return reply.send({ status: "skipped" });
+                
                 const subscriptionId = subscriptionEntity.id;
 
                 const existingSub = await prisma.userSubscription.findFirst({
@@ -152,6 +156,31 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             endsAt: new Date(subscriptionEntity.current_end * 1000)
                         }
                     });
+                } else {
+                    // Search transaction to find user and plan
+                    const tx = await prisma.transaction.findFirst({
+                        where: { subscriptionId: subscriptionId }
+                    });
+                    if (tx) {
+                        await prisma.userSubscription.create({
+                            data: {
+                                userId: tx.userId,
+                                planId: tx.planId,
+                                trialPlanId: tx.trialPlanId,
+                                status: "ACTIVE",
+                                razorpayOrderId: subscriptionId,
+                                transactionId: tx.id,
+                                startsAt: new Date(subscriptionEntity.current_start * 1000),
+                                endsAt: new Date(subscriptionEntity.current_end * 1000)
+                            }
+                        });
+                        if (tx.status === "PENDING") {
+                           await prisma.transaction.update({
+                               where: { id: tx.id },
+                               data: { status: "SUCCESS" }
+                           });
+                        }
+                    }
                 }
             } else if (
                 event === "subscription.cancelled" ||

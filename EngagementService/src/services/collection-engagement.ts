@@ -2,7 +2,7 @@ import type Redis from "ioredis";
 import type { PrismaClient } from "@prisma/client";
 import { loadConfig } from "../config";
 
-type EntityType = "reel" | "series";
+type EntityType = "reel" | "series" | "episode";
 
 /**
  * Fetch user details (name, email, phone) from UserService in batch.
@@ -72,6 +72,14 @@ const memory: Record<EntityType, InMemoryState> = {
     reviews: new Map(),
   },
   series: {
+    likes: new Map(),
+    views: new Map(),
+    saves: new Map(),
+    userLiked: new Map(),
+    userSaved: new Map(),
+    reviews: new Map(),
+  },
+  episode: {
     likes: new Map(),
     views: new Map(),
     saves: new Map(),
@@ -520,7 +528,7 @@ export async function listUserEntities(params: {
       where: {
         userId: userId,
         isActive: true,
-        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+        contentType: entityType.toUpperCase() as any,
         actionType: collection === "liked" ? "LIKE" : "SAVE"
       },
       select: { contentId: true }
@@ -839,7 +847,7 @@ export async function getUserStateBatch(params: {
   redis: Redis | null;
   prisma: PrismaClient | null;
   userId: string;
-  items: Array<{ contentType: "reel" | "series"; contentId: string }>;
+  items: Array<{ contentType: "reel" | "series" | "episode"; contentId: string }>;
 }): Promise<Record<string, UserStateEntry>> {
   const { redis, prisma, userId, items } = params;
 
@@ -853,6 +861,9 @@ export async function getUserStateBatch(params: {
     .map((item) => item.contentId);
   const seriesIds = items
     .filter((item) => item.contentType === "series")
+    .map((item) => item.contentId);
+  const episodeIds = items
+    .filter((item) => item.contentType === "episode")
     .map((item) => item.contentId);
 
   if (!redis) {
@@ -916,6 +927,10 @@ export async function getUserStateBatch(params: {
     pipeline.sismember(redisUserLikedKey("series", userId), id);
     pipeline.sismember(redisUserSavedKey("series", userId), id);
   }
+  for (const id of episodeIds) {
+    pipeline.sismember(redisUserLikedKey("episode", userId), id);
+    pipeline.sismember(redisUserSavedKey("episode", userId), id);
+  }
 
   const results = await pipeline.exec();
   if (!results) {
@@ -963,6 +978,15 @@ export async function getUserStateBatch(params: {
     const isSaved = (results[idx + 1]?.[1] as number) === 1;
     result[`series:${id}`].isLiked = isLiked;
     result[`series:${id}`].isSaved = isSaved;
+    idx += 2;
+  }
+
+  // Parse isLiked/isSaved for episodes
+  for (const id of episodeIds) {
+    const isLiked = (results[idx]?.[1] as number) === 1;
+    const isSaved = (results[idx + 1]?.[1] as number) === 1;
+    result[`episode:${id}`].isLiked = isLiked;
+    result[`episode:${id}`].isSaved = isSaved;
     idx += 2;
   }
 
@@ -1345,7 +1369,7 @@ export async function syncProgressToDb(redis: Redis, prisma: PrismaClient, batch
 
 export async function syncVisibility(params: {
   prisma: any;
-  contentType: "reel" | "series";
+  contentType: "reel" | "series" | "episode";
   contentId: string;
   visibility: string;
   status: string;
