@@ -16,6 +16,8 @@ const configSchema = z.object({
     // Transcode Settings
     TRANSCODE_TEMP_DIR: z.string().default("/tmp/transcode"),
     HLS_SEGMENT_DURATION: z.coerce.number().int().default(4),
+    MAX_CONCURRENT_JOBS: z.coerce.number().int().min(1).default(1),
+    ACK_DEADLINE_EXTENSION_MINUTES: z.coerce.number().int().min(1).default(60),
 
     // Upload Service Callback
     UPLOAD_SERVICE_URL: z.string().url().optional(),
