@@ -1328,8 +1328,8 @@ export class CatalogService {
     const topic = this.pubsub.topic(this.config.TRANSCODING_REQUESTS_TOPIC);
     await topic.publishMessage({ json: msgData });
 
-    // Update status 
-    await this.repo.updateMediaAssetStatus(asset.id, MediaAssetStatus.PROCESSING, adminId);
+    // Update status - DEFERRED to TranscodingWorker to ensure accurate "In Queue" vs "Processing" state
+    // await this.repo.updateMediaAssetStatus(asset.id, MediaAssetStatus.PROCESSING, adminId);
 
     return { status: "PROCESSING", message: "Transcoding triggered" };
   }
@@ -1610,7 +1610,7 @@ export class CatalogService {
     const upsertedAsset = await this.repo.upsertMediaAssetByUploadId({
       uploadId: event.uploadId,
       type: reelId ? MediaAssetType.REEL : MediaAssetType.EPISODE,
-      status: MediaAssetStatus.UPLOADED,
+      status: MediaAssetStatus.PENDING,
       manifestUrl: "",
       defaultThumbnailUrl: undefined,
       filename: event.filename,

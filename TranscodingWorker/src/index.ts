@@ -42,11 +42,19 @@ async function main(): Promise<void> {
         process.exit(1);
     }
 
-    const subscription = pubsub.subscription(config.PUBSUB_SUBSCRIPTION);
+    const subscription = pubsub.subscription(config.PUBSUB_SUBSCRIPTION, {
+        flowControl: {
+            maxMessages: config.MAX_CONCURRENT_JOBS,
+        }
+    });
 
     logger.info(
-        { subscription: config.PUBSUB_SUBSCRIPTION },
-        "Listening for transcode jobs"
+        { 
+            subscription: config.PUBSUB_SUBSCRIPTION,
+            maxConcurrent: config.MAX_CONCURRENT_JOBS,
+            maxExtension: config.ACK_DEADLINE_EXTENSION_MINUTES
+        },
+        "Listening for transcode jobs with flow control"
     );
 
     subscription.on("message", handleMessage);
@@ -244,7 +252,20 @@ async function handleLegacyMessage(message: Message, msgData: MediaUploadedMessa
         const { bucket, object } = storage.parseGcsUrl(msgData.storageUrl);
         const outputPrefix = `hls/${msgData.contentId}`;
 
-        logger.info({ uploadId: msgData.uploadId }, "Processing Legacy Job");
+        logger.info({ uploadId: msgData.uploadId, contentId: msgData.contentId }, "Processing Legacy Job");
+
+        // Lock/Status Update: Set to PROCESSING
+        if (msgData.contentId) {
+            try {
+                await prisma.mediaAsset.update({
+                    where: { id: msgData.contentId },
+                    data: { status: MediaAssetStatus.PROCESSING }
+                });
+                logger.debug({ contentId: msgData.contentId }, "MediaAsset marked PROCESSING");
+            } catch (err) {
+                logger.warn({ err, contentId: msgData.contentId }, "Failed to update status to PROCESSING (may not exist in DB yet)");
+            }
+        }
 
         const success = await runTranscodeLogic({
             uploadId: msgData.uploadId,
@@ -268,8 +289,18 @@ async function handleLegacyMessage(message: Message, msgData: MediaUploadedMessa
         message.ack();
 
     } catch (error) {
-        // ... Error handling simplified for brevity, assume similar to original ...
-        logger.error({ error }, "Legacy Job Failed");
+        logger.error({ error, uploadId: msgData.uploadId }, "Legacy Job Failed");
+        
+        // Mark as FAILED in DB if contentId exists
+        if (msgData.contentId) {
+            try {
+                await prisma.mediaAsset.update({
+                    where: { id: msgData.contentId },
+                    data: { status: MediaAssetStatus.FAILED }
+                });
+            } catch (err) { /* ignore */ }
+        }
+        
         message.nack();
     }
 }

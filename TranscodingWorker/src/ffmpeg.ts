@@ -297,11 +297,19 @@ export class FFmpegService {
             const proc = spawn("ffmpeg", args, { cwd: options.cwd });
             let stderr = "";
 
+            // Add a timeout to prevent hanging forever (e.g. 2 hours)
+            const timeout = setTimeout(() => {
+                this.logger.error({ args: args.join(" ") }, "FFmpeg process timed out, killing it");
+                proc.kill("SIGKILL");
+                reject(new Error("FFmpeg process timed out"));
+            }, 2 * 60 * 60 * 1000); // 2 hours
+
             proc.stderr.on("data", (data: Buffer) => {
                 stderr += data.toString();
             });
 
             proc.on("close", (code: number | null) => {
+                clearTimeout(timeout);
                 if (code !== 0) {
                     this.logger.error({ code, stderr: stderr.slice(-2000) }, "FFmpeg failed");
                     reject(new Error(`FFmpeg failed with code ${code}`));
@@ -311,6 +319,7 @@ export class FFmpegService {
             });
 
             proc.on("error", (error: Error) => {
+                clearTimeout(timeout);
                 reject(new Error(`FFmpeg spawn error: ${error.message}`));
             });
         });
