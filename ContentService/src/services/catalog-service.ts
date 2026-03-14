@@ -1072,6 +1072,7 @@ export class CatalogService {
     seriesId?: string;
     limit?: number;
     cursor?: string | null;
+    page?: number;
   }) {
     return this.repo.listEpisodes(params);
   }

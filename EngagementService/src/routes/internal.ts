@@ -9,8 +9,9 @@ import {
   listResponseSchema,
   listWithStatsResponseSchema,
   reelIdParamsSchema,
-  saveResponseSchema,
   seriesIdParamsSchema,
+  episodeIdParamsSchema,
+  saveResponseSchema,
   statsBatchRequestSchema,
   statsBatchResponseSchema,
   statsSchema,
@@ -99,7 +100,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       // Process Actions
       if (body.actions && body.actions.length > 0) {
         for (const action of body.actions) {
-          const entityType = action.contentType === "reel" ? "reel" : "series";
+          const entityType = action.contentType;
           const entityId = action.contentId;
 
           try {
@@ -110,7 +111,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                 const likeResult = await likeEntity({
                   redis,
                   prisma,
-                  entityType: entityType as "reel" | "series",
+                  entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                   userId,
                 });
@@ -128,7 +129,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                 const unlikeResult = await unlikeEntity({
                   redis,
                   prisma,
-                  entityType: entityType as "reel" | "series",
+                  entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                   userId,
                 });
@@ -146,7 +147,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                 const saveResult = await saveEntity({
                   redis,
                   prisma,
-                  entityType: entityType as "reel" | "series",
+                  entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                   userId,
                 });
@@ -157,7 +158,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                 const unsaveResult = await unsaveEntity({
                   redis,
                   prisma,
-                  entityType: entityType as "reel" | "series",
+                  entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                   userId,
                 });
@@ -168,7 +169,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                 const viewResult = await addView({
                   redis,
                   prisma,
-                  entityType: entityType as "reel" | "series",
+                  entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                 });
                 result = { views: viewResult.views };
@@ -669,6 +670,214 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     },
   });
 
+
+  // Episodes
+  fastify.post("/episodes/:episodeId/like", {
+    schema: {
+      params: episodeIdParamsSchema,
+      response: { 200: likeResponseSchema },
+    },
+    handler: async (request) => {
+      const { episodeId } = episodeIdParamsSchema.parse(request.params);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+      const result = await likeEntity({
+        redis,
+        prisma,
+        entityType: "episode",
+        entityId: episodeId,
+        userId,
+      });
+      return likeResponseSchema.parse(result);
+    },
+  });
+
+  fastify.delete("/episodes/:episodeId/like", {
+    schema: {
+      params: episodeIdParamsSchema,
+      response: { 200: likeResponseSchema },
+    },
+    handler: async (request) => {
+      const { episodeId } = episodeIdParamsSchema.parse(request.params);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+      const result = await unlikeEntity({
+        redis,
+        prisma,
+        entityType: "episode",
+        entityId: episodeId,
+        userId,
+      });
+      return likeResponseSchema.parse(result);
+    },
+  });
+
+  fastify.get("/episodes/liked", {
+    schema: { response: { 200: listWithStatsResponseSchema } },
+    handler: async (request) => {
+      try {
+        const userId = requireUserId(request.headers as Record<string, unknown>);
+        const ids = await listUserEntities({
+          redis,
+          prisma,
+          entityType: "episode",
+          collection: "liked",
+          userId,
+        });
+
+        // Fetch engagement stats for all liked episode
+        let statsMap: Record<string, any> = {};
+        if (ids.length > 0) {
+          statsMap = await getStatsBatch({
+            redis,
+            prisma,
+            entityType: "episode",
+            entityIds: ids,
+          });
+        }
+
+        const items = ids.map((id) => ({
+          id,
+          likes: statsMap[id]?.likes ?? 0,
+          views: statsMap[id]?.views ?? 0,
+          saves: statsMap[id]?.saves ?? 0,
+          averageRating: statsMap[id]?.averageRating ?? 0,
+          reviewCount: statsMap[id]?.reviewCount ?? 0,
+        }));
+
+        return listWithStatsResponseSchema.parse({ items });
+      } catch (err) {
+        request.log.error({ err }, "Error in /episodes/liked");
+        throw err;
+      }
+    },
+  });
+
+  fastify.post("/episodes/:episodeId/save", {
+    schema: {
+      params: episodeIdParamsSchema,
+      response: { 200: saveResponseSchema },
+    },
+    handler: async (request) => {
+      const { episodeId } = episodeIdParamsSchema.parse(request.params);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+      const result = await saveEntity({
+        redis,
+        prisma,
+        entityType: "episode",
+        entityId: episodeId,
+        userId,
+      });
+      return saveResponseSchema.parse(result);
+    },
+  });
+
+  fastify.delete("/episodes/:episodeId/save", {
+    schema: {
+      params: episodeIdParamsSchema,
+      response: { 200: saveResponseSchema },
+    },
+    handler: async (request) => {
+      const { episodeId } = episodeIdParamsSchema.parse(request.params);
+      const userId = requireUserId(request.headers as Record<string, unknown>);
+      const result = await unsaveEntity({
+        redis,
+        prisma,
+        entityType: "episode",
+        entityId: episodeId,
+        userId,
+      });
+      return saveResponseSchema.parse(result);
+    },
+  });
+
+  fastify.get("/episodes/saved", {
+    schema: { response: { 200: listWithStatsResponseSchema } },
+    handler: async (request) => {
+      try {
+        const userId = requireUserId(request.headers as Record<string, unknown>);
+        const ids = await listUserEntities({
+          redis,
+          prisma,
+          entityType: "episode",
+          collection: "saved",
+          userId,
+        });
+
+        // Fetch engagement stats for all saved episode
+        let statsMap: Record<string, any> = {};
+        if (ids.length > 0) {
+          statsMap = await getStatsBatch({
+            redis,
+            prisma,
+            entityType: "episode",
+            entityIds: ids,
+          });
+        }
+
+        const items = ids.map((id) => ({
+          id,
+          likes: statsMap[id]?.likes ?? 0,
+          views: statsMap[id]?.views ?? 0,
+          saves: statsMap[id]?.saves ?? 0,
+          averageRating: statsMap[id]?.averageRating ?? 0,
+          reviewCount: statsMap[id]?.reviewCount ?? 0,
+        }));
+
+        return listWithStatsResponseSchema.parse({ items });
+      } catch (err) {
+        request.log.error({ err }, "Error in /episodes/saved");
+        throw err;
+      }
+    },
+  });
+
+  fastify.post("/episodes/:episodeId/view", {
+    schema: {
+      params: episodeIdParamsSchema,
+      response: { 200: viewResponseSchema },
+    },
+    handler: async (request) => {
+      const { episodeId } = episodeIdParamsSchema.parse(request.params);
+      const result = await addView({
+        redis,
+        prisma,
+        entityType: "episode",
+        entityId: episodeId,
+      });
+      return viewResponseSchema.parse(result);
+    },
+  });
+
+  fastify.get("/episodes/:episodeId/stats", {
+    schema: { params: episodeIdParamsSchema, response: { 200: statsSchema } },
+    handler: async (request) => {
+      const { episodeId } = episodeIdParamsSchema.parse(request.params);
+      const stats = await getStats({
+        redis,
+        prisma,
+        entityType: "episode",
+        entityId: episodeId,
+      });
+      return statsSchema.parse(stats);
+    },
+  });
+
+  fastify.post("/episodes/stats", {
+    schema: {
+      body: statsBatchRequestSchema,
+      response: { 200: statsBatchResponseSchema },
+    },
+    handler: async (request) => {
+      const body = statsBatchRequestSchema.parse(request.body);
+      const stats = await getStatsBatch({
+        redis,
+        prisma,
+        entityType: "episode",
+        entityIds: body.ids,
+      });
+      return statsBatchResponseSchema.parse({ stats });
+    },
+  });
+
   fastify.post("/progress", {
     schema: {
       body: continueWatchUpsertSchema,
@@ -773,7 +982,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
 
       const result = await syncVisibility({
         prisma,
-        contentType: body.contentType,
+        contentType: body.contentType as "reel" | "series" | "episode",
         contentId: body.contentId,
         visibility: body.visibility,
         status: body.status,

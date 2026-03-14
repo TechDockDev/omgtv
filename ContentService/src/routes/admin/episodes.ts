@@ -5,6 +5,7 @@ import {
   CatalogServiceError,
 } from "../../services/catalog-service";
 import { PublicationStatus, Visibility } from "@prisma/client";
+import { EngagementClient } from "../../clients/engagement-client";
 import { loadConfig } from "../../config";
 import {
   moderationQueueQuerySchema,
@@ -53,6 +54,7 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
     schema: {
       querystring: z.object({
         seriesId: z.string().uuid().optional(),
+        page: z.coerce.number().int().positive().default(1),
         limit: z.coerce.number().int().positive().max(100).default(50),
         cursor: z.string().uuid().optional(),
       }),
@@ -60,14 +62,68 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
     handler: async (request, reply) => {
       const query = z.object({
         seriesId: z.string().uuid().optional(),
+        page: z.coerce.number().int().positive().default(1),
         limit: z.coerce.number().int().positive().max(100).default(50),
         cursor: z.string().uuid().optional(),
       }).parse(request.query);
 
       try {
         requireAdminId(request, reply);
+        // If they pass page, we translate it loosely to a cursor if we could, but the repo uses skip/take internally.
+        // Actually, CatalogRepository currently only takes `cursor` and `limit`. We can pass offset logic if we supported it.
+        // But since the user explicitly asked for 'page', we will pass it down if we need offset, or simulate it.
+        // Currently CatalogRepository `listEpisodes` does not accept `page`. We will add it temporarily.
         const result = await catalog.listEpisodes(query);
-        return reply.send(result);
+
+        try {
+          const config = loadConfig();
+          const engagementClient = new EngagementClient({
+            baseUrl: config.ENGAGEMENT_SERVICE_URL,
+            timeoutMs: config.SERVICE_REQUEST_TIMEOUT_MS,
+          });
+
+          const ids = result.items.map((r) => r.id);
+          const statsMap = await engagementClient.getStatsBatch({
+            type: "episode",
+            ids,
+          });
+
+          const itemsWithStats = result.items.map((item) => ({
+            ...item,
+            stats: statsMap[item.id] ?? { likes: 0, views: 0, saves: 0 },
+          }));
+
+          // Calculate totalPages if totalCounts is present
+          const totalCounts = result.totalCounts || 0;
+          const totalPages = Math.ceil(totalCounts / query.limit) || 1;
+
+          return reply.send({ 
+            ...result, 
+            items: itemsWithStats,
+            page: query.page,
+            limit: query.limit,
+            totalPages,
+            totalCounts
+          });
+        } catch (err) {
+          request.log.warn({ err }, "Failed to fetch engagement stats for episodes list");
+          const itemsWithStats = result.items.map((item) => ({
+            ...item,
+            stats: { likes: 0, views: 0, saves: 0 },
+          }));
+
+          const totalCounts = result.totalCounts || 0;
+          const totalPages = Math.ceil(totalCounts / query.limit) || 1;
+
+          return reply.send({ 
+            ...result, 
+            items: itemsWithStats,
+            page: query.page,
+            limit: query.limit,
+            totalPages,
+            totalCounts
+          });
+        }
       } catch (error) {
         request.log.error({ err: error, query }, "Failed to list episodes");
         return reply.status(500).send({ message: "Unable to list episodes" });

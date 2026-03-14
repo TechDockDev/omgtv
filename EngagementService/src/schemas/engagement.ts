@@ -54,6 +54,10 @@ export const seriesIdParamsSchema = z.object({
   seriesId: z.string(),
 });
 
+export const episodeIdParamsSchema = z.object({
+  episodeId: z.string(),
+});
+
 export const statsSchema = z.object({
   likes: z.number().int().nonnegative(),
   views: z.number().int().nonnegative(),
@@ -135,7 +139,7 @@ export const appEventItemSchema = z.object({
 
 // Batch action schemas
 export const batchActionItemSchema = z.object({
-  contentType: z.enum(["reel", "series"]),
+  contentType: z.enum(["reel", "series", "episode"]),
   contentId: z.string(),
   action: z.enum(["like", "unlike", "save", "unsave", "view"]),
 });
@@ -148,7 +152,7 @@ export const batchActionRequestSchema = z.object({
 });
 
 export const batchActionResultSchema = z.object({
-  contentType: z.enum(["reel", "series"]),
+  contentType: z.enum(["reel", "series", "episode"]),
   contentId: z.string(),
   action: z.enum(["like", "unlike", "save", "unsave", "view"]),
   success: z.boolean(),
@@ -179,7 +183,7 @@ export type BatchActionResponse = z.infer<typeof batchActionResponseSchema>;
 
 // User state schemas (for ContentService enrichment)
 export const userStateItemSchema = z.object({
-  contentType: z.enum(["reel", "series"]),
+  contentType: z.enum(["reel", "series", "episode"]),
   contentId: z.string(),
 });
 
@@ -208,7 +212,7 @@ export type UserStateResponse = z.infer<typeof userStateResponseSchema>;
 
 // Visibility Sync schema
 export const visibilitySyncRequestSchema = z.object({
-  contentType: z.enum(["reel", "series"]),
+  contentType: z.enum(["reel", "series", "episode"]),
   contentId: z.string(),
   visibility: z.string(),
   status: z.string(),

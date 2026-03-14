@@ -546,9 +546,17 @@ export async function startGrpcServer(
     }
 
     try {
-      const profile = await handlerContext.prisma.customerProfile.findUnique({
+      // customerId coming from Auth might actually be firebaseUid (from CustomerIdentity)
+      // or the internal profile ID. We try both.
+      let profile = await handlerContext.prisma.customerProfile.findUnique({
         where: { id: customerId },
       });
+
+      if (!profile) {
+        profile = await handlerContext.prisma.customerProfile.findUnique({
+          where: { firebaseUid: customerId },
+        });
+      }
 
       if (!profile) {
         callback(createServiceError(status.NOT_FOUND, "Customer profile not found"));

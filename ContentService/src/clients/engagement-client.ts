@@ -24,7 +24,7 @@ const continueWatchResponseSchema = z.object({
 
 // User state schemas for engagement enrichment
 const userStateItemSchema = z.object({
-  contentType: z.enum(["reel", "series"]),
+  contentType: z.enum(["reel", "series", "episode"]),
   contentId: z.string(),
 });
 
@@ -243,7 +243,7 @@ export class EngagementClient {
 
   async getUserState(params: {
     userId: string;
-    items: Array<{ contentType: "reel" | "series"; contentId: string }>;
+    items: Array<{ contentType: "reel" | "series" | "episode"; contentId: string }>;
   }): Promise<Record<string, UserStateEntry>> {
     if (params.items.length === 0) {
       return {};
@@ -252,7 +252,7 @@ export class EngagementClient {
     const userStateRequestSchema = z.object({
       items: z.array(
         z.object({
-          contentType: z.enum(["reel", "series"]),
+          contentType: z.enum(["reel", "series", "episode"]),
           contentId: z.string(),
         })
       ),
@@ -290,7 +290,7 @@ export class EngagementClient {
 
 
   async getStatsBatch(params: {
-    type: "reel" | "series";
+    type: "reel" | "series" | "episode";
     ids: string[];
   }): Promise<Record<string, { likes: number; views: number; saves: number; averageRating: number; reviewCount: number }>> {
     if (params.ids.length === 0) {
@@ -327,7 +327,7 @@ export class EngagementClient {
         const response: ServiceRequestResult<unknown> = await performServiceRequest({
           serviceName: "engagement",
           baseUrl: this.options.baseUrl,
-          path: `/internal/${params.type === 'series' ? 'series' : 'reels'}/stats`,
+          path: `/internal/${params.type === 'series' ? 'series' : params.type === 'episode' ? 'episodes' : 'reels'}/stats`,
           method: "POST",
           body,
           timeoutMs: this.options.timeoutMs,
@@ -364,7 +364,7 @@ export class EngagementClient {
   }
 
   async notifyVisibilityChange(params: {
-    contentType: "reel" | "series";
+    contentType: "reel" | "series" | "episode";
     contentId: string;
     visibility: string;
     status: string;

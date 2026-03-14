@@ -496,9 +496,9 @@ export class MobileAppService {
     });
 
     // Load engagement states for series and all episodes
-    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> = [
+    const engagementItems: Array<{ id: string; contentType: "reel" | "series" | "episode" }> = [
       { id: detail.series.id, contentType: "series" },
-      ...allEpisodes.map((ep) => ({ id: ep.id, contentType: "reel" as const })),
+      ...allEpisodes.map((ep) => ({ id: ep.id, contentType: "episode" as const })),
     ];
     const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
@@ -1241,7 +1241,7 @@ export class MobileAppService {
   }
 
   private async loadEngagementStates(
-    items: Array<{ id: string; contentType: "reel" | "series" }>,
+    items: Array<{ id: string; contentType: "reel" | "series" | "episode" }>,
     options?: MobileRequestOptions
   ): Promise<
     Map<
