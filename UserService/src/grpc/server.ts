@@ -16,6 +16,7 @@ import {
   unlinkDevice,
   syncDeviceDeviceInfo,
 } from "../services/identity";
+import { getUserDetails } from "../services/user-management";
 import type {
   PermissionDTO,
   RoleAssignmentDTO,
@@ -161,6 +162,21 @@ interface GetCustomerProfileResponse {
   phone_number: string;
   status: string;
   avatar_url: string;
+}
+
+interface BatchGetCustomerProfileRequest {
+  customer_ids: string[];
+}
+
+interface BatchGetCustomerProfileResponse {
+  profiles: Record<string, {
+    customer_id: string;
+    name: string;
+    email: string;
+    phone_number: string;
+    status: string;
+    avatar_url: string;
+  }>;
 }
 
 interface UnlinkDeviceRequest {
@@ -580,6 +596,48 @@ export async function startGrpcServer(
     }
   };
 
+  const batchGetCustomerProfileHandler: UnaryHandler<
+    BatchGetCustomerProfileRequest,
+    BatchGetCustomerProfileResponse
+  > = async (call, callback) => {
+    const customerIds = call.request.customer_ids;
+    if (!customerIds || !Array.isArray(customerIds)) {
+      callback(
+        createServiceError(status.INVALID_ARGUMENT, "customer_ids is required")
+      );
+      return;
+    }
+
+    try {
+      const results: Record<string, any> = {};
+
+      await Promise.all(
+        customerIds.map(async (id) => {
+          try {
+            const user = await getUserDetails(handlerContext.prisma, id);
+            if (user) {
+              results[id] = {
+                customer_id: user.id,
+                name: user.name,
+                email: user.email || "",
+                phone_number: user.phone || "",
+                status: user.status,
+                avatar_url: user.avatar || "",
+              };
+            }
+          } catch (err) {
+            handlerContext.app.log.warn({ err, userId: id }, "Failed to fetch user details in batch gRPC");
+          }
+        })
+      );
+
+      callback(null, { profiles: results });
+    } catch (error) {
+      handlerContext.app.log.error({ err: error }, "Failed to batch fetch customer profiles");
+      callback(createServiceError(status.INTERNAL, "Failed to batch fetch customer profiles"));
+    }
+  };
+
   const unlinkDeviceHandler: UnaryHandler<
     UnlinkDeviceRequest,
     UnlinkDeviceResponse
@@ -643,6 +701,7 @@ export async function startGrpcServer(
     EnsureCustomerProfile: wrapAuthorization(ensureCustomerProfileHandler),
     RegisterGuest: wrapAuthorization(registerGuestHandler),
     GetCustomerProfile: wrapAuthorization(getCustomerProfileHandler),
+    BatchGetCustomerProfile: wrapAuthorization(batchGetCustomerProfileHandler),
     UnlinkDevice: wrapAuthorization(unlinkDeviceHandler),
     SyncDeviceDeviceInfo: wrapAuthorization(syncDeviceDeviceInfoHandler),
   });

@@ -10,6 +10,9 @@ service UserService {
   rpc EnsureCustomerProfile (EnsureCustomerProfileRequest) returns (EnsureCustomerProfileResponse);
   rpc RegisterGuest (RegisterGuestRequest) returns (RegisterGuestResponse);
   rpc GetCustomerProfile (GetCustomerProfileRequest) returns (GetCustomerProfileResponse);
+  rpc BatchGetCustomerProfile (BatchGetCustomerProfileRequest) returns (BatchGetCustomerProfileResponse);
+  rpc UnlinkDevice (UnlinkDeviceRequest) returns (UnlinkDeviceResponse);
+  rpc SyncDeviceDeviceInfo (SyncDeviceDeviceInfoRequest) returns (SyncDeviceDeviceInfoResponse);
 }
 
 message Permission {
@@ -79,11 +82,23 @@ enum GuestProfileStatus {
   GUEST_PROFILE_STATUS_MIGRATED = 2;
 }
 
+message DeviceInfo {
+  string os = 1;
+  string os_version = 2;
+  string model = 3;
+  string app_version = 4;
+  string network = 5;
+  string fcm_token = 6;
+  string permissions_json = 7;
+  string device_name = 8;
+}
+
 message EnsureCustomerProfileRequest {
   string firebase_uid = 1;
   string phone_number = 2;
   string device_id = 3;
   string guest_id = 4;
+  DeviceInfo device_info = 5;
 }
 
 message EnsureCustomerProfileResponse {
@@ -96,6 +111,7 @@ message EnsureCustomerProfileResponse {
 message RegisterGuestRequest {
   string guest_id = 1;
   string device_id = 2;
+  DeviceInfo device_info = 3;
 }
 
 message RegisterGuestResponse {
@@ -116,4 +132,38 @@ message GetCustomerProfileResponse {
   string phone_number = 4;
   string status = 5;
   string avatar_url = 6;
+}
+
+message BatchGetCustomerProfileRequest {
+  repeated string customer_ids = 1;
+}
+
+message BatchGetCustomerProfileResponse {
+  message Profile {
+    string customer_id = 1;
+    string name = 2;
+    string email = 3;
+    string phone_number = 4;
+    string status = 5;
+    string avatar_url = 6;
+  }
+  map<string, Profile> profiles = 1;
+}
+
+message UnlinkDeviceRequest {
+  string customer_id = 1;
+  string device_id = 2;
+}
+
+message UnlinkDeviceResponse {
+  bool success = 1;
+}
+
+message SyncDeviceDeviceInfoRequest {
+  string device_id = 1;
+  DeviceInfo device_info = 2;
+}
+
+message SyncDeviceDeviceInfoResponse {
+  bool success = 1;
 }

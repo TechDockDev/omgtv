@@ -11,6 +11,7 @@ datasource db {
 enum ContentType {
   REEL
   SERIES
+  EPISODE
 }
 
 enum ActionType {
