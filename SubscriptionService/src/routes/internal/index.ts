@@ -18,7 +18,7 @@ export default async function internalRoutes(app: FastifyInstance) {
     const subscription = await prisma.userSubscription.findFirst({
       where: {
         userId,
-        status: { in: ["ACTIVE", "CANCELED"] },
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
         endsAt: { gt: new Date() } // Ensure subscription hasn't expired
       },
       orderBy: { startsAt: "desc" },
@@ -116,7 +116,7 @@ export default async function internalRoutes(app: FastifyInstance) {
     const trialUserCount = await prisma.userSubscription.groupBy({
       by: ["userId"],
       where: {
-        status: { in: ["ACTIVE", "CANCELED"] },
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
         endsAt: { gt: new Date() },
         trialPlanId: { not: null } // Users in trial
       },
@@ -138,7 +138,6 @@ export default async function internalRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { limit, offset } = request.query as { limit: number; offset: number };
 
-    // Find users with ACTIVE or CANCELED status and end date in the future
     const subscriptions = await prisma.userSubscription.findMany({
       where: {
         status: { in: ["ACTIVE", "CANCELED"] },
@@ -166,7 +165,7 @@ export default async function internalRoutes(app: FastifyInstance) {
 
     const subscriptions = await prisma.userSubscription.findMany({
       where: {
-        status: { in: ["ACTIVE", "CANCELED"] }, // They are saved as ACTIVE or CANCELED
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
         endsAt: { gt: new Date() },
         trialPlanId: { not: null } // Filter for trials
       },

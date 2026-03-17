@@ -5,6 +5,7 @@ import {
     getGeneralDashboardStats,
 } from "../services/admin-analytics";
 import { getPrismaOptional } from "../lib/prisma";
+import { userContentStatsResponseSchema } from "../schemas/admin-analytics";
 
 const userIdParamsSchema = z.object({
     userId: z.string().min(1),
@@ -47,52 +48,6 @@ const dashboardResponseSchema = z.object({
         date: z.string(),
         value: z.number(),
     })),
-});
-
-const contentDetailSchema = z.object({
-    id: z.string(),
-    title: z.string(),
-    thumbnailUrl: z.string().nullable(),
-    manifestUrl: z.string().nullable(),
-});
-
-const userContentStatsResponseSchema = z.object({
-    watchHistory: z.array(
-        z.object({
-            episodeId: z.string(),
-            title: z.string(),
-            thumbnailUrl: z.string().nullable(),
-            manifestUrl: z.string().nullable(),
-            progressSeconds: z.number(),
-            durationSeconds: z.number(),
-            isCompleted: z.boolean(),
-            lastWatchedAt: z.string(),
-        })
-    ),
-    likes: z.object({
-        reels: z.array(contentDetailSchema),
-        series: z.array(contentDetailSchema),
-    }),
-    saves: z.object({
-        reels: z.array(contentDetailSchema),
-        series: z.array(contentDetailSchema),
-    }),
-    ongoingSeries: z.array(z.any()),
-    completedSeries: z.array(z.any()),
-    stats: z.object({
-        totalWatchTimeSeconds: z.number(),
-        episodesStarted: z.number(),
-        episodesCompleted: z.number(),
-        totalLikes: z.number(),
-        totalSaves: z.number(),
-    }),
-    pagination: z.object({
-        limit: z.number(),
-        offset: z.number(),
-        totalHistory: z.number(),
-        totalLikes: z.number(),
-        totalSaves: z.number(),
-    }),
 });
 
 export default async function adminRoutes(fastify: FastifyInstance) {

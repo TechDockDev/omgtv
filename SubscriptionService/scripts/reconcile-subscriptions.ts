@@ -6,11 +6,11 @@ async function reconcile() {
     const razorpay = getRazorpay();
 
     try {
-        // Find all subscriptions that are still marked as trials
+        // Find all subscriptions that are still marked as trials (ACTIVE or TRIAL status)
         const stuckSubscriptions = await prisma.userSubscription.findMany({
             where: {
                 trialPlanId: { not: null },
-                status: "ACTIVE"
+                status: { in: ["ACTIVE", "TRIAL"] }
             }
         });
 
@@ -23,18 +23,19 @@ async function reconcile() {
             }
 
             try {
-                const rpSub = await razorpay.subscriptions.fetch(sub.razorpayOrderId);
+                const rpSub = await razorpay.subscriptions.fetch(sub.razorpayOrderId) as any;
 
                 // Check if Razorpay says trial is over (no trial_end or it's in the past)
                 // and status is active
                 const isTrialOver = !rpSub.trial_end || (rpSub.trial_end * 1000 < Date.now());
 
-                if (rpSub.status === 'active' && isTrialOver) {
-                    console.log(`Updating sub ${sub.id} (userId: ${sub.userId}) - Trial is over in Razorpay.`);
+                if (rpSub.status === 'active' && isTrialOver && rpSub.current_end) {
+                    console.log(`TRIAL-TO-PAID: Updating sub ${sub.id} (userId: ${sub.userId}) - Trial is over in Razorpay.`);
 
                     await prisma.userSubscription.update({
                         where: { id: sub.id },
                         data: {
+                            status: "ACTIVE", // Ensure status is ACTIVE (was TRIAL)
                             trialPlanId: null, // Clear trial
                             endsAt: new Date(rpSub.current_end * 1000)
                         }

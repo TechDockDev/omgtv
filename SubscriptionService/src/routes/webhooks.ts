@@ -75,13 +75,14 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         }
                     });
 
-                    // Activate user subscription
+                    // Activate user subscription - use TRIAL status if this is a trial purchase
+                    const isTrial = !!transaction.trialPlanId;
                     const userSubscription = await prisma.userSubscription.create({
                         data: {
                             userId: transaction.userId,
                             planId: transaction.planId,
-                            trialPlanId: transaction.trialPlanId, // Fix: Include trial plan if present
-                            status: "ACTIVE",
+                            trialPlanId: transaction.trialPlanId,
+                            status: isTrial ? "TRIAL" : "ACTIVE",
                             razorpayOrderId: subscriptionId,
                             transactionId: transaction.id,
                             startsAt: new Date(subscriptionEntity.current_start * 1000),
@@ -89,7 +90,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         }
                     });
 
-                    request.log.info({ msg: "Subscription activated from pending transaction", userSubscriptionId: userSubscription.id });
+                    request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
                 } else {
                     // 2. Might be a renewal or trial transition
                     request.log.info({ msg: "Subscription charged for renewal or trial transition", subscriptionId });
@@ -111,6 +112,9 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             request.log.info({ msg: "Duplicate webhook for payment already processed", paymentId });
                             return reply.send({ status: "ok" });
                         }
+
+                        // Detect trial-to-paid transition: if trialPlanId was set, this is a renewal after trial
+                        const wasTrialSub = !!existingSub.trialPlanId;
 
                         await prisma.userSubscription.update({
                             where: { id: existingSub.id },
@@ -134,7 +138,18 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 createdAt: new Date(),
                             }
                         });
-                        request.log.info({ msg: "Subscription updated for renewal/trial transition", subId: existingSub.id });
+
+                        if (wasTrialSub) {
+                            request.log.info({
+                                msg: "TRIAL-TO-PAID TRANSITION: Trial ended, subscription now on paid plan",
+                                subId: existingSub.id,
+                                userId: existingSub.userId,
+                                planId: existingSub.planId,
+                                newEndsAt: new Date(subscriptionEntity.current_end * 1000)
+                            });
+                        } else {
+                            request.log.info({ msg: "Subscription renewed", subId: existingSub.id });
+                        }
                     }
                 }
             } else if (event === "subscription.activated") {
@@ -148,14 +163,26 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 });
 
                 if (existingSub) {
+                    // If this was a trial subscription, transition to ACTIVE (trial is ending)
+                    const wasTrialSub = !!existingSub.trialPlanId || existingSub.status === "TRIAL";
+
                     await prisma.userSubscription.update({
                         where: { id: existingSub.id },
                         data: {
                             status: "ACTIVE",
+                            trialPlanId: wasTrialSub ? null : existingSub.trialPlanId,
                             startsAt: new Date(subscriptionEntity.current_start * 1000),
                             endsAt: new Date(subscriptionEntity.current_end * 1000)
                         }
                     });
+
+                    if (wasTrialSub) {
+                        request.log.info({
+                            msg: "TRIAL-TO-PAID TRANSITION via subscription.activated",
+                            subId: existingSub.id,
+                            userId: existingSub.userId
+                        });
+                    }
                 } else {
                     // Search transaction to find user and plan
                     const tx = await prisma.transaction.findFirst({
@@ -167,7 +194,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 userId: tx.userId,
                                 planId: tx.planId,
                                 trialPlanId: tx.trialPlanId,
-                                status: "ACTIVE",
+                                status: tx.trialPlanId ? "TRIAL" : "ACTIVE",
                                 razorpayOrderId: subscriptionId,
                                 transactionId: tx.id,
                                 startsAt: new Date(subscriptionEntity.current_start * 1000),
