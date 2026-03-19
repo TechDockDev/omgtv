@@ -45,6 +45,7 @@ export type ViewerFeedItem = {
       id: string;
       slug: string;
       name: string;
+      displayOrder: number | null;
     } | null;
     isAudioSeries: boolean;
     tags: string[];
@@ -98,6 +99,7 @@ export type SeriesDetailResponse = {
       id: string;
       slug: string;
       name: string;
+      displayOrder: number | null;
     } | null;
   };
   seasons: Array<{
@@ -123,6 +125,7 @@ export type RelatedSeriesResponse = {
       id: string;
       slug: string;
       name: string;
+      displayOrder: number | null;
     } | null;
   }>;
 };
@@ -249,6 +252,7 @@ export function buildFeedItem(
           id: episode.series.category.id,
           slug: episode.series.category.slug,
           name: episode.series.category.name,
+          displayOrder: episode.series.category.displayOrder ?? null,
         }
         : null,
       isAudioSeries: episode.series.isAudioSeries,
@@ -474,6 +478,7 @@ export class ViewerCatalogService {
                 id: series.category.id,
                 slug: series.category.slug,
                 name: series.category.name,
+                displayOrder: series.category.displayOrder ?? null,
               }
               : null,
           },
@@ -544,6 +549,7 @@ export class ViewerCatalogService {
                 id: entry.category.id,
                 slug: entry.category.slug,
                 name: entry.category.name,
+                displayOrder: entry.category.displayOrder ?? null,
               }
               : null,
           })),
@@ -848,6 +854,7 @@ export class ViewerCatalogService {
                   id: series.category.id,
                   slug: series.category.slug,
                   name: series.category.name,
+                  displayOrder: series.category.displayOrder ?? null,
                 }
                 : null,
               isAudioSeries: series.isAudioSeries,
@@ -951,6 +958,7 @@ export class ViewerCatalogService {
                   id: series.category.id,
                   slug: series.category.slug,
                   name: series.category.name,
+                  displayOrder: series.category.displayOrder ?? null,
                 }
                 : null,
               isAudioSeries: series.isAudioSeries,

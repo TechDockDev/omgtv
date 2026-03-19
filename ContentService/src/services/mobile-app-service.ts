@@ -29,6 +29,7 @@ import {
   mobileTagsQuerySchema,
   mobileTagsResponseSchema,
   streamingInfoSchema,
+  type MobileAudioSeriesData,
   type MobileHomeData,
   type MobileHomeQuery,
   type MobileReelsData,
@@ -37,6 +38,7 @@ import {
   type MobileSeriesParams,
   type MobileTagsQuery,
   type MobileTagsResponse,
+  mobileAudioSeriesDataSchema,
 } from "../schemas/mobile-app";
 
 type LoggerLike = Pick<FastifyBaseLogger, "error" | "warn">;
@@ -363,101 +365,48 @@ export class MobileAppService {
   async getAudioExperience(
     query: MobileHomeQuery,
     options?: MobileRequestOptions
-  ): Promise<{ data: MobileHomeData; fromCache: boolean }> {
+  ): Promise<{ data: MobileAudioSeriesData; fromCache: boolean }> {
     const parsed = mobileHomeQuerySchema.parse(query);
 
     // Fetch Audio Series
     const seriesFeed = await this.deps.viewerCatalog.getAudioSeries({
       limit: parsed.limit ?? this.deps.config.homeFeedLimit,
       cursor: parsed.cursor,
-      tag: parsed.tag, // Pass tag to catalog service
+      tag: parsed.tag,
     });
 
     const filteredItems = seriesFeed.items;
 
-    // Fetch Continue Watching for Audio
-    // For now, we reuse the same list but we might want to filter for Audio-only if possible?
-    // Since we can't easily distinguish 'Audio Series' on the Episode without extra properties,
-    // we will show the users progress regardless. 
-    // Ideally, we should check `episode.series` properties if we had `isAudioSeries` there.
-
-    let continueWatchEpisodes: ViewerFeedItem[] = [];
-    const progressMap = new Map<string, ContinueWatchEntry>();
-    const userId = options?.context?.userId;
-    const entitlements = await this.resolveEntitlements(options); // Need entitlements for streaming info
-
-    if (userId && this.deps.engagementClient) {
-      try {
-        const progressList = await this.deps.engagementClient.getUserProgressList({
-          userId,
-          limit: 10,
-        });
-
-        const episodeIds = progressList.map((p) => p.episode_id);
-        if (episodeIds.length > 0) {
-          // Optimization: If we could filter by category/type here it would be better.
-          continueWatchEpisodes = await this.deps.viewerCatalog.getEpisodesBatch(episodeIds);
-
-          // Populate progress map
-          const validIds = new Set(continueWatchEpisodes.map((e) => e.id));
-          progressList.forEach((p) => {
-            if (validIds.has(p.episode_id)) {
-              progressMap.set(p.episode_id, p);
-            }
-          });
-        }
-      } catch (err) {
-        options?.logger?.error({ err }, "Failed to load audio continue watching list");
-      }
-    }
-
-    // Load Engagement for Audio Continue Watch (Series Level)
-    const cwSeriesEngagementItems: Array<{ id: string; contentType: "series" }> = [];
-    continueWatchEpisodes.forEach(ep => {
-      if (ep.series?.id) {
-        cwSeriesEngagementItems.push({ id: ep.series.id, contentType: "series" });
-      }
-    });
-
-    const cwEngagementStates = await this.loadEngagementStates(cwSeriesEngagementItems, options);
-
-    const continueWatch = continueWatchEpisodes.map((item) => {
-      const seriesId = item.series?.id;
-      const engagement = seriesId ? cwEngagementStates.get(seriesId) : null;
-
-      return {
-        ...this.toContinueWatchItem(
-          item,
-          entitlements.episode,
-          progressMap.get(item.id)
-        ),
-        engagement: engagement ?? DEFAULT_ENGAGEMENT,
-      };
-    });
-
-    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
+    // Load Engagement for Audio Series
+    const engagementItems: Array<{ id: string; contentType: "series" }> =
       filteredItems.map((item) => ({ id: item.id, contentType: "series" as const }));
     const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
-    const sections = this.buildSections(
-      filteredItems.map(item => {
-        const engagement = engagementStates.get(item.id);
-        return {
-          ...this.toSectionEntry(item, undefined, engagement?.averageRating),
-          engagement: engagement ?? DEFAULT_ENGAGEMENT
-        };
-      }),
-      continueWatch,
-      parsed.tag
-    );
+    // Flatten results into a list of series objects
+    const items = filteredItems.map(item => {
+      const engagement = engagementStates.get(item.id);
+      return {
+        id: item.id,
+        type: "series",
+        title: item.title,
+        subtitle: item.series.category?.name ?? null,
+        thumbnailUrl: item.heroImageUrl ?? item.series.heroImageUrl ?? null,
+        duration: null,
+        watchedDuration: null,
+        progress: null,
+        rating: engagement?.averageRating ?? item.ratings.average,
+        lastWatchedAt: null,
+        series_id: item.id,
+        engagement: engagement ?? DEFAULT_ENGAGEMENT,
+        is_audio_series: true
+      };
+    });
 
     const currentPage = parsed.page ?? 1;
     const hasNextPage = Boolean(seriesFeed.nextCursor);
 
-    const data: MobileHomeData = {
-      // carousel: undefined, // Removed for audio experience
-      "continue watch": continueWatch,
-      sections,
+    const data: MobileAudioSeriesData = {
+      items,
       pagination: {
         currentPage,
         totalPages: hasNextPage ? currentPage + 1 : currentPage,
@@ -467,7 +416,7 @@ export class MobileAppService {
     };
 
     return {
-      data: mobileHomeDataSchema.parse(data),
+      data: mobileAudioSeriesDataSchema.parse(data),
       fromCache: seriesFeed.fromCache,
     };
   }
@@ -757,6 +706,7 @@ export class MobileAppService {
       series_id: item.series.id,
       // Internal fields for grouping
       _categoryName: item.series.category?.name ?? null,
+      _categoryDisplayOrder: item.series.category?.displayOrder ?? null,
       _seriesTitle: item.series.title,
       _seriesThumbnail: item.series.heroImageUrl ?? item.series.bannerImageUrl ?? item.heroImageUrl,
       is_audio_series: item.series.isAudioSeries,
@@ -816,6 +766,13 @@ export class MobileAppService {
     const keys = Array.from(categoryGroups.keys()).sort((a, b) => {
       if (a === FALLBACK_CATEGORY) return 1; // All Shows last
       if (b === FALLBACK_CATEGORY) return -1;
+
+      const orderA = categoryGroups.get(a)?.[0]?._categoryDisplayOrder ?? Number.MAX_SAFE_INTEGER;
+      const orderB = categoryGroups.get(b)?.[0]?._categoryDisplayOrder ?? Number.MAX_SAFE_INTEGER;
+
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
       return a.localeCompare(b);
     });
 
@@ -861,7 +818,7 @@ export class MobileAppService {
 
   private cleanSectionItem(item: ReturnType<MobileAppService["toSectionEntry"]>) {
     // Remove internal fields before returning to Zod
-    const { _categoryName, _seriesTitle, _seriesThumbnail, ...rest } = item;
+    const { _categoryName, _categoryDisplayOrder, _seriesTitle, _seriesThumbnail, ...rest } = item;
     return rest;
   }
 

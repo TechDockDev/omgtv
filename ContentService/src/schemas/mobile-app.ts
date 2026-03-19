@@ -110,6 +110,11 @@ export const mobileHomeDataSchema = z.object({
   pagination: paginationSchema,
 });
 
+export const mobileAudioSeriesDataSchema = z.object({
+  items: z.array(sectionItemSchema),
+  pagination: paginationSchema,
+});
+
 export const mobileTagsResponseSchema = z.object({
   tags: z.array(
     z.object({
@@ -218,6 +223,9 @@ export const mobileTagsEnvelopeSchema = responseEnvelope(
   mobileTagsResponseSchema
 );
 export const mobileHomeEnvelopeSchema = responseEnvelope(mobileHomeDataSchema);
+export const mobileAudioSeriesEnvelopeSchema = responseEnvelope(
+  mobileAudioSeriesDataSchema
+);
 export const mobileSeriesEnvelopeSchema = responseEnvelope(
   mobileSeriesDataSchema
 );
@@ -258,5 +266,9 @@ export type MobileSeriesParams = z.infer<typeof mobileSeriesParamsSchema>;
 export type MobileReelsQuery = z.infer<typeof mobileReelsQuerySchema>;
 export type MobileTagsEnvelope = z.infer<typeof mobileTagsEnvelopeSchema>;
 export type MobileHomeEnvelope = z.infer<typeof mobileHomeEnvelopeSchema>;
+export type MobileAudioSeriesData = z.infer<typeof mobileAudioSeriesDataSchema>;
+export type MobileAudioSeriesEnvelope = z.infer<
+  typeof mobileAudioSeriesEnvelopeSchema
+>;
 export type MobileSeriesEnvelope = z.infer<typeof mobileSeriesEnvelopeSchema>;
 export type MobileReelsEnvelope = z.infer<typeof mobileReelsEnvelopeSchema>;
