@@ -217,7 +217,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const data = await prisma.subscriptionPlan.update({
         where: { id },
-        data: { deletedAt: new Date() },
+        data: { deletedAt: new Date(), isActive: false },
       });
 
       return {

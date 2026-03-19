@@ -36,7 +36,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     });
 
     const plans = await prisma.subscriptionPlan.findMany({
-      where: { isActive: true },
+      where: { isActive: true, deletedAt: null },
       orderBy: { pricePaise: 'asc' }
     });
 
@@ -265,7 +265,9 @@ export default async function customerRoutes(app: FastifyInstance) {
       });
     }
 
-    let plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
+    let plan = await prisma.subscriptionPlan.findFirst({ 
+      where: { id: planId, deletedAt: null } 
+    });
     let trialPlan: any = null;
 
     if (plan && isTrial) {
