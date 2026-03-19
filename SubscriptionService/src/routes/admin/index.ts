@@ -323,9 +323,13 @@ export default async function adminRoutes(app: FastifyInstance) {
           select: { userId: true },
           distinct: ["userId"],
         }),
-        // 3. Total Subscribers (Active Paid Users)
+        // 3. Total Subscribers (Active Paid Users - Including Canceled but not Expired)
         prisma.userSubscription.count({
-          where: { status: "ACTIVE", trialPlanId: null },
+          where: { 
+            status: { in: ["ACTIVE", "CANCELED"] }, 
+            trialPlanId: null,
+            endsAt: { gt: new Date() }
+          },
         }),
       ]);
 

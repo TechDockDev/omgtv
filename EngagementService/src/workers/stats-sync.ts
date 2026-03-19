@@ -1,6 +1,7 @@
 import type Redis from "ioredis";
 import { getRedisOptional } from "../lib/redis";
 import { getPrisma } from "../lib/prisma";
+import type { ContentType as PrismaContentType } from "@prisma/client";
 
 const DIRTY_STATS_SET = "stats:dirty_set";
 const BATCH_SIZE = 100;
@@ -50,7 +51,7 @@ async function syncStatsBatch() {
         );
 
         updates.push({
-            type: type.toUpperCase() as "SERIES" | "REEL",
+            type: type.toUpperCase() as PrismaContentType,
             id,
             likes: parseInt(likes ?? "0", 10) || 0,
             views: parseInt(views ?? "0", 10) || 0,

@@ -1,5 +1,5 @@
 import type Redis from "ioredis";
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient, ContentType as PrismaContentType } from "@prisma/client";
 import type { ContentType, Action } from "../schemas/batch";
 
 export type EntityType = "reel" | "series" | "episode";
@@ -140,14 +140,14 @@ async function handleLike(
                 where: {
                     userId_contentType_contentId_actionType: {
                         userId,
-                        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+                        contentType: entityType.toUpperCase() as PrismaContentType,
                         contentId,
                         actionType: "LIKE",
                     },
                 },
                 create: {
                     userId,
-                    contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+                    contentType: entityType.toUpperCase() as PrismaContentType,
                     contentId,
                     actionType: "LIKE",
                     isActive: true,
@@ -183,7 +183,7 @@ async function handleUnlike(
             .updateMany({
                 where: {
                     userId,
-                    contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+                    contentType: entityType.toUpperCase() as PrismaContentType,
                     contentId,
                     actionType: "LIKE",
                 },
@@ -214,14 +214,14 @@ async function handleSave(
                 where: {
                     userId_contentType_contentId_actionType: {
                         userId,
-                        contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+                        contentType: entityType.toUpperCase() as PrismaContentType,
                         contentId,
                         actionType: "SAVE",
                     },
                 },
                 create: {
                     userId,
-                    contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+                    contentType: entityType.toUpperCase() as PrismaContentType,
                     contentId,
                     actionType: "SAVE",
                     isActive: true,
@@ -257,7 +257,7 @@ async function handleUnsave(
             .updateMany({
                 where: {
                     userId,
-                    contentType: entityType.toUpperCase() as "REEL" | "SERIES",
+                    contentType: entityType.toUpperCase() as PrismaContentType,
                     contentId,
                     actionType: "SAVE",
                 },
@@ -298,24 +298,31 @@ export async function getUserStates(
     // Group by content type for efficient Redis queries
     const reels = items.filter((i) => i.contentType === "reel");
     const series = items.filter((i) => i.contentType === "series");
+    const episodes = items.filter((i) => i.contentType === "episode");
 
     // Get user's liked/saved sets from Redis
     let reelLikedSet: Set<string> = new Set();
     let reelSavedSet: Set<string> = new Set();
     let seriesLikedSet: Set<string> = new Set();
     let seriesSavedSet: Set<string> = new Set();
+    let episodeLikedSet: Set<string> = new Set();
+    let episodeSavedSet: Set<string> = new Set();
 
     if (redis) {
-        const [reelLiked, reelSaved, seriesLiked, seriesSaved] = await Promise.all([
+        const [reelLiked, reelSaved, seriesLiked, seriesSaved, episodeLiked, episodeSaved] = await Promise.all([
             reels.length > 0 ? redis.smembers(redisUserLikedKey("reel", userId)) : [],
             reels.length > 0 ? redis.smembers(redisUserSavedKey("reel", userId)) : [],
             series.length > 0 ? redis.smembers(redisUserLikedKey("series", userId)) : [],
             series.length > 0 ? redis.smembers(redisUserSavedKey("series", userId)) : [],
+            episodes.length > 0 ? redis.smembers(redisUserLikedKey("episode", userId)) : [],
+            episodes.length > 0 ? redis.smembers(redisUserSavedKey("episode", userId)) : [],
         ]);
         reelLikedSet = new Set(reelLiked);
         reelSavedSet = new Set(reelSaved);
         seriesLikedSet = new Set(seriesLiked);
         seriesSavedSet = new Set(seriesSaved);
+        episodeLikedSet = new Set(episodeLiked);
+        episodeSavedSet = new Set(episodeSaved);
     }
 
     // Get counts from Redis
@@ -345,9 +352,12 @@ export async function getUserStates(
         if (item.contentType === "reel") {
             isLiked = reelLikedSet.has(item.contentId);
             isSaved = reelSavedSet.has(item.contentId);
-        } else {
+        } else if (item.contentType === "series") {
             isLiked = seriesLikedSet.has(item.contentId);
             isSaved = seriesSavedSet.has(item.contentId);
+        } else {
+            isLiked = episodeLikedSet.has(item.contentId);
+            isSaved = episodeSavedSet.has(item.contentId);
         }
 
         result[key] = { isLiked, isSaved, likeCount, viewCount, saveCount };
@@ -361,7 +371,7 @@ export async function getUserStates(
                 userId,
                 isActive: true,
                 OR: items.map((item) => ({
-                    contentType: item.contentType.toUpperCase() as "REEL" | "SERIES",
+                    contentType: item.contentType.toUpperCase() as PrismaContentType,
                     contentId: item.contentId,
                 })),
             },
@@ -371,7 +381,7 @@ export async function getUserStates(
         const stats = await prisma.contentStats.findMany({
             where: {
                 OR: items.map((item) => ({
-                    contentType: item.contentType.toUpperCase() as "REEL" | "SERIES",
+                    contentType: item.contentType.toUpperCase() as PrismaContentType,
                     contentId: item.contentId,
                 })),
             },
@@ -379,7 +389,7 @@ export async function getUserStates(
 
         for (const item of items) {
             const key = `${item.contentType}:${item.contentId}`;
-            const contentType = item.contentType.toUpperCase() as "REEL" | "SERIES";
+            const contentType = item.contentType.toUpperCase() as PrismaContentType;
 
             const isLiked = userActions.some(
                 (a) => a.contentId === item.contentId && a.contentType === contentType && a.actionType === "LIKE"

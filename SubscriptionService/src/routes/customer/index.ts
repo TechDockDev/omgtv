@@ -16,13 +16,18 @@ export default async function customerRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { userId } = request.query as { userId?: string };
 
-    // Check if user has already used a trial
+    // Check if user has already used a trial (subscription OR pending trial transaction)
     let hasUsedTrial = false;
     if (userId) {
-      const trialSub = await prisma.userSubscription.findFirst({
-        where: { userId, trialPlanId: { not: null } }
-      });
-      hasUsedTrial = !!trialSub;
+      const [trialSub, pendingTrialTx] = await Promise.all([
+        prisma.userSubscription.findFirst({
+          where: { userId, trialPlanId: { not: null } }
+        }),
+        prisma.transaction.findFirst({
+          where: { userId, trialPlanId: { not: null }, status: { in: ["SUCCESS", "PENDING"] } }
+        })
+      ]);
+      hasUsedTrial = !!(trialSub || pendingTrialTx);
     }
 
     // Fetch global trial plan (not tied to any specific plan)
@@ -55,6 +60,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Plans retrieved successfully",
       developerMessage: "Public plans retrieved",
+      hasUsedTrial,
       trialPlan: (globalTrialPlan && !hasUsedTrial) ? {
         id: globalTrialPlan.id,
         trialPricePaise: globalTrialPlan.trialPricePaise,
@@ -71,13 +77,18 @@ export default async function customerRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { userId } = request.query as { userId?: string };
 
-    // Check if user has already used a trial
+    // Check if user has already used a trial (subscription OR pending/success trial transaction)
     let hasUsedTrial = false;
     if (userId) {
-      const trialSub = await prisma.userSubscription.findFirst({
-        where: { userId, trialPlanId: { not: null } }
-      });
-      hasUsedTrial = !!trialSub;
+      const [trialSub, pendingTrialTx] = await Promise.all([
+        prisma.userSubscription.findFirst({
+          where: { userId, trialPlanId: { not: null } }
+        }),
+        prisma.transaction.findFirst({
+          where: { userId, trialPlanId: { not: null }, status: { in: ["SUCCESS", "PENDING"] } }
+        })
+      ]);
+      hasUsedTrial = !!(trialSub || pendingTrialTx);
     }
 
     if (hasUsedTrial) {
@@ -86,6 +97,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         statusCode: 200,
         userMessage: "Trial plans retrieved successfully",
         developerMessage: "User has already used a trial, returning empty list",
+        hasUsedTrial: true,
         data: [],
       };
     }
@@ -109,6 +121,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Trial plans retrieved successfully",
       developerMessage: "Active trial plans retrieved",
+      hasUsedTrial: false,
       data: formattedTrialPlans,
     };
   });
@@ -118,11 +131,13 @@ export default async function customerRoutes(app: FastifyInstance) {
     schema: { querystring: z.object({ userId: z.string() }) },
   }, async (request) => {
     const { userId } = request.query as { userId: string };
-    const subscription = await prisma.userSubscription.findFirst({
+
+    // 1. First check for an active/trial subscription that hasn't expired
+    let subscription = await prisma.userSubscription.findFirst({
       where: {
         userId,
-        status: "ACTIVE",
-        endsAt: { gt: new Date() } // Ensure subscription hasn't expired
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
+        endsAt: { gt: new Date() }
       },
       orderBy: { startsAt: "desc" },
       include: {
@@ -131,9 +146,66 @@ export default async function customerRoutes(app: FastifyInstance) {
       },
     });
 
+    // 2. If no active subscription found, check if there's an expired trial
+    //    that has a Razorpay subscription which may have auto-renewed.
+    //    This bridges the gap between trial end and webhook processing.
+    if (!subscription) {
+      const expiredTrial = await prisma.userSubscription.findFirst({
+        where: {
+          userId,
+          trialPlanId: { not: null },
+          razorpayOrderId: { not: null },
+          status: { in: ["ACTIVE", "TRIAL"] },
+          endsAt: { lte: new Date() } // Trial has expired
+        },
+        orderBy: { startsAt: "desc" },
+        include: { plan: true, trialPlan: true }
+      });
+
+      if (expiredTrial && expiredTrial.razorpayOrderId) {
+        // Sync with Razorpay to check if the subscription has renewed
+        try {
+          const { getRazorpay } = await import("../../lib/razorpay");
+          const razorpay = getRazorpay();
+          const rpSub = await razorpay.subscriptions.fetch(expiredTrial.razorpayOrderId);
+
+          if (rpSub.status === 'active' && rpSub.current_end) {
+            // Razorpay says subscription is active! Update our DB
+            const updatedSub = await prisma.userSubscription.update({
+              where: { id: expiredTrial.id },
+              data: {
+                status: "ACTIVE",
+                trialPlanId: null, // Trial is over
+                startsAt: rpSub.current_start ? new Date(rpSub.current_start * 1000) : expiredTrial.startsAt,
+                endsAt: new Date(rpSub.current_end * 1000)
+              },
+              include: { plan: true, trialPlan: true }
+            });
+
+            request.log.info({
+              msg: "Synced expired trial with Razorpay - subscription is now active",
+              subId: expiredTrial.id,
+              razorpayStatus: rpSub.status
+            });
+
+            subscription = updatedSub;
+          }
+        } catch (err) {
+          request.log.error(err, "Failed to sync with Razorpay for expired trial");
+        }
+      }
+    }
+
+    // Determine if user has ever used a trial (for frontend to hide trial option)
+    const hasUsedTrial = !!(await prisma.userSubscription.findFirst({
+      where: { userId, trialPlanId: { not: null } }
+    }));
+
     // If user has a trial, return trial details instead of main plan
+    const isTrial = subscription?.status === "TRIAL" || !!subscription?.trialPlanId;
     const data = subscription ? {
       ...subscription,
+      isTrial,
       // During trial period, show trial plan information
       displayPlan: subscription.trialPlan || subscription.plan
     } : null;
@@ -143,6 +215,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Subscription retrieved successfully",
       developerMessage: "User subscription details retrieved",
+      hasUsedTrial,
       data,
     };
   });
@@ -422,7 +495,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         userId: transaction.userId,
         planId: transaction.planId,
         trialPlanId: trialPlanId,
-        status: trialPlanId ? "ACTIVE" : "ACTIVE", // Always active here, but we could set "TRIAL" if we wanted to be specific
+        status: trialPlanId ? "TRIAL" : "ACTIVE", // TRIAL status during trial period, ACTIVE for regular plans
         razorpayOrderId: subscriptionId,
         transactionId: transaction.id,
         startsAt,

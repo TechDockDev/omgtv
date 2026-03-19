@@ -1,5 +1,5 @@
 import type Redis from "ioredis";
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient, ContentType as PrismaContentType } from "@prisma/client";
 import { loadConfig } from "../config";
 
 type EntityType = "reel" | "series" | "episode";
@@ -190,7 +190,7 @@ async function getStatsRedis(
     const dbStat = await prisma.contentStats.findUnique({
       where: {
         contentType_contentId: {
-          contentType: entityType.toUpperCase() as any,
+          contentType: entityType.toUpperCase() as PrismaContentType,
           contentId: entityId,
         },
       },
@@ -199,7 +199,7 @@ async function getStatsRedis(
     // Load review stats from review table
     const reviewAgg = await prisma.review.aggregate({
       where: {
-        contentType: entityType.toUpperCase() as any,
+        contentType: entityType.toUpperCase() as PrismaContentType,
         contentId: entityId,
       },
       _avg: { rating: true },
@@ -528,7 +528,7 @@ export async function listUserEntities(params: {
       where: {
         userId: userId,
         isActive: true,
-        contentType: entityType.toUpperCase() as any,
+        contentType: entityType.toUpperCase() as PrismaContentType,
         actionType: collection === "liked" ? "LIKE" : "SAVE"
       },
       select: { contentId: true }
@@ -646,7 +646,7 @@ export async function addReview(params: {
         userId,
         userName,
         userPhone,
-        contentType: entityType.toUpperCase() as any, // "SERIES" | "REEL"
+        contentType: entityType.toUpperCase() as PrismaContentType, // "SERIES" | "REEL"
         contentId: entityId,
         rating,
         comment,
@@ -727,7 +727,7 @@ export async function getReviews(params: {
   if (prisma) {
     // DB Implementation
     const where = {
-      contentType: entityType.toUpperCase() as any,
+      contentType: entityType.toUpperCase() as PrismaContentType,
       contentId: entityId
     };
 
@@ -1001,7 +1001,7 @@ export async function getUserStateBatch(params: {
       const dbStats = await prisma.contentStats.findMany({
         where: {
           OR: items.map((item) => ({
-            contentType: item.contentType.toUpperCase() as any,
+            contentType: item.contentType.toUpperCase() as PrismaContentType,
             contentId: item.contentId,
           })),
         },
@@ -1024,7 +1024,7 @@ export async function getUserStateBatch(params: {
           userId,
           isActive: true,
           OR: items.map((item) => ({
-            contentType: item.contentType.toUpperCase() as any,
+            contentType: item.contentType.toUpperCase() as PrismaContentType,
             contentId: item.contentId,
           })),
         },
@@ -1044,7 +1044,7 @@ export async function getUserStateBatch(params: {
         by: ['contentType', 'contentId'],
         where: {
           OR: items.map(item => ({
-            contentType: item.contentType.toUpperCase() as any,
+            contentType: item.contentType.toUpperCase() as PrismaContentType,
             contentId: item.contentId
           }))
         },
@@ -1234,7 +1234,7 @@ export async function getUserProgressList(params: {
         const items: any[] = [];
         results?.forEach((res, idx) => {
           const err = res[0];
-          const data = res[1] as any; // Record<string, string>
+          const data = res[1] as Record<string, string>; // Record<string, string>
           if (!err && data && data.episodeId) {
             items.push({
               episodeId: data.episodeId,
@@ -1308,7 +1308,7 @@ export async function syncProgressToDb(redis: Redis, prisma: PrismaClient, batch
 
   results?.forEach((res, idx) => {
     if (!res[0] && res[1]) {
-      const data = res[1] as any;
+      const data = res[1] as Record<string, string>;
       if (data.userId && data.episodeId) {
         upserts.push({
           userId: data.userId,
@@ -1384,7 +1384,7 @@ export async function syncVisibility(params: {
 
   await prisma.userAction.updateMany({
     where: {
-      contentType: contentType.toUpperCase() as any,
+      contentType: contentType.toUpperCase() as PrismaContentType,
       contentId: contentId,
     },
     data: {
