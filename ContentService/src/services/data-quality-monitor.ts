@@ -45,6 +45,14 @@ export class DataQualityMonitor {
       );
     }
 
+    if (episode.durationSeconds <= 0) {
+      this.fail(
+        "invalid_duration",
+        "Episode duration must be greater than zero",
+        baseAttributes
+      );
+    }
+
     if (
       !episode.defaultThumbnailUrl &&
       !episode.mediaAsset?.defaultThumbnailUrl &&

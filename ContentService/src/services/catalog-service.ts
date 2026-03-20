@@ -194,6 +194,17 @@ export class CatalogService {
     }
   }
 
+  private ensureEpisodePublishable(
+    episode: Pick<Episode, "id" | "durationSeconds">
+  ) {
+    if (episode.durationSeconds <= 0) {
+      throw new CatalogServiceError(
+        "FAILED_PRECONDITION",
+        `Episode ${episode.id} duration must be greater than 0 before publishing`
+      );
+    }
+  }
+
   private ensureCarouselSeriesSelectable(series: Series) {
     if (series.status !== PublicationStatus.PUBLISHED) {
       throw new CatalogServiceError(
@@ -207,6 +218,17 @@ export class CatalogService {
         `Series ${series.id} must be public before featuring`
       );
     }
+  }
+
+  private isSeriesPubliclyDiscoverable(
+    series: Pick<Series, "status" | "visibility" | "releaseDate">,
+    now: Date = new Date()
+  ) {
+    return (
+      series.status === PublicationStatus.PUBLISHED &&
+      series.visibility === Visibility.PUBLIC &&
+      (!series.releaseDate || series.releaseDate <= now)
+    );
   }
 
   async createCategory(
@@ -766,6 +788,10 @@ export class CatalogService {
         }
       }
 
+      if (!this.isSeriesPubliclyDiscoverable(updatedSeries)) {
+        await this.repo.removeSeriesFromTopTen(updatedSeries.id);
+      }
+
       await this.emitCatalogEvent({
         entity: "series",
         entityId: updatedSeries.id,
@@ -1016,6 +1042,10 @@ export class CatalogService {
         "INVALID_STATE",
         `Cannot transition episode from ${episode.status} to ${targetStatus}`
       );
+    }
+
+    if (targetStatus === PublicationStatus.PUBLISHED) {
+      this.ensureEpisodePublishable(episode);
     }
 
     const publishedAt =
@@ -1966,11 +1996,40 @@ export class CatalogService {
       );
     }
 
-    // Validate all series exist
-    const seriesIds = items.map((i) => i.seriesId);
-    const foundSeries = await this.repo.findSeriesByIds(seriesIds);
+    const duplicateSeriesIds = items
+      .map((item) => item.seriesId)
+      .filter((seriesId, index, all) => all.indexOf(seriesId) !== index);
+    if (duplicateSeriesIds.length > 0) {
+      throw new CatalogServiceError(
+        "FAILED_PRECONDITION",
+        `Duplicate series IDs are not allowed: ${Array.from(new Set(duplicateSeriesIds)).join(", ")}`
+      );
+    }
+
+    const duplicatePositions = items
+      .map((item) => item.position)
+      .filter((position, index, all) => all.indexOf(position) !== index);
+    if (duplicatePositions.length > 0) {
+      throw new CatalogServiceError(
+        "FAILED_PRECONDITION",
+        `Duplicate Top 10 positions are not allowed: ${Array.from(new Set(duplicatePositions)).join(", ")}`
+      );
+    }
+
+    const normalizedItems = [...items]
+      .sort((left, right) => left.position - right.position)
+      .map((item, index) => ({
+        seriesId: item.seriesId,
+        position: index + 1,
+      }));
+
+    // Validate all series exist and are eligible for public Top 10 display.
+    const seriesIds = normalizedItems.map((item) => item.seriesId);
+    const foundSeries = await this.repo.findSeriesByIds(seriesIds, {
+      includeNonPublic: true,
+    });
     if (foundSeries.length !== seriesIds.length) {
-      const foundIds = new Set(foundSeries.map((s) => s.id));
+      const foundIds = new Set(foundSeries.map((series) => series.id));
       const missing = seriesIds.filter((id) => !foundIds.has(id));
       throw new CatalogServiceError(
         "FAILED_PRECONDITION",
@@ -1978,7 +2037,17 @@ export class CatalogService {
       );
     }
 
-    const updated = await this.repo.replaceTopTenSeries(items, adminId);
+    const invalidSeries = foundSeries.filter(
+      (series) => !this.isSeriesPubliclyDiscoverable(series)
+    );
+    if (invalidSeries.length > 0) {
+      throw new CatalogServiceError(
+        "FAILED_PRECONDITION",
+        `Series must be published, public, and already released before entering Top 10: ${invalidSeries.map((series) => series.id).join(", ")}`
+      );
+    }
+
+    const updated = await this.repo.replaceTopTenSeries(normalizedItems, adminId);
 
     await this.emitCatalogEvent({
       entity: "series",

@@ -172,7 +172,7 @@ export class MobileAppService {
 
     let topTen: any[] = [];
     if (!parsed.tag) {
-      topTen = await this.deps.repository.getTopTenSeries();
+      topTen = await this.deps.repository.getPublicTopTenSeries();
     }
 
     // Fetch Continue Watching (Recent Progress)

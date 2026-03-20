@@ -446,21 +446,39 @@ export class ViewerCatalogService {
 
         span.setAttribute("series.id", series.id);
 
-        const seasonItems = series.seasons.map((season) => ({
-          id: season.id,
-          sequenceNumber: season.sequenceNumber,
-          title: season.title,
-          synopsis: season.synopsis ?? null,
-          releaseDate: season.releaseDate?.toISOString() ?? null,
-          episodes: season.episodes.map((episode) => {
-            this.ensureEpisodeQuality(episode, { source: "viewer.series" });
-            return buildFeedItem(episode, { reason: "viewer_following" }, null);
-          }),
-        }));
+        const seasonItems = series.seasons.map((season) => {
+          const episodes: ViewerFeedItem[] = [];
+          season.episodes.forEach((episode) => {
+            try {
+              this.ensureEpisodeQuality(episode, { source: "viewer.series" });
+              episodes.push(
+                buildFeedItem(episode, { reason: "viewer_following" }, null)
+              );
+            } catch (error) {
+              // Invalid catalog rows should not take down the whole series detail page.
+            }
+          });
 
-        const standaloneEpisodes = series.standaloneEpisodes.map((episode) => {
-          this.ensureEpisodeQuality(episode, { source: "viewer.series" });
-          return buildFeedItem(episode, { reason: "viewer_following" }, null);
+          return {
+            id: season.id,
+            sequenceNumber: season.sequenceNumber,
+            title: season.title,
+            synopsis: season.synopsis ?? null,
+            releaseDate: season.releaseDate?.toISOString() ?? null,
+            episodes,
+          };
+        });
+
+        const standaloneEpisodes: ViewerFeedItem[] = [];
+        series.standaloneEpisodes.forEach((episode) => {
+          try {
+            this.ensureEpisodeQuality(episode, { source: "viewer.series" });
+            standaloneEpisodes.push(
+              buildFeedItem(episode, { reason: "viewer_following" }, null)
+            );
+          } catch (error) {
+            // Invalid catalog rows should not take down the whole series detail page.
+          }
         });
 
         const response: SeriesDetailResponse = {

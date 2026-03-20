@@ -67,7 +67,8 @@ export type DataQualityIssueKind =
   | "missing_thumbnail"
   | "missing_manifest"
   | "orphan_episode"
-  | "missing_series_category";
+  | "missing_series_category"
+  | "invalid_duration";
 
 export function recordDataQualityIssue(
   issue: DataQualityIssueKind,
