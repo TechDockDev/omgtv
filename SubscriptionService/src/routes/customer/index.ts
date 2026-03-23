@@ -40,6 +40,10 @@ export default async function customerRoutes(app: FastifyInstance) {
       orderBy: { pricePaise: 'asc' }
     });
 
+    const config = await (prisma as any).subscriptionGlobalConfig.findFirst({
+      where: { id: 1 }
+    });
+
     const formattedPlans = plans.map(plan => {
       const durationMonths = Math.round(plan.durationDays / 30);
       const price = Math.floor(plan.pricePaise / 100);
@@ -52,6 +56,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         durationMonths,
         price,
         pricePerMonth,
+        promoVideoUrl: (plan as any).promoVideoUrl,
       };
     });
 
@@ -68,6 +73,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         isAutoDebit: globalTrialPlan.isAutoDebit,
         isEligible: true
       } : null,
+      promoVideoUrl: config?.promoVideoUrl || null,
       data: formattedPlans,
     };
   });

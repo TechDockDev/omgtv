@@ -46,6 +46,7 @@ model SubscriptionPlan {
   icon             String?  // e.g., "Zap", "Crown", "Star"
   savings          Int      @default(0) // Percentage
   razorpayPlanId   String?
+  promoVideoUrl    String?  // Optional m3u8 link for this specific plan
   
   deletedAt        DateTime?
 
@@ -130,4 +131,14 @@ model Transaction {
   @@index([razorpayPlanId])
   @@index([subscriptionId])
   @@index([razorpayPaymentId])
+}
+
+model SubscriptionGlobalConfig {
+  id               Int      @id @default(1)
+  promoVideoUrl    String?  // Global m3u8 link for subscription page
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([id])
 }
