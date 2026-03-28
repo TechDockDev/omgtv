@@ -24,6 +24,7 @@ const planBodySchema = z.object({
   subscriberCount: z.number().int().nonnegative().default(0),
   icon: z.string().optional(),
   savings: z.number().int().nonnegative().default(0),
+  promoVideoUrl: z.string().url().nullable().optional(),
 });
 
 const planUpdateSchema = planBodySchema.partial();
@@ -37,6 +38,10 @@ const freePlanSchema = z.object({
 type PlanBody = z.infer<typeof planBodySchema>;
 type PlanUpdateBody = z.infer<typeof planUpdateSchema>;
 type FreePlanBody = z.infer<typeof freePlanSchema>;
+
+const subscriptionSettingsSchema = z.object({
+  promoVideoUrl: z.string().url().nullable().optional(),
+});
 
 export default async function adminRoutes(app: FastifyInstance) {
   const prisma = getPrisma();
@@ -217,7 +222,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const data = await prisma.subscriptionPlan.update({
         where: { id },
-        data: { deletedAt: new Date() },
+        data: { deletedAt: new Date(), isActive: false },
       });
 
       return {
@@ -561,5 +566,38 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  app.get("/settings", async () => {
+    const config = await (prisma as any).subscriptionGlobalConfig.findFirst({
+      where: { id: 1 }
+    });
+    return {
+      success: true,
+      statusCode: 200,
+      userMessage: "Settings retrieved successfully",
+      developerMessage: "Global subscription settings retrieved",
+      data: config || { id: 1, promoVideoUrl: null }
+    };
+  });
 
+  app.put<{ Body: z.infer<typeof subscriptionSettingsSchema> }>(
+    "/settings",
+    {
+      schema: { body: subscriptionSettingsSchema }
+    },
+    async (request) => {
+      const { promoVideoUrl } = request.body;
+      const config = await (prisma as any).subscriptionGlobalConfig.upsert({
+        where: { id: 1 },
+        update: { promoVideoUrl },
+        create: { id: 1, promoVideoUrl }
+      });
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "Settings updated successfully",
+        developerMessage: "Global subscription settings updated",
+        data: config
+      };
+    }
+  );
 }

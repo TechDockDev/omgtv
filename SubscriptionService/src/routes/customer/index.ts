@@ -36,8 +36,12 @@ export default async function customerRoutes(app: FastifyInstance) {
     });
 
     const plans = await prisma.subscriptionPlan.findMany({
-      where: { isActive: true },
+      where: { isActive: true, deletedAt: null },
       orderBy: { pricePaise: 'asc' }
+    });
+
+    const config = await (prisma as any).subscriptionGlobalConfig.findFirst({
+      where: { id: 1 }
     });
 
     const formattedPlans = plans.map(plan => {
@@ -52,6 +56,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         durationMonths,
         price,
         pricePerMonth,
+        promoVideoUrl: (plan as any).promoVideoUrl,
       };
     });
 
@@ -68,6 +73,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         isAutoDebit: globalTrialPlan.isAutoDebit,
         isEligible: true
       } : null,
+      promoVideoUrl: config?.promoVideoUrl || null,
       data: formattedPlans,
     };
   });
@@ -265,7 +271,9 @@ export default async function customerRoutes(app: FastifyInstance) {
       });
     }
 
-    let plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
+    let plan = await prisma.subscriptionPlan.findFirst({ 
+      where: { id: planId, deletedAt: null } 
+    });
     let trialPlan: any = null;
 
     if (plan && isTrial) {

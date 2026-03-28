@@ -45,6 +45,7 @@ export type ViewerFeedItem = {
       id: string;
       slug: string;
       name: string;
+      displayOrder: number | null;
     } | null;
     isAudioSeries: boolean;
     tags: string[];
@@ -77,6 +78,7 @@ export type ViewerFeedItem = {
   ratings: {
     average: number | null;
   };
+  isFree: boolean;
 };
 
 export type ViewerFeedResponse = {
@@ -94,10 +96,15 @@ export type SeriesDetailResponse = {
     bannerImageUrl: string | null;
     tags: string[];
     releaseDate: string | null;
+    isFree: boolean;
+    adOnSeriesOpen: boolean;
+    adOnEpisodeSwipe: boolean;
+    swipeAdFrequency: number;
     category: {
       id: string;
       slug: string;
       name: string;
+      displayOrder: number | null;
     } | null;
   };
   seasons: Array<{
@@ -123,6 +130,7 @@ export type RelatedSeriesResponse = {
       id: string;
       slug: string;
       name: string;
+      displayOrder: number | null;
     } | null;
   }>;
 };
@@ -249,11 +257,13 @@ export function buildFeedItem(
           id: episode.series.category.id,
           slug: episode.series.category.slug,
           name: episode.series.category.name,
+          displayOrder: episode.series.category.displayOrder ?? null,
         }
         : null,
       isAudioSeries: episode.series.isAudioSeries,
       tags: episode.series.tags,
     },
+    isFree: episode.isFree || episode.series.isFree,
     playback: {
       status: asset?.status ?? MediaAssetStatus.PENDING,
       manifestUrl: asset?.manifestUrl ?? null,
@@ -442,21 +452,39 @@ export class ViewerCatalogService {
 
         span.setAttribute("series.id", series.id);
 
-        const seasonItems = series.seasons.map((season) => ({
-          id: season.id,
-          sequenceNumber: season.sequenceNumber,
-          title: season.title,
-          synopsis: season.synopsis ?? null,
-          releaseDate: season.releaseDate?.toISOString() ?? null,
-          episodes: season.episodes.map((episode) => {
-            this.ensureEpisodeQuality(episode, { source: "viewer.series" });
-            return buildFeedItem(episode, { reason: "viewer_following" }, null);
-          }),
-        }));
+        const seasonItems = series.seasons.map((season) => {
+          const episodes: ViewerFeedItem[] = [];
+          season.episodes.forEach((episode) => {
+            try {
+              this.ensureEpisodeQuality(episode, { source: "viewer.series" });
+              episodes.push(
+                buildFeedItem(episode, { reason: "viewer_following" }, null)
+              );
+            } catch (error) {
+              // Invalid catalog rows should not take down the whole series detail page.
+            }
+          });
 
-        const standaloneEpisodes = series.standaloneEpisodes.map((episode) => {
-          this.ensureEpisodeQuality(episode, { source: "viewer.series" });
-          return buildFeedItem(episode, { reason: "viewer_following" }, null);
+          return {
+            id: season.id,
+            sequenceNumber: season.sequenceNumber,
+            title: season.title,
+            synopsis: season.synopsis ?? null,
+            releaseDate: season.releaseDate?.toISOString() ?? null,
+            episodes,
+          };
+        });
+
+        const standaloneEpisodes: ViewerFeedItem[] = [];
+        series.standaloneEpisodes.forEach((episode) => {
+          try {
+            this.ensureEpisodeQuality(episode, { source: "viewer.series" });
+            standaloneEpisodes.push(
+              buildFeedItem(episode, { reason: "viewer_following" }, null)
+            );
+          } catch (error) {
+            // Invalid catalog rows should not take down the whole series detail page.
+          }
         });
 
         const response: SeriesDetailResponse = {
@@ -469,11 +497,16 @@ export class ViewerCatalogService {
             bannerImageUrl: series.bannerImageUrl ?? null,
             tags: series.tags,
             releaseDate: series.releaseDate?.toISOString() ?? null,
+            isFree: series.isFree,
+            adOnSeriesOpen: series.adOnSeriesOpen ?? false,
+            adOnEpisodeSwipe: series.adOnEpisodeSwipe ?? false,
+            swipeAdFrequency: series.swipeAdFrequency ?? 3,
             category: series.category
               ? {
                 id: series.category.id,
                 slug: series.category.slug,
                 name: series.category.name,
+                displayOrder: series.category.displayOrder ?? null,
               }
               : null,
           },
@@ -544,6 +577,7 @@ export class ViewerCatalogService {
                 id: entry.category.id,
                 slug: entry.category.slug,
                 name: entry.category.name,
+                displayOrder: entry.category.displayOrder ?? null,
               }
               : null,
           })),
@@ -848,6 +882,7 @@ export class ViewerCatalogService {
                   id: series.category.id,
                   slug: series.category.slug,
                   name: series.category.name,
+                  displayOrder: series.category.displayOrder ?? null,
                 }
                 : null,
               isAudioSeries: series.isAudioSeries,
@@ -867,6 +902,7 @@ export class ViewerCatalogService {
             ratings: {
               average: null,
             },
+            isFree: series.isFree,
           } satisfies ViewerFeedItem;
         });
 
@@ -951,6 +987,7 @@ export class ViewerCatalogService {
                   id: series.category.id,
                   slug: series.category.slug,
                   name: series.category.name,
+                  displayOrder: series.category.displayOrder ?? null,
                 }
                 : null,
               isAudioSeries: series.isAudioSeries,
@@ -970,6 +1007,7 @@ export class ViewerCatalogService {
             ratings: {
               average: null,
             },
+            isFree: series.isFree,
           } satisfies ViewerFeedItem;
         });
 

@@ -68,6 +68,13 @@ function normalizeLimit(limit?: number) {
 
 export class CatalogRepository {
   private readonly prisma = getPrisma();
+  private readonly topTenSeriesInclude = {
+    series: {
+      include: {
+        category: true,
+      },
+    },
+  } as const;
 
   async findCategoryById(id: string) {
     return this.prisma.category.findFirst({
@@ -298,6 +305,9 @@ export class CatalogRepository {
     categoryId?: string | null;
     isAudioSeries?: boolean;
     displayOrder?: number | null; // Added
+    adOnSeriesOpen?: boolean; // Added
+    adOnEpisodeSwipe?: boolean;
+    swipeAdFrequency?: number;
     adminId?: string;
   }) {
     return this.prisma.series.create({
@@ -315,6 +325,9 @@ export class CatalogRepository {
         categoryId: data.categoryId ?? null,
         isAudioSeries: data.isAudioSeries ?? false,
         displayOrder: data.displayOrder ?? null, // Added
+        adOnSeriesOpen: data.adOnSeriesOpen ?? false, // Added
+        adOnEpisodeSwipe: data.adOnEpisodeSwipe ?? false,
+        swipeAdFrequency: data.swipeAdFrequency ?? 3,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       },
@@ -337,6 +350,9 @@ export class CatalogRepository {
       ownerId?: string;
       isAudioSeries?: boolean;
       displayOrder?: number | null; // Added
+      adOnSeriesOpen?: boolean; // Added
+      adOnEpisodeSwipe?: boolean;
+      swipeAdFrequency?: number;
       adminId?: string;
     }
   ) {
@@ -356,6 +372,9 @@ export class CatalogRepository {
         ownerId: data.ownerId,
         isAudioSeries: data.isAudioSeries,
         displayOrder: data.displayOrder, // Added
+        adOnSeriesOpen: data.adOnSeriesOpen, // Added
+        adOnEpisodeSwipe: data.adOnEpisodeSwipe,
+        swipeAdFrequency: data.swipeAdFrequency,
         updatedByAdminId: data.adminId,
       },
     });
@@ -706,11 +725,13 @@ export class CatalogRepository {
   }
 
   async softDeleteEpisode(id: string, adminId?: string) {
+    const episode = await this.prisma.episode.findUnique({ where: { id }, select: { slug: true } });
     return this.prisma.episode.update({
       where: { id },
       data: {
         deletedAt: new Date(),
         updatedByAdminId: adminId,
+        slug: episode ? `${episode.slug}__deleted_${Date.now()}` : undefined,
       },
     });
   }
@@ -826,13 +847,22 @@ export class CatalogRepository {
   async getTopTenSeries() {
     return this.prisma.topTenSeries.findMany({
       orderBy: { position: "asc" },
-      include: {
+      include: this.topTenSeriesInclude,
+    });
+  }
+
+  async getPublicTopTenSeries(now: Date = new Date()) {
+    return this.prisma.topTenSeries.findMany({
+      where: {
         series: {
-          include: {
-            category: true,
-          },
+          deletedAt: null,
+          status: PublicationStatus.PUBLISHED,
+          visibility: Visibility.PUBLIC,
+          OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
         },
       },
+      orderBy: { position: "asc" },
+      include: this.topTenSeriesInclude,
     });
   }
 
@@ -853,7 +883,47 @@ export class CatalogRepository {
 
       return tx.topTenSeries.findMany({
         orderBy: { position: "asc" },
-        include: { series: true }
+        include: this.topTenSeriesInclude,
+      });
+    });
+  }
+
+  async removeSeriesFromTopTen(seriesId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.topTenSeries.findUnique({
+        where: { seriesId },
+      });
+
+      if (!existing) {
+        return tx.topTenSeries.findMany({
+          orderBy: { position: "asc" },
+          include: this.topTenSeriesInclude,
+        });
+      }
+
+      await tx.topTenSeries.delete({
+        where: { seriesId },
+      });
+
+      const remaining = await tx.topTenSeries.findMany({
+        orderBy: { position: "asc" },
+      });
+
+      for (const [index, item] of remaining.entries()) {
+        const nextPosition = index + 1;
+        if (item.position === nextPosition) {
+          continue;
+        }
+
+        await tx.topTenSeries.update({
+          where: { id: item.id },
+          data: { position: nextPosition },
+        });
+      }
+
+      return tx.topTenSeries.findMany({
+        orderBy: { position: "asc" },
+        include: this.topTenSeriesInclude,
       });
     });
   }

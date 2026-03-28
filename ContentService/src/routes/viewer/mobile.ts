@@ -19,6 +19,7 @@ import {
   mobileReelsQuerySchema,
   mobileSeriesEnvelopeSchema,
   mobileSeriesParamsSchema,
+  mobileAudioSeriesEnvelopeSchema,
   mobileTagsEnvelopeSchema,
   mobileTagsQuerySchema,
 } from "../../schemas/mobile-app";
@@ -175,7 +176,7 @@ export default async function mobileAppRoutes(fastify: FastifyInstance) {
     schema: {
       querystring: mobileHomeQuerySchema,
       response: {
-        200: mobileHomeEnvelopeSchema,
+        200: mobileAudioSeriesEnvelopeSchema,
       },
     },
     handler: async (request, reply) => {

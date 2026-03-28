@@ -16,7 +16,7 @@ import {
   unlinkDevice,
   syncDeviceDeviceInfo,
 } from "../services/identity";
-import { getUserDetails } from "../services/user-management";
+
 import type {
   PermissionDTO,
   RoleAssignmentDTO,
@@ -609,27 +609,22 @@ export async function startGrpcServer(
     }
 
     try {
-      const results: Record<string, any> = {};
+      const profiles = await handlerContext.prisma.customerProfile.findMany({
+        where: { id: { in: customerIds } },
+        select: { id: true, name: true, email: true, phoneNumber: true, status: true },
+      });
 
-      await Promise.all(
-        customerIds.map(async (id) => {
-          try {
-            const user = await getUserDetails(handlerContext.prisma, id);
-            if (user) {
-              results[id] = {
-                customer_id: user.id,
-                name: user.name,
-                email: user.email || "",
-                phone_number: user.phone || "",
-                status: user.status,
-                avatar_url: user.avatar || "",
-              };
-            }
-          } catch (err) {
-            handlerContext.app.log.warn({ err, userId: id }, "Failed to fetch user details in batch gRPC");
-          }
-        })
-      );
+      const results: Record<string, any> = {};
+      for (const profile of profiles) {
+        results[profile.id] = {
+          customer_id: profile.id,
+          name: profile.name || "",
+          email: profile.email || "",
+          phone_number: profile.phoneNumber || "",
+          status: profile.status,
+          avatar_url: "",
+        };
+      }
 
       callback(null, { profiles: results });
     } catch (error) {

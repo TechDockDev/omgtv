@@ -29,6 +29,11 @@ enum MediaAssetStatus {
   FAILED
 }
 
+enum AdType {
+  UNITY_GOOGLE
+  CUSTOM
+}
+
 enum MediaAssetType {
   EPISODE
   REEL
@@ -60,6 +65,10 @@ model Series {
   bannerImageUrl   String?
   tags             String[]          @default([])
   isAudioSeries    Boolean           @default(false)
+  isFree           Boolean           @default(false)
+  adOnSeriesOpen   Boolean           @default(false)
+  adOnEpisodeSwipe Boolean           @default(false)
+  swipeAdFrequency Int               @default(3)
   status           PublicationStatus @default(DRAFT)
   visibility       Visibility        @default(PUBLIC)
   releaseDate      DateTime?
@@ -75,6 +84,7 @@ model Series {
   seasons  Season[]
   episodes Episode[]
   reels    Reel[]
+  ads      Ad[]
   carouselEntries CarouselEntry[]
   mediaAssets MediaAsset[]
   imageAssets ImageAsset[]
@@ -114,6 +124,7 @@ model Episode {
   synopsis           String?
   episodeNumber      Int?              // Order within Season (or Series if sorting standalone)
   durationSeconds    Int
+  isFree             Boolean           @default(false)
   status             PublicationStatus @default(DRAFT)
   visibility         Visibility        @default(PUBLIC)
   publishedAt        DateTime?
@@ -135,6 +146,7 @@ model Episode {
   mediaAsset MediaAsset?
   imageAssets ImageAsset[]
   reels      Reel[]
+  ads        Ad[]
   carouselEntries CarouselEntry[]
 
   @@index([seriesId, status])
@@ -294,4 +306,35 @@ model TopTenSeries {
 
   @@unique([seriesId])
   @@unique([position])
+}
+
+model Ad {
+  id               String   @id @default(uuid())
+  adType           AdType
+
+  // Which content this ad belongs to
+  episodeId        String?
+  seriesId         String?
+
+  // UNITY_GOOGLE fields
+  timestampSeconds Float?
+
+  // CUSTOM fields
+  adName           String?
+  adImageUrl       String?
+  adLink           String?
+  startSeconds     Float?
+  endSeconds       Float?
+
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  episode          Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  series           Series?  @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  @@index([episodeId])
+  @@index([seriesId])
 }

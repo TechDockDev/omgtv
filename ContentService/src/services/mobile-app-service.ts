@@ -1,5 +1,6 @@
 import { MediaAssetStatus } from "@prisma/client";
 import type { FastifyBaseLogger } from "fastify";
+import { getPrisma } from "../lib/prisma";
 import {
   CatalogRepository,
   type CarouselEntryWithContent,
@@ -29,6 +30,7 @@ import {
   mobileTagsQuerySchema,
   mobileTagsResponseSchema,
   streamingInfoSchema,
+  type MobileAudioSeriesData,
   type MobileHomeData,
   type MobileHomeQuery,
   type MobileReelsData,
@@ -37,6 +39,7 @@ import {
   type MobileSeriesParams,
   type MobileTagsQuery,
   type MobileTagsResponse,
+  mobileAudioSeriesDataSchema,
 } from "../schemas/mobile-app";
 
 type LoggerLike = Pick<FastifyBaseLogger, "error" | "warn">;
@@ -119,6 +122,30 @@ const DEFAULT_ENGAGEMENT = {
   reviewCount: 0,
 };
 
+type AdRow = {
+  id: string;
+  adType: "UNITY_GOOGLE" | "CUSTOM";
+  timestampSeconds: number | null;
+  adName: string | null;
+  adImageUrl: string | null;
+  adLink: string | null;
+  startSeconds: number | null;
+  endSeconds: number | null;
+};
+
+function formatAdForMobile(ad: AdRow) {
+  return {
+    id: ad.id,
+    ad_type: ad.adType as "UNITY_GOOGLE" | "CUSTOM",
+    timestamp_seconds: ad.timestampSeconds ?? null,
+    ad_name: ad.adName ?? null,
+    ad_image_url: ad.adImageUrl ?? null,
+    ad_link: ad.adLink ?? null,
+    start_seconds: ad.startSeconds ?? null,
+    end_seconds: ad.endSeconds ?? null,
+  };
+}
+
 export class MobileAppService {
   constructor(
     private readonly deps: {
@@ -170,7 +197,7 @@ export class MobileAppService {
 
     let topTen: any[] = [];
     if (!parsed.tag) {
-      topTen = await this.deps.repository.getTopTenSeries();
+      topTen = await this.deps.repository.getPublicTopTenSeries();
     }
 
     // Fetch Continue Watching (Recent Progress)
@@ -363,101 +390,48 @@ export class MobileAppService {
   async getAudioExperience(
     query: MobileHomeQuery,
     options?: MobileRequestOptions
-  ): Promise<{ data: MobileHomeData; fromCache: boolean }> {
+  ): Promise<{ data: MobileAudioSeriesData; fromCache: boolean }> {
     const parsed = mobileHomeQuerySchema.parse(query);
 
     // Fetch Audio Series
     const seriesFeed = await this.deps.viewerCatalog.getAudioSeries({
       limit: parsed.limit ?? this.deps.config.homeFeedLimit,
       cursor: parsed.cursor,
-      tag: parsed.tag, // Pass tag to catalog service
+      tag: parsed.tag,
     });
 
     const filteredItems = seriesFeed.items;
 
-    // Fetch Continue Watching for Audio
-    // For now, we reuse the same list but we might want to filter for Audio-only if possible?
-    // Since we can't easily distinguish 'Audio Series' on the Episode without extra properties,
-    // we will show the users progress regardless. 
-    // Ideally, we should check `episode.series` properties if we had `isAudioSeries` there.
-
-    let continueWatchEpisodes: ViewerFeedItem[] = [];
-    const progressMap = new Map<string, ContinueWatchEntry>();
-    const userId = options?.context?.userId;
-    const entitlements = await this.resolveEntitlements(options); // Need entitlements for streaming info
-
-    if (userId && this.deps.engagementClient) {
-      try {
-        const progressList = await this.deps.engagementClient.getUserProgressList({
-          userId,
-          limit: 10,
-        });
-
-        const episodeIds = progressList.map((p) => p.episode_id);
-        if (episodeIds.length > 0) {
-          // Optimization: If we could filter by category/type here it would be better.
-          continueWatchEpisodes = await this.deps.viewerCatalog.getEpisodesBatch(episodeIds);
-
-          // Populate progress map
-          const validIds = new Set(continueWatchEpisodes.map((e) => e.id));
-          progressList.forEach((p) => {
-            if (validIds.has(p.episode_id)) {
-              progressMap.set(p.episode_id, p);
-            }
-          });
-        }
-      } catch (err) {
-        options?.logger?.error({ err }, "Failed to load audio continue watching list");
-      }
-    }
-
-    // Load Engagement for Audio Continue Watch (Series Level)
-    const cwSeriesEngagementItems: Array<{ id: string; contentType: "series" }> = [];
-    continueWatchEpisodes.forEach(ep => {
-      if (ep.series?.id) {
-        cwSeriesEngagementItems.push({ id: ep.series.id, contentType: "series" });
-      }
-    });
-
-    const cwEngagementStates = await this.loadEngagementStates(cwSeriesEngagementItems, options);
-
-    const continueWatch = continueWatchEpisodes.map((item) => {
-      const seriesId = item.series?.id;
-      const engagement = seriesId ? cwEngagementStates.get(seriesId) : null;
-
-      return {
-        ...this.toContinueWatchItem(
-          item,
-          entitlements.episode,
-          progressMap.get(item.id)
-        ),
-        engagement: engagement ?? DEFAULT_ENGAGEMENT,
-      };
-    });
-
-    const engagementItems: Array<{ id: string; contentType: "reel" | "series" }> =
+    // Load Engagement for Audio Series
+    const engagementItems: Array<{ id: string; contentType: "series" }> =
       filteredItems.map((item) => ({ id: item.id, contentType: "series" as const }));
     const engagementStates = await this.loadEngagementStates(engagementItems, options);
 
-    const sections = this.buildSections(
-      filteredItems.map(item => {
-        const engagement = engagementStates.get(item.id);
-        return {
-          ...this.toSectionEntry(item, undefined, engagement?.averageRating),
-          engagement: engagement ?? DEFAULT_ENGAGEMENT
-        };
-      }),
-      continueWatch,
-      parsed.tag
-    );
+    // Flatten results into a list of series objects
+    const items = filteredItems.map(item => {
+      const engagement = engagementStates.get(item.id);
+      return {
+        id: item.id,
+        type: "series",
+        title: item.title,
+        subtitle: item.series.category?.name ?? null,
+        thumbnailUrl: item.heroImageUrl ?? item.series.heroImageUrl ?? null,
+        duration: null,
+        watchedDuration: null,
+        progress: null,
+        rating: engagement?.averageRating ?? item.ratings.average,
+        lastWatchedAt: null,
+        series_id: item.id,
+        engagement: engagement ?? DEFAULT_ENGAGEMENT,
+        is_audio_series: true
+      };
+    });
 
     const currentPage = parsed.page ?? 1;
     const hasNextPage = Boolean(seriesFeed.nextCursor);
 
-    const data: MobileHomeData = {
-      // carousel: undefined, // Removed for audio experience
-      "continue watch": continueWatch,
-      sections,
+    const data: MobileAudioSeriesData = {
+      items,
       pagination: {
         currentPage,
         totalPages: hasNextPage ? currentPage + 1 : currentPage,
@@ -467,7 +441,7 @@ export class MobileAppService {
     };
 
     return {
-      data: mobileHomeDataSchema.parse(data),
+      data: mobileAudioSeriesDataSchema.parse(data),
       fromCache: seriesFeed.fromCache,
     };
   }
@@ -519,7 +493,7 @@ export class MobileAppService {
       next_cursor: null
     };
 
-    const data = this.buildSeriesPayload(detail, {
+    const data = await this.buildSeriesPayload(detail, {
       entitlements,
       progressMap,
       engagementStates,
@@ -757,6 +731,7 @@ export class MobileAppService {
       series_id: item.series.id,
       // Internal fields for grouping
       _categoryName: item.series.category?.name ?? null,
+      _categoryDisplayOrder: item.series.category?.displayOrder ?? null,
       _seriesTitle: item.series.title,
       _seriesThumbnail: item.series.heroImageUrl ?? item.series.bannerImageUrl ?? item.heroImageUrl,
       is_audio_series: item.series.isAudioSeries,
@@ -816,6 +791,13 @@ export class MobileAppService {
     const keys = Array.from(categoryGroups.keys()).sort((a, b) => {
       if (a === FALLBACK_CATEGORY) return 1; // All Shows last
       if (b === FALLBACK_CATEGORY) return -1;
+
+      const orderA = categoryGroups.get(a)?.[0]?._categoryDisplayOrder ?? Number.MAX_SAFE_INTEGER;
+      const orderB = categoryGroups.get(b)?.[0]?._categoryDisplayOrder ?? Number.MAX_SAFE_INTEGER;
+
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
       return a.localeCompare(b);
     });
 
@@ -861,11 +843,11 @@ export class MobileAppService {
 
   private cleanSectionItem(item: ReturnType<MobileAppService["toSectionEntry"]>) {
     // Remove internal fields before returning to Zod
-    const { _categoryName, _seriesTitle, _seriesThumbnail, ...rest } = item;
+    const { _categoryName, _categoryDisplayOrder, _seriesTitle, _seriesThumbnail, ...rest } = item;
     return rest;
   }
 
-  private buildSeriesPayload(
+  private async buildSeriesPayload(
     detail: SeriesDetailResponse,
     options: {
       entitlements: EntitlementLookup;
@@ -877,8 +859,41 @@ export class MobileAppService {
       logger: LoggerLike | undefined;
       reviews: { summary: any; user_reviews: any[] } | null;
     }
-  ): MobileSeriesData {
-    const episodes = this.flattenEpisodes(detail, options);
+  ): Promise<MobileSeriesData> {
+    // Fetch all ads for this series and its episodes
+    const prisma = getPrisma();
+    const allEpisodeIds = [
+      ...detail.seasons.flatMap((s) => s.episodes.map((e) => e.id)),
+      ...detail.standaloneEpisodes.map((e) => e.id),
+    ];
+
+    const [seriesAds, episodeAds] = await Promise.all([
+      prisma.ad.findMany({
+        where: { seriesId: detail.series.id, deletedAt: null },
+        orderBy: { createdAt: "asc" },
+      }),
+      allEpisodeIds.length > 0
+        ? prisma.ad.findMany({
+            where: { episodeId: { in: allEpisodeIds }, deletedAt: null },
+            orderBy: { createdAt: "asc" },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const seriesAdsMobile = seriesAds.map(formatAdForMobile);
+    const episodeAdsMap = new Map<string, ReturnType<typeof formatAdForMobile>[]>();
+    for (const ad of episodeAds) {
+      if (!ad.episodeId) continue;
+      const list = episodeAdsMap.get(ad.episodeId) ?? [];
+      list.push(formatAdForMobile(ad));
+      episodeAdsMap.set(ad.episodeId, list);
+    }
+
+    const episodes = this.flattenEpisodes(detail, {
+      ...options,
+      seriesAdsMobile,
+      episodeAdsMap,
+    });
     const ratings = episodes
       .map((episode) => episode.rating ?? null)
       .filter((value): value is number => value !== null);
@@ -895,6 +910,8 @@ export class MobileAppService {
     const trailerSource = episodes[0];
     const seriesEngagement = options.engagementStates?.get(detail.series.id);
 
+    const isSubscribed = options.entitlements.episode.planPurchased;
+
     return {
       series_id: detail.series.id,
       series_title: detail.series.title,
@@ -903,6 +920,12 @@ export class MobileAppService {
       banner: detail.series.bannerImageUrl,
       tags: detail.series.tags,
       category: detail.series.category?.name ?? null,
+      is_subscribed: isSubscribed,
+      ads: !isSubscribed,
+      ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed,
+      ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
+      swipe_ad_frequency: detail.series.swipeAdFrequency ?? 3,
+      ads_list: seriesAdsMobile,
       trailer: trailerSource
         ? {
           thumbnail: trailerSource.thumbnail,
@@ -943,6 +966,8 @@ export class MobileAppService {
         string,
         { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
       >;
+      seriesAdsMobile: ReturnType<typeof formatAdForMobile>[];
+      episodeAdsMap: Map<string, ReturnType<typeof formatAdForMobile>[]>;
     }
   ): MobileSeriesData["episodes"] {
     const entries: MobileSeriesData["episodes"] = [];
@@ -950,6 +975,8 @@ export class MobileAppService {
     detail.seasons.forEach((season) => {
       season.episodes.forEach((episode, idx) => {
         const engagement = options.engagementStates?.get(episode.id);
+        const episodeAds = options.episodeAdsMap.get(episode.id) ?? [];
+        const mergedAds = [...episodeAds, ...options.seriesAdsMobile];
         entries.push({
           ...this.toSeriesEpisode(
             episode,
@@ -957,7 +984,8 @@ export class MobileAppService {
             idx + 1,
             options.entitlements.episode,
             options.progressMap.get(episode.id),
-            engagement?.averageRating
+            engagement?.averageRating,
+            mergedAds
           ),
           engagement: engagement ?? null,
         });
@@ -966,6 +994,8 @@ export class MobileAppService {
 
     detail.standaloneEpisodes.forEach((episode, idx) => {
       const engagement = options.engagementStates?.get(episode.id);
+      const episodeAds = options.episodeAdsMap.get(episode.id) ?? [];
+      const mergedAds = [...episodeAds, ...options.seriesAdsMobile];
       entries.push({
         ...this.toSeriesEpisode(
           episode,
@@ -973,7 +1003,8 @@ export class MobileAppService {
           idx + 1,
           options.entitlements.episode,
           options.progressMap.get(episode.id),
-          engagement?.averageRating
+          engagement?.averageRating,
+          mergedAds
         ),
         engagement: engagement ?? null,
       });
@@ -988,12 +1019,16 @@ export class MobileAppService {
     episodeIndex: number,
     entitlement: EntitlementSnapshot,
     progress?: ContinueWatchEntry,
-    engagementRating?: number | null
+    engagementRating?: number | null,
+    adsList?: ReturnType<typeof formatAdForMobile>[]
   ) {
+    const effectiveEntitlement: EntitlementSnapshot = episode.isFree
+      ? { canWatch: true, planPurchased: entitlement.planPurchased }
+      : entitlement;
     const streaming = this.buildStreamingInfo(
       episode.playback,
       episode.durationSeconds,
-      entitlement
+      effectiveEntitlement
     );
     const watchedDuration = progress
       ? Math.min(progress.watched_duration, episode.durationSeconds)
@@ -1016,6 +1051,9 @@ export class MobileAppService {
       duration_seconds: episode.durationSeconds,
       release_date: episode.publishedAt,
       is_download_allowed: episode.playback.status === MediaAssetStatus.READY,
+      is_locked: !episode.isFree && !entitlement.planPurchased,
+      ads: !entitlement.planPurchased,
+      ads_list: adsList ?? [],
       rating: engagementRating ?? episode.ratings.average,
       views: null,
       streaming,
