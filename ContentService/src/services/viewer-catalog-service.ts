@@ -78,6 +78,7 @@ export type ViewerFeedItem = {
   ratings: {
     average: number | null;
   };
+  isFree: boolean;
 };
 
 export type ViewerFeedResponse = {
@@ -95,6 +96,10 @@ export type SeriesDetailResponse = {
     bannerImageUrl: string | null;
     tags: string[];
     releaseDate: string | null;
+    isFree: boolean;
+    adOnSeriesOpen: boolean;
+    adOnEpisodeSwipe: boolean;
+    swipeAdFrequency: number;
     category: {
       id: string;
       slug: string;
@@ -258,6 +263,7 @@ export function buildFeedItem(
       isAudioSeries: episode.series.isAudioSeries,
       tags: episode.series.tags,
     },
+    isFree: episode.isFree || episode.series.isFree,
     playback: {
       status: asset?.status ?? MediaAssetStatus.PENDING,
       manifestUrl: asset?.manifestUrl ?? null,
@@ -491,6 +497,10 @@ export class ViewerCatalogService {
             bannerImageUrl: series.bannerImageUrl ?? null,
             tags: series.tags,
             releaseDate: series.releaseDate?.toISOString() ?? null,
+            isFree: series.isFree,
+            adOnSeriesOpen: series.adOnSeriesOpen ?? false,
+            adOnEpisodeSwipe: series.adOnEpisodeSwipe ?? false,
+            swipeAdFrequency: series.swipeAdFrequency ?? 3,
             category: series.category
               ? {
                 id: series.category.id,
@@ -892,6 +902,7 @@ export class ViewerCatalogService {
             ratings: {
               average: null,
             },
+            isFree: series.isFree,
           } satisfies ViewerFeedItem;
         });
 
@@ -996,6 +1007,7 @@ export class ViewerCatalogService {
             ratings: {
               average: null,
             },
+            isFree: series.isFree,
           } satisfies ViewerFeedItem;
         });
 

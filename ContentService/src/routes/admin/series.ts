@@ -21,6 +21,10 @@ const createSeriesSchema = z.object({
   ownerId: z.string().uuid().optional(),
   categoryId: z.string().uuid().optional(),
   isAudioSeries: z.boolean().optional(),
+  isFree: z.boolean().optional(),
+  adOnSeriesOpen: z.boolean().optional(),
+  adOnEpisodeSwipe: z.boolean().optional(),
+  swipeAdFrequency: z.number().int().min(1).optional(),
   displayOrder: z.number().int().optional(),
   isCarousel: z.boolean().optional(),
 });

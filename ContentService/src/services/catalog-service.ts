@@ -563,6 +563,9 @@ export class CatalogService {
       categoryId?: string | null;
       isAudioSeries?: boolean;
       displayOrder?: number | null;
+      adOnSeriesOpen?: boolean;
+      adOnEpisodeSwipe?: boolean;
+      swipeAdFrequency?: number;
       isCarousel?: boolean;
     }
   ): Promise<Series> {
@@ -629,6 +632,9 @@ export class CatalogService {
         categoryId: input.categoryId ?? null,
         isAudioSeries: input.isAudioSeries,
         displayOrder: input.displayOrder ?? null,
+        adOnSeriesOpen: input.adOnSeriesOpen ?? false,
+        adOnEpisodeSwipe: input.adOnEpisodeSwipe ?? false,
+        swipeAdFrequency: input.swipeAdFrequency ?? 3,
         adminId,
       });
 
@@ -718,6 +724,9 @@ export class CatalogService {
       ownerId?: string;
       isAudioSeries?: boolean;
       displayOrder?: number | null;
+      adOnSeriesOpen?: boolean;
+      adOnEpisodeSwipe?: boolean;
+      swipeAdFrequency?: number;
       isCarousel?: boolean;
     }
   ): Promise<Series> {
@@ -773,6 +782,9 @@ export class CatalogService {
         ownerId: input.ownerId,
         isAudioSeries: input.isAudioSeries,
         displayOrder: input.displayOrder,
+        adOnSeriesOpen: input.adOnSeriesOpen,
+        adOnEpisodeSwipe: input.adOnEpisodeSwipe,
+        swipeAdFrequency: input.swipeAdFrequency,
         adminId,
       });
 
