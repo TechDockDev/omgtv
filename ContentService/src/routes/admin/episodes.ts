@@ -30,6 +30,7 @@ const createEpisodeSchema = z.object({
   tags: z.array(z.string()).optional(),
   uploadId: z.string().optional(),
   mediaAssetId: z.string().uuid().optional(), // Added support for Media Asset ID
+  isFree: z.boolean().optional(),
   displayOrder: z.number().int().optional(),
   episodeNumber: z.number().int().optional(),
 });

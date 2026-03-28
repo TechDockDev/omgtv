@@ -137,6 +137,17 @@ const trailerSchema = z
   })
   .nullable();
 
+const adItemSchema = z.object({
+  id: z.string(),
+  ad_type: z.enum(["UNITY_GOOGLE", "CUSTOM"]),
+  timestamp_seconds: z.number().nullable(),
+  ad_name: z.string().nullable(),
+  ad_image_url: z.string().nullable(),
+  ad_link: z.string().nullable(),
+  start_seconds: z.number().nullable(),
+  end_seconds: z.number().nullable(),
+});
+
 const seriesEpisodeSchema = z.object({
   series_id: z.string(),
   episode_id: z.string(),
@@ -148,6 +159,9 @@ const seriesEpisodeSchema = z.object({
   duration_seconds: z.number().int().positive(),
   release_date: z.string().datetime().nullable(),
   is_download_allowed: z.boolean(),
+  is_locked: z.boolean(),
+  ads: z.boolean(),
+  ads_list: z.array(adItemSchema),
   rating: z.number().nullable(),
   views: z.number().nullable(),
   streaming: streamingInfoSchema,
@@ -163,6 +177,12 @@ export const mobileSeriesDataSchema = z.object({
   banner: z.string().nullable(),
   tags: z.array(z.string()),
   category: z.string().nullable(),
+  is_subscribed: z.boolean(),
+  ads: z.boolean(),
+  ad_on_series_open: z.boolean(),
+  ad_on_episode_swipe: z.boolean(),
+  swipe_ad_frequency: z.number(),
+  ads_list: z.array(adItemSchema),
   trailer: trailerSchema,
   episodes: z.array(seriesEpisodeSchema),
   rating: z.number().nullable().optional(),

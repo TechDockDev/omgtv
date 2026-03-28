@@ -305,6 +305,9 @@ export class CatalogRepository {
     categoryId?: string | null;
     isAudioSeries?: boolean;
     displayOrder?: number | null; // Added
+    adOnSeriesOpen?: boolean; // Added
+    adOnEpisodeSwipe?: boolean;
+    swipeAdFrequency?: number;
     adminId?: string;
   }) {
     return this.prisma.series.create({
@@ -322,6 +325,9 @@ export class CatalogRepository {
         categoryId: data.categoryId ?? null,
         isAudioSeries: data.isAudioSeries ?? false,
         displayOrder: data.displayOrder ?? null, // Added
+        adOnSeriesOpen: data.adOnSeriesOpen ?? false, // Added
+        adOnEpisodeSwipe: data.adOnEpisodeSwipe ?? false,
+        swipeAdFrequency: data.swipeAdFrequency ?? 3,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       },
@@ -344,6 +350,9 @@ export class CatalogRepository {
       ownerId?: string;
       isAudioSeries?: boolean;
       displayOrder?: number | null; // Added
+      adOnSeriesOpen?: boolean; // Added
+      adOnEpisodeSwipe?: boolean;
+      swipeAdFrequency?: number;
       adminId?: string;
     }
   ) {
@@ -363,6 +372,9 @@ export class CatalogRepository {
         ownerId: data.ownerId,
         isAudioSeries: data.isAudioSeries,
         displayOrder: data.displayOrder, // Added
+        adOnSeriesOpen: data.adOnSeriesOpen, // Added
+        adOnEpisodeSwipe: data.adOnEpisodeSwipe,
+        swipeAdFrequency: data.swipeAdFrequency,
         updatedByAdminId: data.adminId,
       },
     });

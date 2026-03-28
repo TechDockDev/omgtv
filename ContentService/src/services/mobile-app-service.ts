@@ -1,5 +1,6 @@
 import { MediaAssetStatus } from "@prisma/client";
 import type { FastifyBaseLogger } from "fastify";
+import { getPrisma } from "../lib/prisma";
 import {
   CatalogRepository,
   type CarouselEntryWithContent,
@@ -120,6 +121,30 @@ const DEFAULT_ENGAGEMENT = {
   averageRating: 0,
   reviewCount: 0,
 };
+
+type AdRow = {
+  id: string;
+  adType: "UNITY_GOOGLE" | "CUSTOM";
+  timestampSeconds: number | null;
+  adName: string | null;
+  adImageUrl: string | null;
+  adLink: string | null;
+  startSeconds: number | null;
+  endSeconds: number | null;
+};
+
+function formatAdForMobile(ad: AdRow) {
+  return {
+    id: ad.id,
+    ad_type: ad.adType as "UNITY_GOOGLE" | "CUSTOM",
+    timestamp_seconds: ad.timestampSeconds ?? null,
+    ad_name: ad.adName ?? null,
+    ad_image_url: ad.adImageUrl ?? null,
+    ad_link: ad.adLink ?? null,
+    start_seconds: ad.startSeconds ?? null,
+    end_seconds: ad.endSeconds ?? null,
+  };
+}
 
 export class MobileAppService {
   constructor(
@@ -468,7 +493,7 @@ export class MobileAppService {
       next_cursor: null
     };
 
-    const data = this.buildSeriesPayload(detail, {
+    const data = await this.buildSeriesPayload(detail, {
       entitlements,
       progressMap,
       engagementStates,
@@ -822,7 +847,7 @@ export class MobileAppService {
     return rest;
   }
 
-  private buildSeriesPayload(
+  private async buildSeriesPayload(
     detail: SeriesDetailResponse,
     options: {
       entitlements: EntitlementLookup;
@@ -834,8 +859,41 @@ export class MobileAppService {
       logger: LoggerLike | undefined;
       reviews: { summary: any; user_reviews: any[] } | null;
     }
-  ): MobileSeriesData {
-    const episodes = this.flattenEpisodes(detail, options);
+  ): Promise<MobileSeriesData> {
+    // Fetch all ads for this series and its episodes
+    const prisma = getPrisma();
+    const allEpisodeIds = [
+      ...detail.seasons.flatMap((s) => s.episodes.map((e) => e.id)),
+      ...detail.standaloneEpisodes.map((e) => e.id),
+    ];
+
+    const [seriesAds, episodeAds] = await Promise.all([
+      prisma.ad.findMany({
+        where: { seriesId: detail.series.id, deletedAt: null },
+        orderBy: { createdAt: "asc" },
+      }),
+      allEpisodeIds.length > 0
+        ? prisma.ad.findMany({
+            where: { episodeId: { in: allEpisodeIds }, deletedAt: null },
+            orderBy: { createdAt: "asc" },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const seriesAdsMobile = seriesAds.map(formatAdForMobile);
+    const episodeAdsMap = new Map<string, ReturnType<typeof formatAdForMobile>[]>();
+    for (const ad of episodeAds) {
+      if (!ad.episodeId) continue;
+      const list = episodeAdsMap.get(ad.episodeId) ?? [];
+      list.push(formatAdForMobile(ad));
+      episodeAdsMap.set(ad.episodeId, list);
+    }
+
+    const episodes = this.flattenEpisodes(detail, {
+      ...options,
+      seriesAdsMobile,
+      episodeAdsMap,
+    });
     const ratings = episodes
       .map((episode) => episode.rating ?? null)
       .filter((value): value is number => value !== null);
@@ -852,6 +910,8 @@ export class MobileAppService {
     const trailerSource = episodes[0];
     const seriesEngagement = options.engagementStates?.get(detail.series.id);
 
+    const isSubscribed = options.entitlements.episode.planPurchased;
+
     return {
       series_id: detail.series.id,
       series_title: detail.series.title,
@@ -860,6 +920,12 @@ export class MobileAppService {
       banner: detail.series.bannerImageUrl,
       tags: detail.series.tags,
       category: detail.series.category?.name ?? null,
+      is_subscribed: isSubscribed,
+      ads: !isSubscribed,
+      ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed,
+      ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
+      swipe_ad_frequency: detail.series.swipeAdFrequency ?? 3,
+      ads_list: seriesAdsMobile,
       trailer: trailerSource
         ? {
           thumbnail: trailerSource.thumbnail,
@@ -900,6 +966,8 @@ export class MobileAppService {
         string,
         { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
       >;
+      seriesAdsMobile: ReturnType<typeof formatAdForMobile>[];
+      episodeAdsMap: Map<string, ReturnType<typeof formatAdForMobile>[]>;
     }
   ): MobileSeriesData["episodes"] {
     const entries: MobileSeriesData["episodes"] = [];
@@ -907,6 +975,8 @@ export class MobileAppService {
     detail.seasons.forEach((season) => {
       season.episodes.forEach((episode, idx) => {
         const engagement = options.engagementStates?.get(episode.id);
+        const episodeAds = options.episodeAdsMap.get(episode.id) ?? [];
+        const mergedAds = [...episodeAds, ...options.seriesAdsMobile];
         entries.push({
           ...this.toSeriesEpisode(
             episode,
@@ -914,7 +984,8 @@ export class MobileAppService {
             idx + 1,
             options.entitlements.episode,
             options.progressMap.get(episode.id),
-            engagement?.averageRating
+            engagement?.averageRating,
+            mergedAds
           ),
           engagement: engagement ?? null,
         });
@@ -923,6 +994,8 @@ export class MobileAppService {
 
     detail.standaloneEpisodes.forEach((episode, idx) => {
       const engagement = options.engagementStates?.get(episode.id);
+      const episodeAds = options.episodeAdsMap.get(episode.id) ?? [];
+      const mergedAds = [...episodeAds, ...options.seriesAdsMobile];
       entries.push({
         ...this.toSeriesEpisode(
           episode,
@@ -930,7 +1003,8 @@ export class MobileAppService {
           idx + 1,
           options.entitlements.episode,
           options.progressMap.get(episode.id),
-          engagement?.averageRating
+          engagement?.averageRating,
+          mergedAds
         ),
         engagement: engagement ?? null,
       });
@@ -945,12 +1019,16 @@ export class MobileAppService {
     episodeIndex: number,
     entitlement: EntitlementSnapshot,
     progress?: ContinueWatchEntry,
-    engagementRating?: number | null
+    engagementRating?: number | null,
+    adsList?: ReturnType<typeof formatAdForMobile>[]
   ) {
+    const effectiveEntitlement: EntitlementSnapshot = episode.isFree
+      ? { canWatch: true, planPurchased: entitlement.planPurchased }
+      : entitlement;
     const streaming = this.buildStreamingInfo(
       episode.playback,
       episode.durationSeconds,
-      entitlement
+      effectiveEntitlement
     );
     const watchedDuration = progress
       ? Math.min(progress.watched_duration, episode.durationSeconds)
@@ -973,6 +1051,9 @@ export class MobileAppService {
       duration_seconds: episode.durationSeconds,
       release_date: episode.publishedAt,
       is_download_allowed: episode.playback.status === MediaAssetStatus.READY,
+      is_locked: !episode.isFree && !entitlement.planPurchased,
+      ads: !entitlement.planPurchased,
+      ads_list: adsList ?? [],
       rating: engagementRating ?? episode.ratings.average,
       views: null,
       streaming,
