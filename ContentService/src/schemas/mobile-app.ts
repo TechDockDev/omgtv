@@ -146,6 +146,8 @@ const adItemSchema = z.object({
   ad_link: z.string().nullable(),
   start_seconds: z.number().nullable(),
   end_seconds: z.number().nullable(),
+  episode_id: z.string().nullable().optional(),
+  series_id: z.string().nullable().optional(),
 });
 
 const seriesEpisodeSchema = z.object({

@@ -24,7 +24,7 @@ const configSchema = z.object({
     SERVICE_AUTH_TOKEN: z.string().optional(),
 
     // CDN Base URL
-    CDN_BASE_URL: z.string().url().default("https://storage.googleapis.com/videos-bucket-pocketlol"),
+    CDN_BASE_URL: z.string().url().default("https://media.omgtv.in"),
 
     // Logging
     LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),

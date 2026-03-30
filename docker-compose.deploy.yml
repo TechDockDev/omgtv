@@ -36,7 +36,7 @@ services:
     image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/apigw:latest
     restart: always
     ports:
-      - "127.0.0.1:3000:3000" # Expose on localhost:3000 only (for Nginx proxy)
+      - "0.0.0.0:3000:3000" # Expose on all interfaces (for dev access)
     environment:
       - NODE_ENV=production
       - SERVER_PORT=3000
@@ -141,7 +141,7 @@ services:
     environment:
       - NODE_ENV=production
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
-      - CDN_BASE_URL=https://storage.googleapis.com/videos-bucket-pocketlol-dev
+      - CDN_BASE_URL=https://media.omgtv.in
       - SIGNED_URL_TTL_SECONDS=300
 
   upload-service:
@@ -188,7 +188,7 @@ services:
       - MEDIA_PROCESSED_TOPIC=media.processed-dev
       - PUBSUB_SUBSCRIPTION=projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-dev
       - PUBSUB_READY_TOPIC=streaming-audit-dev
-      - CDN_BASE_URL=https://storage.googleapis.com/videos-bucket-pocketlol-dev
+      - CDN_BASE_URL=https://media.omgtv.in
       # Worker needs direct DB access to Content DB
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_content?schema=public
     depends_on:

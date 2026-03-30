@@ -48,7 +48,7 @@ services:
       TRENDING_SORTED_SET_KEY: ${CONTENT_SERVICE_TRENDING_SET_KEY:-catalog:trending}
       RATINGS_HASH_KEY: ${CONTENT_SERVICE_RATINGS_HASH_KEY:-catalog:ratings}
       SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?SERVICE_AUTH_TOKEN is required}
-      CDN_BASE_URL: ${CONTENT_SERVICE_CDN_BASE_URL:-https://storage.googleapis.com/videos-bucket-pocketlol}
+      CDN_BASE_URL: ${CONTENT_SERVICE_CDN_BASE_URL:-https://media.omgtv.in}
       DEFAULT_OWNER_ID: ${CONTENT_SERVICE_DEFAULT_OWNER_ID:-00000000-0000-0000-0000-000000000001}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${CONTENT_SERVICE_DB:-pocketlol_content}?schema=public
       ENGAGEMENT_SERVICE_URL: http://engagement-service:${ENGAGEMENT_SERVICE_HTTP_PORT:-4700}
@@ -210,7 +210,7 @@ services:
       GCS_STREAMING_BUCKET: ${GCS_STREAMING_BUCKET:-videos-bucket-pocketlol}
       PUBSUB_SUBSCRIPTION: ${PUBSUB_TRANSCODING_SUBSCRIPTION:-transcoding-requests-sub}
       PUBSUB_READY_TOPIC: ${PUBSUB_READY_TOPIC:-streaming-audit}
-      CDN_BASE_URL: ${STREAMING_SERVICE_CDN_BASE_URL:-https://storage.googleapis.com/${GCS_STREAMING_BUCKET:-videos-bucket-pocketlol}}
+      CDN_BASE_URL: ${STREAMING_SERVICE_CDN_BASE_URL:-https://media.omgtv.in}
       TRANSCODE_TEMP_DIR: /tmp/transcode
       HLS_SEGMENT_DURATION: 4
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-service-account.json

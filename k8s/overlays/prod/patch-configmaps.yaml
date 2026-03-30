@@ -20,7 +20,7 @@ kind: ConfigMap
 metadata:
   name: content-service-config
 data:
-  CDN_BASE_URL: "https://storage.googleapis.com/videos-bucket-pocketlol-prod"
+  CDN_BASE_URL: "https://media.omgtv.in"
   REDIS_URL: "redis://10.244.194.227:6379"
   UPLOAD_BUCKET: "videos-bucket-pocketlol-prod" # Unified bucket (hls, videos, images, thumbnails)
   TRANSCODING_REQUESTS_TOPIC: "transcoding-requests-prod"
