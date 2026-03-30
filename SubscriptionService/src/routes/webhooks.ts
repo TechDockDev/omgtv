@@ -4,7 +4,8 @@ import crypto from "crypto";
 import { loadConfig } from "../config";
 import { getPrisma } from "../lib/prisma";
 import { getRazorpay } from "../lib/razorpay";
-import { Transaction, UserSubscription, SubscriptionStatus } from "@prisma/client";
+import { SubscriptionStatus } from "@prisma/client";
+import { invalidateEntitlementCache } from "../lib/redis";
 
 const webhookRoutes: FastifyPluginAsync = async (app) => {
     const config = loadConfig();
@@ -91,6 +92,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     });
 
                     request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
+                    await invalidateEntitlementCache(transaction.userId);
                 } else {
                     // 2. Might be a renewal or trial transition
                     request.log.info({ msg: "Subscription charged for renewal or trial transition", subscriptionId });
@@ -139,6 +141,8 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }
                         });
 
+                        await invalidateEntitlementCache(existingSub.userId);
+
                         if (wasTrialSub) {
                             request.log.info({
                                 msg: "TRIAL-TO-PAID TRANSITION: Trial ended, subscription now on paid plan",
@@ -176,6 +180,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         }
                     });
 
+                    await invalidateEntitlementCache(existingSub.userId);
                     if (wasTrialSub) {
                         request.log.info({
                             msg: "TRIAL-TO-PAID TRANSITION via subscription.activated",
@@ -201,6 +206,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 endsAt: new Date(subscriptionEntity.current_end * 1000)
                             }
                         });
+                        await invalidateEntitlementCache(tx.userId);
                         if (tx.status === "PENDING") {
                            await prisma.transaction.update({
                                where: { id: tx.id },
@@ -228,6 +234,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         where: { id: existingSub.id },
                         data: { status }
                     });
+                    await invalidateEntitlementCache(existingSub.userId);
                     request.log.info({ msg: `Subscription ${event}`, subscriptionId, status });
                 }
             } else if (event === "payment.failed") {
