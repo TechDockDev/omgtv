@@ -243,7 +243,8 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
     captions: z.record(z.string(), z.unknown()).optional(),
     seasonId: z.string().uuid().optional(),
     uploadId: z.union([z.string(), z.null()]).optional(),
-    mediaAssetId: z.union([z.string().uuid(), z.null()]).optional(), // Added support for Media Asset ID
+    mediaAssetId: z.union([z.string().uuid(), z.null()]).optional(),
+    isFree: z.boolean().optional(),
     displayOrder: z.number().int().optional(),
     episodeNumber: z.number().int().optional(),
   });

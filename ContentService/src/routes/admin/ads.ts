@@ -58,8 +58,23 @@ export default async function adminAdRoutes(fastify: FastifyInstance) {
         .parse(request.params);
       try {
         requireAdminId(request, reply);
+        const episode = await fastify.prisma.episode.findUnique({
+          where: { id: episodeId },
+          select: { seriesId: true }
+        });
+
+        if (!episode) {
+          return reply.status(404).send({ message: "Episode not found" });
+        }
+
         const ads = await fastify.prisma.ad.findMany({
-          where: { episodeId, deletedAt: null },
+          where: { 
+            OR: [
+              { episodeId },
+              { seriesId: episode.seriesId, episodeId: null }
+            ],
+            deletedAt: null 
+          },
           orderBy: { createdAt: "asc" },
         });
         return reply.send({ items: ads });
@@ -82,7 +97,13 @@ export default async function adminAdRoutes(fastify: FastifyInstance) {
       try {
         requireAdminId(request, reply);
         const ads = await fastify.prisma.ad.findMany({
-          where: { seriesId, deletedAt: null },
+          where: {
+            OR: [
+              { seriesId },
+              { episode: { seriesId } }
+            ],
+            deletedAt: null
+          },
           orderBy: { createdAt: "asc" },
         });
         return reply.send({ items: ads });

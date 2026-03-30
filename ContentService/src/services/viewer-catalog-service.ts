@@ -78,6 +78,7 @@ export type ViewerFeedItem = {
   ratings: {
     average: number | null;
   };
+  ads: any[];
   isFree: boolean;
 };
 
@@ -100,6 +101,7 @@ export type SeriesDetailResponse = {
     adOnSeriesOpen: boolean;
     adOnEpisodeSwipe: boolean;
     swipeAdFrequency: number;
+    ads: any[]; // Or import Ad from @prisma/client
     category: {
       id: string;
       slug: string;
@@ -286,6 +288,16 @@ export function buildFeedItem(
     ratings: {
       average: rating,
     },
+    ads: (episode as any).ads?.map((ad: any) => ({
+      id: ad.id,
+      ad_type: ad.adType,
+      timestamp_seconds: ad.timestampSeconds,
+      ad_name: ad.adName,
+      ad_image_url: ad.adImageUrl,
+      ad_link: ad.adLink,
+      start_seconds: ad.startSeconds,
+      end_seconds: ad.endSeconds,
+    })) ?? [],
   };
 }
 
@@ -498,9 +510,19 @@ export class ViewerCatalogService {
             tags: series.tags,
             releaseDate: series.releaseDate?.toISOString() ?? null,
             isFree: series.isFree,
-            adOnSeriesOpen: series.adOnSeriesOpen ?? false,
-            adOnEpisodeSwipe: series.adOnEpisodeSwipe ?? false,
-            swipeAdFrequency: series.swipeAdFrequency ?? 3,
+            adOnSeriesOpen: (series as any).adOnSeriesOpen ?? false,
+            adOnEpisodeSwipe: (series as any).adOnEpisodeSwipe ?? false,
+            swipeAdFrequency: (series as any).swipeAdFrequency ?? 3,
+            ads: series.ads?.map(ad => ({
+              id: ad.id,
+              ad_type: ad.adType,
+              timestamp_seconds: ad.timestampSeconds,
+              ad_name: ad.adName,
+              ad_image_url: ad.adImageUrl,
+              ad_link: ad.adLink,
+              start_seconds: ad.startSeconds,
+              end_seconds: ad.endSeconds
+            })) ?? [],
             category: series.category
               ? {
                 id: series.category.id,
@@ -652,6 +674,19 @@ export class ViewerCatalogService {
             banner: series.bannerImageUrl ?? "",
             tags: series.tags,
             category: series.category?.name ?? "Uncategorized",
+            ad_on_series_open: (series as any).adOnSeriesOpen ?? false,
+            ad_on_episode_swipe: (series as any).adOnEpisodeSwipe ?? false,
+            swipe_ad_frequency: (series as any).swipeAdFrequency ?? 3,
+            ads: series.ads?.map(ad => ({
+              id: ad.id,
+              ad_type: ad.adType,
+              timestamp_seconds: ad.timestampSeconds,
+              ad_name: ad.adName,
+              ad_image_url: ad.adImageUrl,
+              ad_link: ad.adLink,
+              start_seconds: ad.startSeconds,
+              end_seconds: ad.endSeconds
+            })) ?? [],
             trailer: {
               thumbnail: series.heroImageUrl ?? "",
               duration_seconds: 0,
@@ -695,7 +730,8 @@ export class ViewerCatalogService {
                 percentage: 0,
                 last_watched_at: new Date().toISOString(),
                 is_completed: false
-              }
+              },
+              ads: ep.ads ?? []
             })),
             reviews: reviews
           }
@@ -748,6 +784,7 @@ export class ViewerCatalogService {
             name: series.category.name,
           }
           : null,
+        ads: [] as any[],
       }));
     });
   }
@@ -784,6 +821,7 @@ export class ViewerCatalogService {
             name: reel.category.name,
           }
           : null,
+        ads: [] as any[],
       }));
     });
   }
@@ -903,6 +941,7 @@ export class ViewerCatalogService {
               average: null,
             },
             isFree: series.isFree,
+            ads: [],
           } satisfies ViewerFeedItem;
         });
 
@@ -1008,6 +1047,7 @@ export class ViewerCatalogService {
               average: null,
             },
             isFree: series.isFree,
+            ads: [],
           } satisfies ViewerFeedItem;
         });
 
