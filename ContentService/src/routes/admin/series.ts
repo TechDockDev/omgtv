@@ -82,6 +82,7 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
 
         const itemsWithStats = result.items.map((item) => ({
           ...item,
+          is_locked: !item.isFree,
           stats: statsMap[item.id] ?? { likes: 0, views: 0, saves: 0 },
         }));
 
@@ -91,6 +92,7 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
         request.log.warn({ err }, "Failed to fetch engagement stats for series list");
         const itemsWithStats = result.items.map((item) => ({
           ...item,
+          is_locked: !item.isFree,
           stats: { likes: 0, views: 0, saves: 0 },
         }));
         return reply.send({ ...result, items: itemsWithStats });
@@ -120,10 +122,10 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
             limit: 50 // reasonable limit for admin view
           });
 
-          return reply.send({ ...result, reviews });
+          return reply.send({ ...result, is_locked: !result.isFree, reviews });
         } catch (err) {
           request.log.warn({ err, seriesId: params.id }, "Failed to fetch reviews for admin series detail");
-          return reply.send({ ...result, reviews: null });
+          return reply.send({ ...result, is_locked: !result.isFree, reviews: null });
         }
       } catch (error) {
         if (error instanceof CatalogServiceError && error.code === "NOT_FOUND") {

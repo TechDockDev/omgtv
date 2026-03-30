@@ -48,14 +48,15 @@ const envSchema = z.object({
     .max(30)
     .default(12),
   MOBILE_REELS_PAGE_SIZE: z.coerce.number().int().min(5).max(50).default(20),
+  ENTITLEMENT_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(300),
   MOBILE_STREAMING_TYPE: z.string().default("HLS"),
   MOBILE_DEFAULT_PLAN_PURCHASED: z
     .enum(["true", "false"])
-    .default("true")
+    .default("false")
     .transform((value) => value === "true"),
   MOBILE_DEFAULT_CAN_GUEST_WATCH: z
     .enum(["true", "false"])
-    .default("true")
+    .default("false")
     .transform((value) => value === "true"),
   CATALOG_EVENT_STREAM_KEY: z.string().default("catalog:events"),
   TRENDING_SORTED_SET_KEY: z.string().default("catalog:trending"),

@@ -2,6 +2,7 @@ import { buildApp } from "./app";
 import { loadConfig } from "./config";
 import { disconnectPrisma } from "./lib/prisma";
 import { shutdownObservability, startObservability } from "./observability";
+import { shutdownRedis } from "./lib/redis";
 import packageJson from "../package.json";
 
 async function main() {
@@ -29,6 +30,7 @@ async function main() {
     app.log.info({ signal }, "Shutting down SubscriptionService");
     try {
       await disconnectPrisma();
+      await shutdownRedis();
       await shutdownObservability();
       await app.close();
       process.exit(0);

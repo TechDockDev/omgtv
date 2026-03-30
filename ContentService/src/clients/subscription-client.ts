@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Redis } from "ioredis";
 import { performServiceRequest } from "../utils/service-request";
 
 const entitlementRequestSchema = z.object({
@@ -22,13 +23,32 @@ export type ContentEntitlement = {
 
 export class SubscriptionClient {
   constructor(
-    private readonly options: { baseUrl: string; timeoutMs?: number }
+    private readonly options: {
+      baseUrl: string;
+      timeoutMs?: number;
+      redis?: Redis;
+      cacheTtlSeconds?: number;
+    }
   ) {}
 
   async checkEntitlement(
     payload: EntitlementRequest
   ): Promise<ContentEntitlement> {
     const body = entitlementRequestSchema.parse(payload);
+    const cacheKey = `entitlement:${body.userId}:${body.contentType}`;
+    const { redis, cacheTtlSeconds = 300 } = this.options;
+
+    if (redis) {
+      const cached = await redis.get(cacheKey).catch(() => null);
+      if (cached) {
+        try {
+          return JSON.parse(cached) as ContentEntitlement;
+        } catch {
+          await redis.del(cacheKey).catch(() => {});
+        }
+      }
+    }
+
     const response = await performServiceRequest<unknown>({
       serviceName: "subscription",
       baseUrl: this.options.baseUrl,
@@ -48,9 +68,17 @@ export class SubscriptionClient {
       parsed.data.status.trim().toUpperCase() !== "FREE" &&
       parsed.data.planId.trim().toLowerCase() !== "free";
 
-    return {
+    const result: ContentEntitlement = {
       canWatch: parsed.data.allowed,
       planPurchased,
-    } satisfies ContentEntitlement;
+    };
+
+    if (redis) {
+      await redis
+        .set(cacheKey, JSON.stringify(result), "EX", cacheTtlSeconds)
+        .catch(() => {});
+    }
+
+    return result;
   }
 }

@@ -180,6 +180,7 @@ export const mobileSeriesDataSchema = z.object({
   tags: z.array(z.string()),
   category: z.string().nullable(),
   is_subscribed: z.boolean(),
+  is_locked: z.boolean(),
   ads: z.boolean(),
   ad_on_series_open: z.boolean(),
   ad_on_episode_swipe: z.boolean(),

@@ -81,6 +81,8 @@ export default async function mobileAppRoutes(fastify: FastifyInstance) {
   const subscriptionClient = new SubscriptionClient({
     baseUrl: config.SUBSCRIPTION_SERVICE_URL,
     timeoutMs: config.SERVICE_REQUEST_TIMEOUT_MS,
+    redis,
+    cacheTtlSeconds: config.ENTITLEMENT_CACHE_TTL_SECONDS,
   });
   const mobileApp = new MobileAppService({
     viewerCatalog,
