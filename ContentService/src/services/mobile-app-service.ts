@@ -137,6 +137,7 @@ type AdRow = {
 
 function ensureCdnUrl(url?: string | null): string | null {
   if (!url) return null;
+  if (process.env.NODE_ENV !== "production") return url;
   return url.replace(
     /https:\/\/storage\.googleapis\.com\/videos-bucket-pocketlol(-prod|-dev)?/g,
     "https://media.omgtv.in"

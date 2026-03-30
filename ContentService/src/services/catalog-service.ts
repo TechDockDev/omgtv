@@ -562,6 +562,7 @@ export class CatalogService {
       ownerId?: string;
       categoryId?: string | null;
       isAudioSeries?: boolean;
+      isFree?: boolean;
       displayOrder?: number | null;
       adOnSeriesOpen?: boolean;
       adOnEpisodeSwipe?: boolean;
@@ -631,6 +632,7 @@ export class CatalogService {
         ownerId: input.ownerId ?? adminId ?? this.defaultOwnerId,
         categoryId: input.categoryId ?? null,
         isAudioSeries: input.isAudioSeries,
+        isFree: input.isFree ?? false,
         displayOrder: input.displayOrder ?? null,
         adOnSeriesOpen: input.adOnSeriesOpen ?? false,
         adOnEpisodeSwipe: input.adOnEpisodeSwipe ?? false,
@@ -723,6 +725,7 @@ export class CatalogService {
       slug?: string;
       ownerId?: string;
       isAudioSeries?: boolean;
+      isFree?: boolean;
       displayOrder?: number | null;
       adOnSeriesOpen?: boolean;
       adOnEpisodeSwipe?: boolean;
@@ -781,6 +784,7 @@ export class CatalogService {
         slug: input.slug,
         ownerId: input.ownerId,
         isAudioSeries: input.isAudioSeries,
+        isFree: input.isFree,
         displayOrder: input.displayOrder,
         adOnSeriesOpen: input.adOnSeriesOpen,
         adOnEpisodeSwipe: input.adOnEpisodeSwipe,
@@ -912,7 +916,8 @@ export class CatalogService {
       defaultThumbnailUrl?: string | null;
       captions?: unknown;
       tags?: string[];
-      mediaAssetId?: string; // Support direct linking by ID
+      isFree?: boolean;
+      mediaAssetId?: string;
       uploadId?: string;
     }
   ): Promise<Episode> {
@@ -1005,6 +1010,7 @@ export class CatalogService {
         defaultThumbnailUrl: resolvedThumbnailUrl,
         captions: input.captions as Prisma.JsonValue | null,
         tags,
+        isFree: input.isFree ?? false,
         adminId,
       });
 
@@ -1130,12 +1136,13 @@ export class CatalogService {
       seriesId?: string;
       durationSeconds?: number;
       heroImageUrl?: string | null;
-      defaultThumbnailUrl?: string | null; // Allow null to clear
+      defaultThumbnailUrl?: string | null;
       availabilityStart?: Date;
       availabilityEnd?: Date;
       mediaAssetId?: string | null;
-      uploadId?: string | null; // For replacing video
+      uploadId?: string | null;
       episodeNumber?: number | null;
+      isFree?: boolean;
     }
   ) {
     const existing = await this.repo.findEpisodeById(episodeId, true); // Include relations to get current media asset

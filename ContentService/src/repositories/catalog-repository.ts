@@ -307,8 +307,9 @@ export class CatalogRepository {
     ownerId: string;
     categoryId?: string | null;
     isAudioSeries?: boolean;
-    displayOrder?: number | null; // Added
-    adOnSeriesOpen?: boolean; // Added
+    isFree?: boolean;
+    displayOrder?: number | null;
+    adOnSeriesOpen?: boolean;
     adOnEpisodeSwipe?: boolean;
     swipeAdFrequency?: number;
     adminId?: string;
@@ -327,8 +328,9 @@ export class CatalogRepository {
         ownerId: data.ownerId,
         categoryId: data.categoryId ?? null,
         isAudioSeries: data.isAudioSeries ?? false,
-        displayOrder: data.displayOrder ?? null, // Added
-        adOnSeriesOpen: data.adOnSeriesOpen ?? false, // Added
+        isFree: data.isFree ?? false,
+        displayOrder: data.displayOrder ?? null,
+        adOnSeriesOpen: data.adOnSeriesOpen ?? false,
         adOnEpisodeSwipe: data.adOnEpisodeSwipe ?? false,
         swipeAdFrequency: data.swipeAdFrequency ?? 3,
         createdByAdminId: data.adminId,
@@ -352,8 +354,9 @@ export class CatalogRepository {
       slug?: string;
       ownerId?: string;
       isAudioSeries?: boolean;
-      displayOrder?: number | null; // Added
-      adOnSeriesOpen?: boolean; // Added
+      isFree?: boolean;
+      displayOrder?: number | null;
+      adOnSeriesOpen?: boolean;
       adOnEpisodeSwipe?: boolean;
       swipeAdFrequency?: number;
       adminId?: string;
@@ -374,8 +377,9 @@ export class CatalogRepository {
         slug: data.slug,
         ownerId: data.ownerId,
         isAudioSeries: data.isAudioSeries,
-        displayOrder: data.displayOrder, // Added
-        adOnSeriesOpen: data.adOnSeriesOpen, // Added
+        isFree: data.isFree,
+        displayOrder: data.displayOrder,
+        adOnSeriesOpen: data.adOnSeriesOpen,
         adOnEpisodeSwipe: data.adOnEpisodeSwipe,
         swipeAdFrequency: data.swipeAdFrequency,
         updatedByAdminId: data.adminId,
@@ -535,7 +539,8 @@ export class CatalogRepository {
     defaultThumbnailUrl?: string | null;
     captions?: Prisma.InputJsonValue | null;
     tags?: string[];
-    episodeNumber?: number | null; // Added
+    episodeNumber?: number | null;
+    isFree?: boolean;
     adminId?: string;
   }) {
     return this.prisma.episode.create({
@@ -558,7 +563,8 @@ export class CatalogRepository {
             ? undefined
             : (data.captions ?? Prisma.JsonNull),
         tags: data.tags ?? [],
-        episodeNumber: data.episodeNumber ?? null, // Added
+        episodeNumber: data.episodeNumber ?? null,
+        isFree: data.isFree ?? false,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       },
@@ -582,7 +588,8 @@ export class CatalogRepository {
       seasonId?: string | null;
       slug?: string;
       tags?: string[];
-      episodeNumber?: number | null; // Added
+      episodeNumber?: number | null;
+      isFree?: boolean;
       adminId?: string;
     }
   ) {
@@ -606,7 +613,8 @@ export class CatalogRepository {
         seasonId: data.seasonId,
         slug: data.slug,
         tags: data.tags,
-        episodeNumber: data.episodeNumber, // Added
+        episodeNumber: data.episodeNumber,
+        isFree: data.isFree,
         updatedByAdminId: data.adminId,
       },
     });
