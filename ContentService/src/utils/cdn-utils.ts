@@ -17,7 +17,7 @@ export function ensureCdnUrl(url?: string | null): string | null {
   // Replace GCS storage domain with our production CDN domain
   // Supports both production and development bucket variants
   return url.replace(
-    /https:\/\/storage\.googleapis\.com\/videos-bucket-pocketlol(-prod|-dev)?/g,
+    /https:\/\/storage\.googleapis\.com\/videos-bucket-pocketlol-prod/g,
     "https://media.omgtv.in"
   );
 }
