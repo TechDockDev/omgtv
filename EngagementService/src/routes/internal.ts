@@ -205,7 +205,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
           const actualUserId = isGuest ? null : userId;
           const guestId = isGuest ? userId.replace("guest:", "") : null;
 
-          await prisma.appEvent.createMany({
+          await (prisma as any).appEvent.createMany({
             data: body.events.map((e) => ({
               userId: actualUserId,
               guestId: e.guestId || guestId,

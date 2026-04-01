@@ -98,7 +98,7 @@ export async function processBatchInteractions(
     // Process App Events
     if (events.length > 0 && prisma) {
         try {
-            await prisma.appEvent.createMany({
+            await (prisma as any).appEvent.createMany({
                 data: events.map(e => ({
                     userId: userId.startsWith("guest:") ? null : userId,
                     guestId: e.guestId || (userId.startsWith("guest:") ? userId.replace("guest:", "") : null),

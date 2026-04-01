@@ -14,7 +14,16 @@ const logger = pino({ level: config.LOG_LEVEL });
 
 const storage = new StorageClient(config, logger);
 const ffmpeg = new FFmpegService(config, logger);
-const pubsub = new PubSub({ projectId: config.GCP_PROJECT_ID });
+const options: any = { projectId: config.GCP_PROJECT_ID };
+if (config.FIREBASE_CREDENTIALS_B64) {
+    try {
+        const buffer = Buffer.from(config.FIREBASE_CREDENTIALS_B64, 'base64');
+        options.credentials = JSON.parse(buffer.toString('utf8'));
+    } catch (e) {
+        logger.error({ error: e }, "Failed to parse FIREBASE_CREDENTIALS_B64 for PubSub");
+    }
+}
+const pubsub = new PubSub(options);
 const prisma = new PrismaClient(); // [NEW] Init Prisma
 
 /**

@@ -15,7 +15,16 @@ export class StorageClient {
     private readonly config: Config;
 
     constructor(config: Config, logger: pino.Logger) {
-        this.storage = new Storage({ projectId: config.GCP_PROJECT_ID });
+        const options: any = { projectId: config.GCP_PROJECT_ID };
+        if (config.FIREBASE_CREDENTIALS_B64) {
+            try {
+                const buffer = Buffer.from(config.FIREBASE_CREDENTIALS_B64, 'base64');
+                options.credentials = JSON.parse(buffer.toString('utf8'));
+            } catch (e) {
+                logger.error({ error: e }, "Failed to parse FIREBASE_CREDENTIALS_B64 for Storage");
+            }
+        }
+        this.storage = new Storage(options);
         this.config = config;
         this.logger = logger.child({ component: "storage" });
     }

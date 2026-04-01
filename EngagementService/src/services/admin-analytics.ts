@@ -411,3 +411,74 @@ export async function getGeneralDashboardStats(params: {
         userGrowthTrend: currentStats.userGrowthTrend,
     };
 }
+
+export interface CustomAdMetric {
+    adId: string;
+    adName: string;
+    impressions: number;
+    clicks: number;
+    ctr: number;
+}
+
+export async function getCustomAdAnalytics(params: {
+    prisma: PrismaClient;
+    startDate?: string;
+    endDate?: string;
+}): Promise<{ summary: { totalImpressions: number, totalClicks: number, avgCtr: number }, ads: CustomAdMetric[] }> {
+    const { prisma, startDate, endDate } = params;
+    const start = startDate ? new Date(startDate) : new Date(0);
+    const end = endDate ? new Date(endDate) : new Date();
+
+    const events = await (prisma as any).appEvent.findMany({
+        where: {
+            eventType: { in: ["custom_ad_impression", "custom_ad_click"] },
+            createdAt: { gte: start, lte: end }
+        }
+    });
+
+    const adMap = new Map<string, { name: string, impressions: number, clicks: number }>();
+
+    let totalImpressions = 0;
+    let totalClicks = 0;
+
+    events.forEach((event: any) => {
+        const data = (event.eventData as any) || {};
+        const adId = data.adId || "unknown";
+        const adName = data.adName || "Unnamed Ad";
+
+        if (!adMap.has(adId)) {
+            adMap.set(adId, { name: adName, impressions: 0, clicks: 0 });
+        }
+
+        const stats = adMap.get(adId)!;
+        if (event.eventType === "custom_ad_impression") {
+            stats.impressions++;
+            totalImpressions++;
+        } else {
+            stats.clicks++;
+            totalClicks++;
+        }
+    });
+
+    const ads: CustomAdMetric[] = Array.from(adMap.entries()).map(([adId, stats]) => {
+        const ctr = stats.impressions > 0 ? (stats.clicks / stats.impressions) * 100 : 0;
+        return {
+            adId,
+            adName: stats.name,
+            impressions: stats.impressions,
+            clicks: stats.clicks,
+            ctr: parseFloat(ctr.toFixed(2))
+        };
+    });
+
+    const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+
+    return {
+        summary: {
+            totalImpressions,
+            totalClicks,
+            avgCtr: parseFloat(avgCtr.toFixed(2))
+        },
+        ads: ads.sort((a, b) => b.impressions - a.impressions)
+    };
+}

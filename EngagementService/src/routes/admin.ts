@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
     getUserContentStats,
     getGeneralDashboardStats,
+    getCustomAdAnalytics,
 } from "../services/admin-analytics";
 import { getPrismaOptional } from "../lib/prisma";
 import { userContentStatsResponseSchema } from "../schemas/admin-analytics";
@@ -66,6 +67,22 @@ export default async function adminRoutes(fastify: FastifyInstance) {
             }
             const { startDate, endDate, granularity } = request.query as z.infer<typeof dashboardQuerySchema>;
             return await getGeneralDashboardStats({ prisma, startDate, endDate, granularity });
+        },
+    });
+
+    fastify.get("/analytics/ads/custom", {
+        schema: {
+            querystring: z.object({
+                startDate: z.string().optional(),
+                endDate: z.string().optional(),
+            }),
+        },
+        handler: async (request) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+            const { startDate, endDate } = request.query as any;
+            return await getCustomAdAnalytics({ prisma, startDate, endDate });
         },
     });
 
