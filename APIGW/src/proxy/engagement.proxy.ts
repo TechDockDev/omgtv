@@ -1000,3 +1000,49 @@ export async function getGeneralDashboardStatsProxy(
 
   return (payload as any)?.data ?? payload;
 }
+
+// Admin: Custom Ad Analytics
+export async function getCustomAdAnalyticsProxy(
+  params: { startDate?: string; endDate?: string },
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<unknown> {
+  const baseUrl = resolveServiceUrl("engagement");
+
+  let path = "/internal/analytics/ads/custom";
+  const query = new URLSearchParams();
+  if (params.startDate) query.append("startDate", params.startDate);
+  if (params.endDate) query.append("endDate", params.endDate);
+
+  const queryString = query.toString();
+  if (queryString) {
+    path += `?${queryString}`;
+  }
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<unknown>({
+      serviceName: "engagement",
+      baseUrl,
+      path,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:getCustomAdAnalytics",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to fetch custom ad analytics",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return (payload as any)?.data ?? payload;
+}

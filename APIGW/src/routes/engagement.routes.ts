@@ -61,6 +61,7 @@ import {
   addReviewProxy,
   getUserContentStatsProxy,
   getGeneralDashboardStatsProxy,
+  getCustomAdAnalyticsProxy,
 } from "../proxy/engagement.proxy";
 import { getBatchContent } from "../proxy/content.proxy";
 import {
@@ -105,6 +106,39 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     async handler(request) {
       const query = request.query as { startDate?: string; endDate?: string; granularity?: string };
       return getGeneralDashboardStatsProxy(
+        query,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // Admin: Custom Ad Analytics
+  fastify.route<{
+    Querystring: { startDate?: string; endDate?: string };
+  }>({
+    method: "GET",
+    url: "/analytics/ads/custom",
+    schema: {
+      querystring: z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }),
+      response: {
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "authenticated" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request) {
+      const query = request.query as { startDate?: string; endDate?: string };
+      return getCustomAdAnalyticsProxy(
         query,
         request.correlationId,
         request.user!,
