@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
+import { invalidateEntitlementCache } from "../../lib/redis";
 
 const purchaseIntentSchema = z.object({
   planId: z.string().uuid(),
@@ -511,6 +512,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
     });
 
+    await invalidateEntitlementCache(transaction.userId);
 
     return reply.send({
       success: true,

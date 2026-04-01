@@ -1,4 +1,5 @@
 import {
+  Ad,
   CarouselEntry,
   Category,
   Episode,
@@ -32,6 +33,7 @@ export type EpisodeWithRelations = Episode & {
   };
   season: Season | null;
   mediaAsset: (MediaAsset & { variants: MediaAssetVariant[] }) | null;
+  ads: Ad[];
 };
 
 export type SeriesWithRelations = Series & {
@@ -42,6 +44,7 @@ export type SeriesWithRelations = Series & {
     }
   >;
   standaloneEpisodes: EpisodeWithRelations[];
+  ads: Ad[];
 };
 
 export type ReelWithRelations = Reel & {
@@ -304,8 +307,9 @@ export class CatalogRepository {
     ownerId: string;
     categoryId?: string | null;
     isAudioSeries?: boolean;
-    displayOrder?: number | null; // Added
-    adOnSeriesOpen?: boolean; // Added
+    isFree?: boolean;
+    displayOrder?: number | null;
+    adOnSeriesOpen?: boolean;
     adOnEpisodeSwipe?: boolean;
     swipeAdFrequency?: number;
     adminId?: string;
@@ -324,8 +328,9 @@ export class CatalogRepository {
         ownerId: data.ownerId,
         categoryId: data.categoryId ?? null,
         isAudioSeries: data.isAudioSeries ?? false,
-        displayOrder: data.displayOrder ?? null, // Added
-        adOnSeriesOpen: data.adOnSeriesOpen ?? false, // Added
+        isFree: data.isFree ?? false,
+        displayOrder: data.displayOrder ?? null,
+        adOnSeriesOpen: data.adOnSeriesOpen ?? false,
         adOnEpisodeSwipe: data.adOnEpisodeSwipe ?? false,
         swipeAdFrequency: data.swipeAdFrequency ?? 3,
         createdByAdminId: data.adminId,
@@ -349,8 +354,9 @@ export class CatalogRepository {
       slug?: string;
       ownerId?: string;
       isAudioSeries?: boolean;
-      displayOrder?: number | null; // Added
-      adOnSeriesOpen?: boolean; // Added
+      isFree?: boolean;
+      displayOrder?: number | null;
+      adOnSeriesOpen?: boolean;
       adOnEpisodeSwipe?: boolean;
       swipeAdFrequency?: number;
       adminId?: string;
@@ -371,8 +377,9 @@ export class CatalogRepository {
         slug: data.slug,
         ownerId: data.ownerId,
         isAudioSeries: data.isAudioSeries,
-        displayOrder: data.displayOrder, // Added
-        adOnSeriesOpen: data.adOnSeriesOpen, // Added
+        isFree: data.isFree,
+        displayOrder: data.displayOrder,
+        adOnSeriesOpen: data.adOnSeriesOpen,
         adOnEpisodeSwipe: data.adOnEpisodeSwipe,
         swipeAdFrequency: data.swipeAdFrequency,
         updatedByAdminId: data.adminId,
@@ -532,7 +539,8 @@ export class CatalogRepository {
     defaultThumbnailUrl?: string | null;
     captions?: Prisma.InputJsonValue | null;
     tags?: string[];
-    episodeNumber?: number | null; // Added
+    episodeNumber?: number | null;
+    isFree?: boolean;
     adminId?: string;
   }) {
     return this.prisma.episode.create({
@@ -555,7 +563,8 @@ export class CatalogRepository {
             ? undefined
             : (data.captions ?? Prisma.JsonNull),
         tags: data.tags ?? [],
-        episodeNumber: data.episodeNumber ?? null, // Added
+        episodeNumber: data.episodeNumber ?? null,
+        isFree: data.isFree ?? false,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       },
@@ -579,7 +588,8 @@ export class CatalogRepository {
       seasonId?: string | null;
       slug?: string;
       tags?: string[];
-      episodeNumber?: number | null; // Added
+      episodeNumber?: number | null;
+      isFree?: boolean;
       adminId?: string;
     }
   ) {
@@ -603,7 +613,8 @@ export class CatalogRepository {
         seasonId: data.seasonId,
         slug: data.slug,
         tags: data.tags,
-        episodeNumber: data.episodeNumber, // Added
+        episodeNumber: data.episodeNumber,
+        isFree: data.isFree,
         updatedByAdminId: data.adminId,
       },
     });
@@ -623,8 +634,9 @@ export class CatalogRepository {
         where: { id, deletedAt: null },
         include: {
           series: { select: { slug: true } },
-          mediaAsset: { include: { variants: true } }
-        }
+          mediaAsset: { include: { variants: true } },
+          ads: { where: { deletedAt: null } },
+        },
       });
     }
     return this.prisma.episode.findFirst({
@@ -633,6 +645,7 @@ export class CatalogRepository {
         mediaAsset: {
           include: { variants: true },
         },
+        ads: { where: { deletedAt: null } },
       },
     });
   }
@@ -684,6 +697,7 @@ export class CatalogRepository {
           },
         },
         season: true,
+        ads: { where: { deletedAt: null } },
       },
     });
     return rows as EpisodeWithRelations[];
@@ -1179,6 +1193,7 @@ export class CatalogRepository {
           },
         },
         season: true,
+        ads: { where: { deletedAt: null } },
       },
       orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
       take: limit + 1,
@@ -1277,6 +1292,7 @@ export class CatalogRepository {
               },
             },
             season: true,
+            ads: { where: { deletedAt: null } },
           },
         },
       },
@@ -1382,7 +1398,6 @@ export class CatalogRepository {
                 visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
                 OR: [{ publishedAt: null }, { publishedAt: { lte: now } }],
                 ...availabilityFilter,
-
               },
               include: {
                 mediaAsset: {
@@ -1396,6 +1411,7 @@ export class CatalogRepository {
                   },
                 },
                 season: true,
+                ads: { where: { deletedAt: null } },
               },
               orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
             },
@@ -1409,7 +1425,6 @@ export class CatalogRepository {
             visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
             OR: [{ publishedAt: null }, { publishedAt: { lte: now } }],
             ...availabilityFilter,
-
           },
           include: {
             mediaAsset: {
@@ -1423,9 +1438,11 @@ export class CatalogRepository {
               },
             },
             season: true,
+            ads: { where: { deletedAt: null } },
           },
           orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
         },
+        ads: { where: { deletedAt: null } },
       },
     });
 
@@ -1433,7 +1450,7 @@ export class CatalogRepository {
       return null;
     }
 
-    const { episodes = [], seasons, ...rest } = series;
+    const { episodes = [], seasons, ads = [], ...rest } = series;
     const standaloneEpisodes = episodes as EpisodeWithRelations[];
     const normalizedSeasons = seasons.map((season) => ({
       ...season,
@@ -1444,6 +1461,7 @@ export class CatalogRepository {
       ...(rest as Series & { category: Category | null }),
       seasons: normalizedSeasons,
       standaloneEpisodes,
+      ads,
     };
   }
 
@@ -1480,7 +1498,6 @@ export class CatalogRepository {
                 visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
                 OR: [{ publishedAt: null }, { publishedAt: { lte: now } }],
                 ...availabilityFilter,
-
               },
               include: {
                 mediaAsset: {
@@ -1494,6 +1511,7 @@ export class CatalogRepository {
                   },
                 },
                 season: true,
+                ads: { where: { deletedAt: null } },
               },
               orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
             },
@@ -1507,7 +1525,6 @@ export class CatalogRepository {
             visibility: { in: [Visibility.PUBLIC, Visibility.UNLISTED] },
             OR: [{ publishedAt: null }, { publishedAt: { lte: now } }],
             ...availabilityFilter,
-
           },
           include: {
             mediaAsset: {
@@ -1521,9 +1538,11 @@ export class CatalogRepository {
               },
             },
             season: true,
+            ads: { where: { deletedAt: null } },
           },
           orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
         },
+        ads: { where: { deletedAt: null } },
       },
     });
 
@@ -1531,7 +1550,7 @@ export class CatalogRepository {
       return null;
     }
 
-    const { episodes = [], seasons, ...rest } = series;
+    const { episodes = [], seasons, ads = [], ...rest } = series;
     const standaloneEpisodes = episodes as EpisodeWithRelations[];
     const normalizedSeasons = seasons.map((season) => ({
       ...season,
@@ -1542,6 +1561,7 @@ export class CatalogRepository {
       ...(rest as Series & { category: Category | null }),
       seasons: normalizedSeasons,
       standaloneEpisodes,
+      ads,
     };
   }
 
@@ -1625,6 +1645,7 @@ export class CatalogRepository {
           },
         },
         season: true,
+        ads: { where: { deletedAt: null } },
       },
     }) as Promise<EpisodeWithRelations | null>;
   }

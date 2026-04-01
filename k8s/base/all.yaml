@@ -987,7 +987,7 @@ spec:
             - name: PUBSUB_READY_TOPIC
               value: "streaming-audit-prod"
             - name: CDN_BASE_URL
-              value: "https://storage.googleapis.com/videos-bucket-pocketlol-prod"
+              value: "https://media.omgtv.in"
           envFrom:
             - secretRef:
                 name: shared-secrets

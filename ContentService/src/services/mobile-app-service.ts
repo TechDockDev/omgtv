@@ -131,7 +131,18 @@ type AdRow = {
   adLink: string | null;
   startSeconds: number | null;
   endSeconds: number | null;
+  episodeId?: string | null;
+  seriesId?: string | null;
 };
+
+function ensureCdnUrl(url?: string | null): string | null {
+  if (!url) return null;
+  if (process.env.NODE_ENV !== "production") return url;
+  return url.replace(
+    /https:\/\/storage\.googleapis\.com\/videos-bucket-pocketlol(-prod|-dev)?/g,
+    "https://media.omgtv.in"
+  );
+}
 
 function formatAdForMobile(ad: AdRow) {
   return {
@@ -139,10 +150,12 @@ function formatAdForMobile(ad: AdRow) {
     ad_type: ad.adType as "UNITY_GOOGLE" | "CUSTOM",
     timestamp_seconds: ad.timestampSeconds ?? null,
     ad_name: ad.adName ?? null,
-    ad_image_url: ad.adImageUrl ?? null,
+    ad_image_url: ensureCdnUrl(ad.adImageUrl),
     ad_link: ad.adLink ?? null,
     start_seconds: ad.startSeconds ?? null,
     end_seconds: ad.endSeconds ?? null,
+    episode_id: ad.episodeId ?? null,
+    series_id: ad.seriesId ?? null,
   };
 }
 
@@ -882,10 +895,13 @@ export class MobileAppService {
 
     const seriesAdsMobile = seriesAds.map(formatAdForMobile);
     const episodeAdsMap = new Map<string, ReturnType<typeof formatAdForMobile>[]>();
+    const allEpisodeAdsMobile: ReturnType<typeof formatAdForMobile>[] = [];
     for (const ad of episodeAds) {
       if (!ad.episodeId) continue;
+      const formattedAd = formatAdForMobile(ad);
+      allEpisodeAdsMobile.push(formattedAd);
       const list = episodeAdsMap.get(ad.episodeId) ?? [];
-      list.push(formatAdForMobile(ad));
+      list.push(formattedAd);
       episodeAdsMap.set(ad.episodeId, list);
     }
 
@@ -921,6 +937,7 @@ export class MobileAppService {
       tags: detail.series.tags,
       category: detail.series.category?.name ?? null,
       is_subscribed: isSubscribed,
+      is_locked: !detail.series.isFree && !isSubscribed,
       ads: !isSubscribed,
       ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed,
       ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
@@ -1051,7 +1068,7 @@ export class MobileAppService {
       duration_seconds: episode.durationSeconds,
       release_date: episode.publishedAt,
       is_download_allowed: episode.playback.status === MediaAssetStatus.READY,
-      is_locked: !episode.isFree && !entitlement.planPurchased,
+      is_locked: episodeIndex !== 1 && !episode.isFree && !entitlement.planPurchased,
       ads: !entitlement.planPurchased,
       ads_list: adsList ?? [],
       rating: engagementRating ?? episode.ratings.average,
@@ -1096,14 +1113,14 @@ export class MobileAppService {
       description: reel.description ?? null,
       duration_seconds: reel.durationSeconds,
       rating: engagementRating ?? null,
-      thumbnail: reel.mediaAsset?.defaultThumbnailUrl ?? null,
+      thumbnail: this.ensureCdnUrl(reel.mediaAsset?.defaultThumbnailUrl),
       streaming,
       series: reel.series
         ? {
           id: reel.series.id,
           title: reel.series.title,
           is_audio_series: reel.series.isAudioSeries,
-          thumbnail: reel.series.heroImageUrl ?? reel.series.bannerImageUrl ?? null,
+          thumbnail: this.ensureCdnUrl(reel.series.heroImageUrl ?? reel.series.bannerImageUrl),
         }
         : null,
       episode: reel.episode
@@ -1132,6 +1149,10 @@ export class MobileAppService {
       .toString()
       .padStart(2, "0");
     return `${minutes}:${seconds}`;
+  }
+
+  private ensureCdnUrl(url?: string | null): string | null {
+    return ensureCdnUrl(url);
   }
 
   private buildStreamingInfo(
@@ -1166,7 +1187,7 @@ export class MobileAppService {
           ? `${variant.width}x${variant.height}`
           : null,
       size_mb: this.estimateSizeMb(variant.bitrateKbps, durationSeconds),
-      url: playback.manifestUrl,
+      url: this.ensureCdnUrl(playback.manifestUrl),
     }));
 
     return streamingInfoSchema.parse({
@@ -1174,7 +1195,7 @@ export class MobileAppService {
       plan_purchased:
         entitlement?.planPurchased ?? this.deps.config.defaultPlanPurchased,
       type: this.deps.config.streamingType,
-      master_playlist: playback.manifestUrl,
+      master_playlist: this.ensureCdnUrl(playback.manifestUrl),
       qualities,
     });
   }

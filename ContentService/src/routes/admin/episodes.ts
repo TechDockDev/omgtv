@@ -91,6 +91,7 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
 
           const itemsWithStats = result.items.map((item) => ({
             ...item,
+            is_locked: !item.isFree,
             stats: statsMap[item.id] ?? { likes: 0, views: 0, saves: 0 },
           }));
 
@@ -98,8 +99,8 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
           const totalCounts = result.totalCounts || 0;
           const totalPages = Math.ceil(totalCounts / query.limit) || 1;
 
-          return reply.send({ 
-            ...result, 
+          return reply.send({
+            ...result,
             items: itemsWithStats,
             page: query.page,
             limit: query.limit,
@@ -110,6 +111,7 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
           request.log.warn({ err }, "Failed to fetch engagement stats for episodes list");
           const itemsWithStats = result.items.map((item) => ({
             ...item,
+            is_locked: !item.isFree,
             stats: { likes: 0, views: 0, saves: 0 },
           }));
 
@@ -141,7 +143,7 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
       try {
         requireAdminId(request, reply);
         const result = await catalog.getEpisode(params.id);
-        return reply.send(result);
+        return reply.send({ ...result, is_locked: !result.isFree });
       } catch (error) {
         if (error instanceof CatalogServiceError && error.code === "NOT_FOUND") {
           return reply.status(404).send({ message: error.message });
@@ -243,7 +245,8 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
     captions: z.record(z.string(), z.unknown()).optional(),
     seasonId: z.string().uuid().optional(),
     uploadId: z.union([z.string(), z.null()]).optional(),
-    mediaAssetId: z.union([z.string().uuid(), z.null()]).optional(), // Added support for Media Asset ID
+    mediaAssetId: z.union([z.string().uuid(), z.null()]).optional(),
+    isFree: z.boolean().optional(),
     displayOrder: z.number().int().optional(),
     episodeNumber: z.number().int().optional(),
   });
