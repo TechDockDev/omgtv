@@ -14,6 +14,7 @@ import {
   type DataQualityContext,
 } from "./data-quality-monitor";
 import type { EngagementClient } from "../clients/engagement-client";
+import { ensureCdnUrl } from "../utils/cdn-utils";
 
 export type ViewerFeedItem = {
   id: string;
@@ -211,7 +212,7 @@ function extractCaptions(
         entry.label = payload.label;
       }
       if (typeof payload.url === "string") {
-        entry.url = payload.url;
+        entry.url = ensureCdnUrl(payload.url) ?? undefined;
       }
       return entry;
     })
@@ -231,9 +232,9 @@ export function buildFeedItem(
     title: episode.title,
     tags: episode.tags,
     synopsis: episode.synopsis ?? null,
-    heroImageUrl: episode.heroImageUrl ?? episode.series.heroImageUrl ?? null,
+    heroImageUrl: ensureCdnUrl(episode.heroImageUrl ?? episode.series.heroImageUrl ?? null),
     defaultThumbnailUrl:
-      episode.defaultThumbnailUrl ?? asset?.defaultThumbnailUrl ?? null,
+      ensureCdnUrl(episode.defaultThumbnailUrl ?? asset?.defaultThumbnailUrl ?? null),
     durationSeconds: episode.durationSeconds,
     publishedAt: episode.publishedAt?.toISOString() ?? new Date().toISOString(),
     availability: {
@@ -252,8 +253,8 @@ export function buildFeedItem(
       slug: episode.series.slug,
       title: episode.series.title,
       synopsis: episode.series.synopsis ?? null,
-      heroImageUrl: episode.series.heroImageUrl ?? null,
-      bannerImageUrl: episode.series.bannerImageUrl ?? null,
+      heroImageUrl: ensureCdnUrl(episode.series.heroImageUrl ?? null),
+      bannerImageUrl: ensureCdnUrl(episode.series.bannerImageUrl ?? null),
       category: episode.series.category
         ? {
           id: episode.series.category.id,
@@ -268,8 +269,8 @@ export function buildFeedItem(
     isFree: episode.isFree || episode.series.isFree,
     playback: {
       status: asset?.status ?? MediaAssetStatus.PENDING,
-      manifestUrl: asset?.manifestUrl ?? null,
-      defaultThumbnailUrl: asset?.defaultThumbnailUrl ?? null,
+      manifestUrl: ensureCdnUrl(asset?.manifestUrl ?? null),
+      defaultThumbnailUrl: ensureCdnUrl(asset?.defaultThumbnailUrl ?? null),
       variants:
         asset?.variants.map((variant) => ({
           label: variant.label,
@@ -293,7 +294,7 @@ export function buildFeedItem(
       ad_type: ad.adType,
       timestamp_seconds: ad.timestampSeconds,
       ad_name: ad.adName,
-      ad_image_url: ad.adImageUrl,
+      ad_image_url: ensureCdnUrl(ad.adImageUrl),
       ad_link: ad.adLink,
       start_seconds: ad.startSeconds,
       end_seconds: ad.endSeconds,
@@ -505,14 +506,14 @@ export class ViewerCatalogService {
             slug: series.slug,
             title: series.title,
             synopsis: series.synopsis ?? null,
-            heroImageUrl: series.heroImageUrl ?? null,
-            bannerImageUrl: series.bannerImageUrl ?? null,
+            heroImageUrl: ensureCdnUrl(series.heroImageUrl ?? null),
+            bannerImageUrl: ensureCdnUrl(series.bannerImageUrl ?? null),
             tags: series.tags,
             releaseDate: series.releaseDate?.toISOString() ?? null,
             isFree: series.isFree,
             adOnSeriesOpen: (series as any).adOnSeriesOpen ?? false,
             adOnEpisodeSwipe: (series as any).adOnEpisodeSwipe ?? false,
-            swipeAdFrequency: (series as any).swipeAdFrequency ?? 3,
+            swipeAdFrequency: (series as any).swipeAdFrequency ?? 0,
             ads: series.ads?.map(ad => ({
               id: ad.id,
               ad_type: ad.adType,
@@ -592,8 +593,8 @@ export class ViewerCatalogService {
             slug: entry.slug,
             title: entry.title,
             synopsis: entry.synopsis ?? null,
-            heroImageUrl: entry.heroImageUrl ?? null,
-            bannerImageUrl: entry.bannerImageUrl ?? null,
+            heroImageUrl: ensureCdnUrl(entry.heroImageUrl ?? null),
+            bannerImageUrl: ensureCdnUrl(entry.bannerImageUrl ?? null),
             category: entry.category
               ? {
                 id: entry.category.id,
@@ -670,25 +671,25 @@ export class ViewerCatalogService {
             series_id: series.id,
             series_title: series.title,
             synopsis: series.synopsis ?? "",
-            thumbnail: series.heroImageUrl ?? "",
-            banner: series.bannerImageUrl ?? "",
+            thumbnail: ensureCdnUrl(series.heroImageUrl ?? ""),
+            banner: ensureCdnUrl(series.bannerImageUrl ?? ""),
             tags: series.tags,
             category: series.category?.name ?? "Uncategorized",
             ad_on_series_open: (series as any).adOnSeriesOpen ?? false,
             ad_on_episode_swipe: (series as any).adOnEpisodeSwipe ?? false,
-            swipe_ad_frequency: (series as any).swipeAdFrequency ?? 3,
+            swipe_ad_frequency: (series as any).swipe_ad_frequency ?? 0,
             ads: series.ads?.map(ad => ({
               id: ad.id,
               ad_type: ad.adType,
               timestamp_seconds: ad.timestampSeconds,
               ad_name: ad.adName,
-              ad_image_url: ad.adImageUrl,
+              ad_image_url: ensureCdnUrl(ad.adImageUrl),
               ad_link: ad.adLink,
               start_seconds: ad.startSeconds,
               end_seconds: ad.endSeconds
             })) ?? [],
             trailer: {
-              thumbnail: series.heroImageUrl ?? "",
+              thumbnail: ensureCdnUrl(series.heroImageUrl ?? ""),
               duration_seconds: 0,
               streaming: {
                 can_watch: true,
@@ -705,7 +706,7 @@ export class ViewerCatalogService {
               season: ep.season?.sequenceNumber ?? 0,
               title: ep.title,
               description: ep.synopsis ?? "",
-              thumbnail: ep.defaultThumbnailUrl ?? "",
+              thumbnail: ensureCdnUrl(ep.defaultThumbnailUrl ?? ""),
               duration_seconds: ep.durationSeconds,
               release_date: ep.publishedAt,
               is_download_allowed: true,
@@ -715,7 +716,7 @@ export class ViewerCatalogService {
                 can_watch: true,
                 plan_purchased: true,
                 type: "hls",
-                master_playlist: ep.playback.manifestUrl ?? "",
+                master_playlist: ensureCdnUrl(ep.playback.manifestUrl ?? ""),
                 qualities: ep.playback.variants.map(v => ({
                   quality: v.label,
                   bitrate: v.bitrateKbps?.toString() ?? "0",
@@ -775,8 +776,8 @@ export class ViewerCatalogService {
         slug: series.slug,
         title: series.title,
         synopsis: series.synopsis ?? null,
-        heroImageUrl: series.heroImageUrl || series.mediaAssets?.[0]?.defaultThumbnailUrl || null,
-        bannerImageUrl: series.bannerImageUrl ?? null,
+        heroImageUrl: ensureCdnUrl(series.heroImageUrl || series.mediaAssets?.[0]?.defaultThumbnailUrl || null),
+        bannerImageUrl: ensureCdnUrl(series.bannerImageUrl ?? null),
         category: series.category
           ? {
             id: series.category.id,
@@ -799,12 +800,12 @@ export class ViewerCatalogService {
         description: reel.description ?? null,
         durationSeconds: reel.durationSeconds,
         tags: reel.tags,
-        heroImageUrl: reel.mediaAsset?.defaultThumbnailUrl ?? null,
-        defaultThumbnailUrl: reel.mediaAsset?.defaultThumbnailUrl ?? null,
+        heroImageUrl: ensureCdnUrl(reel.mediaAsset?.defaultThumbnailUrl ?? null),
+        defaultThumbnailUrl: ensureCdnUrl(reel.mediaAsset?.defaultThumbnailUrl ?? null),
         playback: {
           status: reel.mediaAsset?.status ?? "PENDING",
-          manifestUrl: reel.mediaAsset?.manifestUrl ?? null,
-          defaultThumbnailUrl: reel.mediaAsset?.defaultThumbnailUrl ?? null,
+          manifestUrl: ensureCdnUrl(reel.mediaAsset?.manifestUrl ?? null),
+          defaultThumbnailUrl: ensureCdnUrl(reel.mediaAsset?.defaultThumbnailUrl ?? null),
           variants: reel.mediaAsset?.variants?.map((v: any) => ({
             label: v.label,
             width: v.width ?? null,
@@ -899,8 +900,8 @@ export class ViewerCatalogService {
             title: series.title,
             tags: series.tags,
             synopsis: series.synopsis ?? null,
-            heroImageUrl: series.heroImageUrl ?? null,
-            defaultThumbnailUrl: series.heroImageUrl ?? series.bannerImageUrl ?? null,
+            heroImageUrl: ensureCdnUrl(series.heroImageUrl ?? null),
+            defaultThumbnailUrl: ensureCdnUrl(series.heroImageUrl ?? series.bannerImageUrl ?? null),
             durationSeconds: 0, // Not applicable for series card
             publishedAt: series.releaseDate?.toISOString() ?? series.createdAt.toISOString(),
             availability: {
@@ -913,8 +914,8 @@ export class ViewerCatalogService {
               slug: series.slug,
               title: series.title,
               synopsis: series.synopsis ?? null,
-              heroImageUrl: series.heroImageUrl ?? null,
-              bannerImageUrl: series.bannerImageUrl ?? null,
+              heroImageUrl: ensureCdnUrl(series.heroImageUrl ?? null),
+              bannerImageUrl: ensureCdnUrl(series.bannerImageUrl ?? null),
               category: series.category
                 ? {
                   id: series.category.id,

@@ -41,6 +41,8 @@ import {
   type MobileTagsResponse,
   mobileAudioSeriesDataSchema,
 } from "../schemas/mobile-app";
+import { ensureCdnUrl } from "../utils/cdn-utils";
+
 
 type LoggerLike = Pick<FastifyBaseLogger, "error" | "warn">;
 
@@ -134,15 +136,6 @@ type AdRow = {
   episodeId?: string | null;
   seriesId?: string | null;
 };
-
-function ensureCdnUrl(url?: string | null): string | null {
-  if (!url) return null;
-  if (process.env.NODE_ENV !== "production") return url;
-  return url.replace(
-    /https:\/\/storage\.googleapis\.com\/videos-bucket-pocketlol(-prod|-dev)?/g,
-    "https://media.omgtv.in"
-  );
-}
 
 function formatAdForMobile(ad: AdRow) {
   return {
@@ -941,7 +934,7 @@ export class MobileAppService {
       ads: !isSubscribed,
       ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed,
       ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
-      swipe_ad_frequency: detail.series.swipeAdFrequency ?? 3,
+      swipe_ad_frequency: detail.series.swipeAdFrequency ?? 0,
       ads_list: seriesAdsMobile,
       trailer: trailerSource
         ? {

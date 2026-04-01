@@ -332,7 +332,7 @@ export class CatalogRepository {
         displayOrder: data.displayOrder ?? null,
         adOnSeriesOpen: data.adOnSeriesOpen ?? false,
         adOnEpisodeSwipe: data.adOnEpisodeSwipe ?? false,
-        swipeAdFrequency: data.swipeAdFrequency ?? 3,
+        swipeAdFrequency: data.swipeAdFrequency ?? 0,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       },

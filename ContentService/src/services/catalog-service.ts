@@ -636,7 +636,7 @@ export class CatalogService {
         displayOrder: input.displayOrder ?? null,
         adOnSeriesOpen: input.adOnSeriesOpen ?? false,
         adOnEpisodeSwipe: input.adOnEpisodeSwipe ?? false,
-        swipeAdFrequency: input.swipeAdFrequency ?? 3,
+        swipeAdFrequency: input.swipeAdFrequency ?? 0,
         adminId,
       });
 
