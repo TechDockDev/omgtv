@@ -443,8 +443,8 @@ export async function getCustomAdAnalytics(params: {
 
     events.forEach((event: any) => {
         const data = (event.eventData as any) || {};
-        const adId = data.adId || "unknown";
-        const adName = data.adName || "Unnamed Ad";
+        const adId = data.adId || data.id || data.ad_id || "unknown";
+        const adName = data.adName || data.ad_name || "Unnamed Ad";
 
         if (!adMap.has(adId)) {
             adMap.set(adId, { name: adName, impressions: 0, clicks: 0 });
