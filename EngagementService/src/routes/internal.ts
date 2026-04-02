@@ -94,6 +94,20 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const body = batchActionRequestSchema.parse(request.body);
       const userId = requireUserId(request.headers as Record<string, unknown>);
 
+      // Retrieve current instances to avoid stale module-level nulls
+      const currentPrisma = getPrismaOptional();
+      const currentRedis = getRedisOptional();
+
+      request.log.info(
+        {
+          userId,
+          actionsCount: body.actions?.length ?? 0,
+          eventsCount: body.events?.length ?? 0,
+          hasPrisma: !!currentPrisma,
+        },
+        "Processing batch engagement request"
+      );
+
       const results: BatchActionResult[] = [];
       let failed = 0;
 
@@ -109,8 +123,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
             switch (action.action) {
               case "like": {
                 const likeResult = await likeEntity({
-                  redis,
-                  prisma,
+                  redis: currentRedis,
+                  prisma: currentPrisma,
                   entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                   userId,
@@ -127,8 +141,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
               }
               case "unlike": {
                 const unlikeResult = await unlikeEntity({
-                  redis,
-                  prisma,
+                  redis: currentRedis,
+                  prisma: currentPrisma,
                   entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                   userId,
@@ -145,8 +159,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
               }
               case "save": {
                 const saveResult = await saveEntity({
-                  redis,
-                  prisma,
+                  redis: currentRedis,
+                  prisma: currentPrisma,
                   entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                   userId,
@@ -156,8 +170,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
               }
               case "unsave": {
                 const unsaveResult = await unsaveEntity({
-                  redis,
-                  prisma,
+                  redis: currentRedis,
+                  prisma: currentPrisma,
                   entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                   userId,
@@ -167,8 +181,8 @@ export default async function internalRoutes(fastify: FastifyInstance) {
               }
               case "view": {
                 const viewResult = await addView({
-                  redis,
-                  prisma,
+                  redis: currentRedis,
+                  prisma: currentPrisma,
                   entityType: entityType as "reel" | "series" | "episode",
                   entityId,
                 });
@@ -198,27 +212,46 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       }
 
       // Process Analytics Events
-      if (body.events && body.events.length > 0 && prisma) {
-        try {
-          // Identify if guest or actual user
-          const isGuest = userId.startsWith("guest:");
-          const actualUserId = isGuest ? null : userId;
-          const guestId = isGuest ? userId.replace("guest:", "") : null;
-
-          await (prisma as any).appEvent.createMany({
-            data: body.events.map((e) => ({
-              userId: actualUserId,
-              guestId: e.guestId || guestId,
-              deviceId: e.deviceId,
-              eventType: e.eventType,
-              eventData: e.eventData || {},
-              createdAt: e.createdAt ? new Date(e.createdAt) : new Date(),
-            })),
-          });
-          request.log.info({ eventCount: body.events.length }, "Saved batch analytics events");
-        } catch (error) {
+      if (body.events && body.events.length > 0) {
+        if (!currentPrisma) {
+          request.log.warn("Skipping analytics events: Prisma client is not initialized");
           failed += body.events.length;
-          request.log.error({ err: error }, "Failed to process batch analytics events");
+        } else {
+          try {
+            // Identify if guest or actual user
+            const isGuest = userId.startsWith("guest:");
+            const actualUserId = isGuest ? null : userId;
+            const guestId = isGuest ? userId.replace("guest:", "") : null;
+
+            await (currentPrisma as any).appEvent.createMany({
+              data: body.events.map((e) => {
+                // Ensure valid date
+                let eventDate = new Date();
+                if (e.createdAt) {
+                  const d = new Date(e.createdAt);
+                  if (!isNaN(d.getTime())) {
+                    eventDate = d;
+                  }
+                }
+
+                return {
+                  userId: actualUserId,
+                  guestId: e.guestId || guestId,
+                  deviceId: e.deviceId || "unknown",
+                  eventType: e.eventType,
+                  eventData: e.eventData || {},
+                  createdAt: eventDate,
+                };
+              }),
+            });
+            request.log.info({ eventCount: body.events.length }, "Saved batch analytics events");
+          } catch (error) {
+            failed += body.events.length;
+            request.log.error(
+              { err: error, message: error instanceof Error ? error.message : String(error) },
+              "Failed to process batch analytics events"
+            );
+          }
         }
       }
 
