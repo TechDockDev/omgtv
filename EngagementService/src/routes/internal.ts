@@ -223,7 +223,13 @@ export default async function internalRoutes(fastify: FastifyInstance) {
             const actualUserId = isGuest ? null : userId;
             const guestId = isGuest ? userId.replace("guest:", "") : null;
 
-            await (currentPrisma as any).appEvent.createMany({
+            const appEventModel = (currentPrisma as any).appEvent;
+            if (!appEventModel) {
+              const availableModels = Object.keys(currentPrisma).filter(k => !k.startsWith('$'));
+              throw new Error(`Prisma model 'appEvent' not found. Available models: ${availableModels.join(', ')}`);
+            }
+
+            await appEventModel.createMany({
               data: body.events.map((e) => {
                 // Ensure valid date
                 let eventDate = new Date();
@@ -248,8 +254,13 @@ export default async function internalRoutes(fastify: FastifyInstance) {
           } catch (error) {
             failed += body.events.length;
             request.log.error(
-              { err: error, message: error instanceof Error ? error.message : String(error) },
-              "Failed to process batch analytics events"
+              {
+                err: error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                eventsCount: body.events?.length ?? 0
+              },
+              "CRITICAL: Failed to process batch analytics events"
             );
           }
         }
