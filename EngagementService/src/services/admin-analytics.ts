@@ -258,6 +258,7 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
     const revUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/revenue/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
     const userUrl = `${config.USER_SERVICE_URL}/internal/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
 
+    const appEventModel = (prisma as any).appEvent;
     const [revRes, userRes, dauData, loginCount, logoutCount, uninstallCount] = await Promise.all([
         fetch(revUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ totalRevenuePaise: 0, trend: [] })),
         fetch(userUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ newCustomers: 0, totalCustomers: 0, trend: [] })),
@@ -266,9 +267,9 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
             FROM "AppEvent" 
             WHERE "createdAt" >= ${start} AND "createdAt" <= ${end}
         `.catch(() => [{ count: BigInt(0) }]),
-        (prisma as any).appEvent.count({ where: { eventType: "login", createdAt: { gte: start, lte: end } } }),
-        (prisma as any).appEvent.count({ where: { eventType: "logout", createdAt: { gte: start, lte: end } } }),
-        (prisma as any).appEvent.count({ where: { eventType: "uninstall", createdAt: { gte: start, lte: end } } }),
+        appEventModel ? appEventModel.count({ where: { eventType: "login", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
+        appEventModel ? appEventModel.count({ where: { eventType: "logout", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
+        appEventModel ? appEventModel.count({ where: { eventType: "uninstall", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
     ]);
 
     const dau = Number(dauData[0]?.count || 0);
@@ -429,7 +430,13 @@ export async function getCustomAdAnalytics(params: {
     const start = startDate ? new Date(startDate) : new Date(0);
     const end = endDate ? new Date(endDate) : new Date();
 
-    const events = await (prisma as any).appEvent.findMany({
+    const appEventModel = (prisma as any).appEvent;
+    if (!appEventModel) {
+        console.error("[getCustomAdAnalytics] Prisma model 'appEvent' not found. Analytics data cannot be fetched.");
+        return { summary: { totalImpressions: 0, totalClicks: 0, avgCtr: 0 }, ads: [] };
+    }
+
+    const events = await appEventModel.findMany({
         where: {
             eventType: { in: ["custom_ad_impression", "custom_ad_click"] },
             createdAt: { gte: start, lte: end }
