@@ -1135,7 +1135,7 @@ export class CatalogRepository {
         ],
         take: limit + 1,
         cursor: params.cursor ? { id: params.cursor } : undefined,
-        skip: params.cursor ? 1 : (params.page && params.page > 1 ? (params.page - 1) * limit : 0),
+        skip: params.cursor ? 0 : (params.page && params.page > 1 ? (params.page - 1) * limit : 0),
       }),
       this.prisma.episode.count({ where })
     ]);
