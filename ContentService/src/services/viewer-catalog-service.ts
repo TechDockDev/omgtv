@@ -103,6 +103,8 @@ export type SeriesDetailResponse = {
     adOnEpisodeSwipe: boolean;
     showBannerOnSeriesPage: boolean;
     swipeAdFrequency: number;
+    total_episodes: number;
+    free_episodes: number;
     ads: any[]; // Or import Ad from @prisma/client
     category: {
       id: string;
@@ -468,10 +470,11 @@ export class ViewerCatalogService {
           });
 
           if (series) {
+            const decodedCursor = decodeCursor(params.cursor);
             episodesResult = await this.repo.listEpisodes({
               seriesId: series.id,
               limit: params.limit,
-              cursor: params.cursor,
+              cursor: decodedCursor,
             });
           }
         } else {
@@ -503,7 +506,9 @@ export class ViewerCatalogService {
             return buildFeedItem(episode, { reason: "viewer_following" }, null);
           });
           pagination = {
-            nextCursor: episodesResult.nextCursor,
+            nextCursor: episodesResult.nextCursor
+              ? encodeCursor(episodesResult.nextCursor)
+              : null,
             totalCount: episodesResult.totalCounts ?? standaloneEpisodes.length,
           };
           
@@ -550,6 +555,27 @@ export class ViewerCatalogService {
           });
         }
 
+        // Calculate total episodes count and free episodes count
+        let totalEpisodes = 0;
+        let freeEpisodes = 0;
+
+        if (episodesResult) {
+          // For paginated requests, use the count from pagination
+          totalEpisodes = pagination?.totalCount ?? 0;
+          // Count free episodes from the paginated result
+          freeEpisodes = episodesResult.items.filter((ep, idx) => idx === 0 || (ep as any).isFree).length;
+        } else {
+          // For full requests, count all episodes from seasons and standalone
+          const allEps = [
+            ...seasonItems.flatMap((s) => s.episodes),
+            ...standaloneEpisodes,
+          ];
+          totalEpisodes = allEps.length;
+
+          // Count free episodes: first episode is always free, or marked as isFree
+          freeEpisodes = allEps.filter((ep, idx) => idx === 0 || (ep as any).isFree).length;
+        }
+
         const response: SeriesDetailResponse = {
           series: {
             id: series.id,
@@ -565,6 +591,8 @@ export class ViewerCatalogService {
             adOnEpisodeSwipe: (series as any).adOnEpisodeSwipe ?? false,
             showBannerOnSeriesPage: (series as any).showBannerOnSeriesPage ?? false,
             swipeAdFrequency: (series as any).swipeAdFrequency ?? 0,
+            total_episodes: totalEpisodes,
+            free_episodes: freeEpisodes,
             ads: series.ads?.map((ad: Ad) => ({
               id: ad.id,
               ad_type: ad.adType,

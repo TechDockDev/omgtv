@@ -533,14 +533,22 @@ export class MobileAppService {
       options
     );
 
-    const items = result.items.map((reel) => {
-      const engagement = engagementStates.get(reel.id);
-      const item = this.toReelItem(reel, entitlements.reel, engagement?.averageRating);
-      return {
-        ...item,
-        engagement: engagement ?? DEFAULT_ENGAGEMENT,
-      };
-    });
+    const items = result.items
+      .filter((reel) => {
+        // Exclude reels whose series is not public (unlisted, private, or deleted)
+        if (reel.series && reel.series.visibility !== "PUBLIC") {
+          return false;
+        }
+        return true;
+      })
+      .map((reel) => {
+        const engagement = engagementStates.get(reel.id);
+        const item = this.toReelItem(reel, entitlements.reel, engagement?.averageRating);
+        return {
+          ...item,
+          engagement: engagement ?? DEFAULT_ENGAGEMENT,
+        };
+      });
 
     const currentPage = parsed.page ?? 1;
     const hasNextPage = Boolean(result.nextCursor);
@@ -904,11 +912,23 @@ export class MobileAppService {
       episodeAdsMap.set(ad.episodeId, list);
     }
 
-    const episodes = this.flattenEpisodes(detail, {
+    let episodes = this.flattenEpisodes(detail, {
       ...options,
       seriesAdsMobile,
       episodeAdsMap,
     });
+
+    const isSubscribed = options.entitlements.episode.planPurchased;
+
+    // Filter episodes based on subscription status
+    // If not subscribed, only show free episodes
+    if (!isSubscribed) {
+      episodes = episodes.filter((episode) => {
+        // Check if episode is locked (not free)
+        return !episode.is_locked;
+      });
+    }
+
     const ratings = episodes
       .map((episode) => episode.rating ?? null)
       .filter((value): value is number => value !== null);
@@ -925,8 +945,6 @@ export class MobileAppService {
     const trailerSource = episodes[0];
     const seriesEngagement = options.engagementStates?.get(detail.series.id);
 
-    const isSubscribed = options.entitlements.episode.planPurchased;
-
     return {
       series_id: detail.series.id,
       series_title: detail.series.title,
@@ -942,6 +960,8 @@ export class MobileAppService {
       ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
       show_banner_on_series_page: detail.series.showBannerOnSeriesPage && !isSubscribed,
       swipe_ad_frequency: detail.series.swipeAdFrequency ?? 0,
+      total_episodes: isSubscribed ? detail.series.total_episodes : episodes.length,
+      free_episodes: detail.series.free_episodes,
       ads_list: seriesAdsMobile,
       trailer: trailerSource
         ? {

@@ -1129,8 +1129,9 @@ export class CatalogRepository {
         },
         orderBy: [
           { seasonId: "asc" }, // Nulls last usually by default but specific to DB
-          { publishedAt: "desc" },
-          { createdAt: "desc" },
+          { publishedAt: "asc" }, // Oldest episodes first (1, 2, 3...)
+          { createdAt: "asc" },
+          { id: "asc" }, // Stable tiebreaker for deterministic cursor pagination
         ],
         take: limit + 1,
         cursor: params.cursor ? { id: params.cursor } : undefined,
