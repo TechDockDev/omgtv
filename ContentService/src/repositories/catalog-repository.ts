@@ -50,7 +50,7 @@ export type SeriesWithRelations = Series & {
 export type ReelWithRelations = Reel & {
   mediaAsset: (MediaAsset & { variants: MediaAssetVariant[] }) | null;
   category: Category | null;
-  series: Pick<Series, "id" | "title" | "heroImageUrl" | "bannerImageUrl" | "isAudioSeries"> | null;
+  series: Pick<Series, "id" | "title" | "heroImageUrl" | "bannerImageUrl" | "isAudioSeries" | "visibility"> | null;
   episode: Pick<Episode, "id" | "slug" | "episodeNumber"> | null;
 };
 
@@ -311,6 +311,7 @@ export class CatalogRepository {
     displayOrder?: number | null;
     adOnSeriesOpen?: boolean;
     adOnEpisodeSwipe?: boolean;
+    showBannerOnSeriesPage?: boolean;
     swipeAdFrequency?: number;
     adminId?: string;
   }) {
@@ -332,6 +333,7 @@ export class CatalogRepository {
         displayOrder: data.displayOrder ?? null,
         adOnSeriesOpen: data.adOnSeriesOpen ?? false,
         adOnEpisodeSwipe: data.adOnEpisodeSwipe ?? false,
+        showBannerOnSeriesPage: data.showBannerOnSeriesPage ?? false,
         swipeAdFrequency: data.swipeAdFrequency ?? 0,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
@@ -358,6 +360,7 @@ export class CatalogRepository {
       displayOrder?: number | null;
       adOnSeriesOpen?: boolean;
       adOnEpisodeSwipe?: boolean;
+      showBannerOnSeriesPage?: boolean;
       swipeAdFrequency?: number;
       adminId?: string;
     }
@@ -381,6 +384,7 @@ export class CatalogRepository {
         displayOrder: data.displayOrder,
         adOnSeriesOpen: data.adOnSeriesOpen,
         adOnEpisodeSwipe: data.adOnEpisodeSwipe,
+        showBannerOnSeriesPage: data.showBannerOnSeriesPage,
         swipeAdFrequency: data.swipeAdFrequency,
         updatedByAdminId: data.adminId,
       },
@@ -1337,6 +1341,7 @@ export class CatalogRepository {
             heroImageUrl: true,
             bannerImageUrl: true,
             isAudioSeries: true,
+            visibility: true,
           }
         },
         episode: {
@@ -1463,6 +1468,42 @@ export class CatalogRepository {
       standaloneEpisodes,
       ads,
     };
+  }
+
+  async findSeriesMetadataForViewer(params: {
+    slug?: string;
+    id?: string;
+    now?: Date;
+  }): Promise<(Series & { category: Category | null; seasons: Season[]; ads: Ad[] }) | null> {
+    const now = params.now ?? new Date();
+    const where: Prisma.SeriesWhereInput = {
+      deletedAt: null,
+      status: PublicationStatus.PUBLISHED,
+      visibility: Visibility.PUBLIC,
+      OR: [{ releaseDate: null }, { releaseDate: { lte: now } }],
+    };
+
+    if (params.id) {
+      where.id = params.id;
+    } else if (params.slug) {
+      where.slug = params.slug;
+    } else {
+      return null;
+    }
+
+    const series = await this.prisma.series.findFirst({
+      where,
+      include: {
+        category: true,
+        seasons: {
+          where: { deletedAt: null },
+          orderBy: { sequenceNumber: "asc" },
+        },
+        ads: { where: { deletedAt: null } },
+      },
+    });
+
+    return series as (Series & { category: Category | null; seasons: Season[]; ads: Ad[] }) | null;
   }
 
   async findSeriesForViewerById(params: {

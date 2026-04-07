@@ -100,6 +100,7 @@ const paginationSchema = z.object({
   totalPages: z.number().int().min(1),
   hasNextPage: z.boolean(),
   nextCursor: z.string().nullable().optional(),
+  totalCount: z.number().int().nonnegative().optional(),
 });
 
 export const mobileHomeDataSchema = z.object({
@@ -146,6 +147,7 @@ const adItemSchema = z.object({
   ad_link: z.string().nullable(),
   start_seconds: z.number().nullable(),
   end_seconds: z.number().nullable(),
+  banner: z.boolean().optional(),
   episode_id: z.string().nullable().optional(),
   series_id: z.string().nullable().optional(),
 });
@@ -184,10 +186,12 @@ export const mobileSeriesDataSchema = z.object({
   ads: z.boolean(),
   ad_on_series_open: z.boolean(),
   ad_on_episode_swipe: z.boolean(),
+  show_banner_on_series_page: z.boolean(),
   swipe_ad_frequency: z.number(),
   ads_list: z.array(adItemSchema),
   trailer: trailerSchema,
   episodes: z.array(seriesEpisodeSchema),
+  pagination: paginationSchema,
   rating: z.number().nullable().optional(),
   engagement: engagementSchema.nullable().optional(),
   reviews: z.object({
@@ -226,6 +230,7 @@ const reelItemSchema = z.object({
       title: z.string(),
       thumbnail: z.string().nullable(),
       is_audio_series: z.boolean().optional(),
+      is_public: z.boolean(),
     })
     .nullable(),
   episode: z
@@ -273,6 +278,12 @@ export const mobileSeriesParamsSchema = z.object({
   seriesId: z.string(),
 });
 
+export const mobileSeriesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: z.string().optional(),
+  page: z.coerce.number().int().min(1).optional(),
+});
+
 export const mobileReelsQuerySchema = z.object({
   limit: z.coerce.number().int().min(5).max(50).optional(),
   cursor: z.string().optional(),
@@ -286,6 +297,7 @@ export type MobileReelsData = z.infer<typeof mobileReelsDataSchema>;
 export type MobileHomeQuery = z.infer<typeof mobileHomeQuerySchema>;
 export type MobileTagsQuery = z.infer<typeof mobileTagsQuerySchema>;
 export type MobileSeriesParams = z.infer<typeof mobileSeriesParamsSchema>;
+export type MobileSeriesQuery = z.infer<typeof mobileSeriesQuerySchema>;
 export type MobileReelsQuery = z.infer<typeof mobileReelsQuerySchema>;
 export type MobileTagsEnvelope = z.infer<typeof mobileTagsEnvelopeSchema>;
 export type MobileHomeEnvelope = z.infer<typeof mobileHomeEnvelopeSchema>;

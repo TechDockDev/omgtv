@@ -566,6 +566,7 @@ export class CatalogService {
       displayOrder?: number | null;
       adOnSeriesOpen?: boolean;
       adOnEpisodeSwipe?: boolean;
+      showBannerOnSeriesPage?: boolean;
       swipeAdFrequency?: number;
       isCarousel?: boolean;
     }
@@ -636,6 +637,7 @@ export class CatalogService {
         displayOrder: input.displayOrder ?? null,
         adOnSeriesOpen: input.adOnSeriesOpen ?? false,
         adOnEpisodeSwipe: input.adOnEpisodeSwipe ?? false,
+        showBannerOnSeriesPage: input.showBannerOnSeriesPage ?? false,
         swipeAdFrequency: input.swipeAdFrequency ?? 0,
         adminId,
       });
@@ -729,6 +731,7 @@ export class CatalogService {
       displayOrder?: number | null;
       adOnSeriesOpen?: boolean;
       adOnEpisodeSwipe?: boolean;
+      showBannerOnSeriesPage?: boolean;
       swipeAdFrequency?: number;
       isCarousel?: boolean;
     }
@@ -788,6 +791,7 @@ export class CatalogService {
         displayOrder: input.displayOrder,
         adOnSeriesOpen: input.adOnSeriesOpen,
         adOnEpisodeSwipe: input.adOnEpisodeSwipe,
+        showBannerOnSeriesPage: input.showBannerOnSeriesPage,
         swipeAdFrequency: input.swipeAdFrequency,
         adminId,
       });

@@ -14,14 +14,25 @@ const createAdSchema = z
       episodeId: z.string().uuid().optional(),
       seriesId: z.string().uuid().optional(),
       adName: z.string().min(1),
-      adImageUrl: z.string().url(),
+      adImageUrl: z.string().url().optional(),
       adLink: z.string().url(),
       startSeconds: z.number().nonnegative(),
       endSeconds: z.number().nonnegative(),
+      banner: z.boolean().default(false),
     }),
   ])
   .refine((d) => d.episodeId || d.seriesId, {
     message: "Either episodeId or seriesId is required",
+  })
+  .refine((d) => {
+    // For CUSTOM ads, if banner is false, adImageUrl is required
+    if (d.adType === "CUSTOM" && !d.banner && !d.adImageUrl) {
+      return false;
+    }
+    return true;
+  }, {
+    message: "adImageUrl is required for non-banner CUSTOM ads",
+    path: ["adImageUrl"],
   });
 
 const updateAdSchema = z
@@ -33,6 +44,7 @@ const updateAdSchema = z
     adLink: z.string().url().optional(),
     startSeconds: z.number().nonnegative().optional(),
     endSeconds: z.number().nonnegative().optional(),
+    banner: z.boolean().optional(),
   })
   .refine((d) => Object.keys(d).length > 0, {
     message: "At least one field must be provided",
@@ -133,10 +145,11 @@ export default async function adminAdRoutes(fastify: FastifyInstance) {
           data.timestampSeconds = body.timestampSeconds;
         } else {
           data.adName = body.adName;
-          data.adImageUrl = body.adImageUrl;
+          data.adImageUrl = body.adImageUrl ?? null;
           data.adLink = body.adLink;
           data.startSeconds = body.startSeconds;
           data.endSeconds = body.endSeconds;
+          data.banner = body.banner;
         }
 
         const ad = await fastify.prisma.ad.create({ data });

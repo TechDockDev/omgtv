@@ -37,6 +37,7 @@ import {
   type MobileReelsQuery,
   type MobileSeriesData,
   type MobileSeriesParams,
+  type MobileSeriesQuery,
   type MobileTagsQuery,
   type MobileTagsResponse,
   mobileAudioSeriesDataSchema,
@@ -56,6 +57,7 @@ export type MobileRequestContext = {
 export type MobileRequestOptions = {
   context?: MobileRequestContext;
   logger?: LoggerLike;
+  query?: MobileSeriesQuery;
 };
 
 type PlaybackLike = {
@@ -133,6 +135,7 @@ type AdRow = {
   adLink: string | null;
   startSeconds: number | null;
   endSeconds: number | null;
+  banner?: boolean | null;
   episodeId?: string | null;
   seriesId?: string | null;
 };
@@ -147,6 +150,7 @@ function formatAdForMobile(ad: AdRow) {
     ad_link: ad.adLink ?? null,
     start_seconds: ad.startSeconds ?? null,
     end_seconds: ad.endSeconds ?? null,
+    banner: ad.banner ?? false,
     episode_id: ad.episodeId ?? null,
     series_id: ad.seriesId ?? null,
   };
@@ -459,6 +463,8 @@ export class MobileAppService {
     const parsed = mobileSeriesParamsSchema.parse(params);
     const detail = await this.deps.viewerCatalog.getSeriesDetail({
       slug: parsed.seriesId,
+      limit: options?.query?.limit,
+      cursor: options?.query?.cursor,
     });
 
     if (!detail) {
@@ -934,6 +940,7 @@ export class MobileAppService {
       ads: !isSubscribed,
       ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed,
       ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
+      show_banner_on_series_page: detail.series.showBannerOnSeriesPage && !isSubscribed,
       swipe_ad_frequency: detail.series.swipeAdFrequency ?? 0,
       ads_list: seriesAdsMobile,
       trailer: trailerSource
@@ -963,6 +970,13 @@ export class MobileAppService {
             created_at: r.created_at,
             title: null,
           })) ?? [],
+      },
+      pagination: {
+        currentPage: 1, // We don't track page numbers for cursor-based yet, default to 1
+        totalPages: detail.pagination?.nextCursor ? 2 : 1,
+        hasNextPage: !!detail.pagination?.nextCursor,
+        nextCursor: detail.pagination?.nextCursor ?? null,
+        totalCount: detail.pagination?.totalCount ?? episodes.length,
       },
     };
   }
@@ -1114,6 +1128,7 @@ export class MobileAppService {
           title: reel.series.title,
           is_audio_series: reel.series.isAudioSeries,
           thumbnail: this.ensureCdnUrl(reel.series.heroImageUrl ?? reel.series.bannerImageUrl),
+          is_public: reel.series.visibility === "PUBLIC",
         }
         : null,
       episode: reel.episode

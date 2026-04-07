@@ -1,4 +1,4 @@
-import { MediaAssetStatus, Prisma } from "@prisma/client";
+import { MediaAssetStatus, Prisma, Series, Category, Season, Ad } from "@prisma/client";
 import type { Redis } from "ioredis";
 import { trace, SpanStatusCode, type Span } from "@opentelemetry/api";
 import {
@@ -101,6 +101,7 @@ export type SeriesDetailResponse = {
     isFree: boolean;
     adOnSeriesOpen: boolean;
     adOnEpisodeSwipe: boolean;
+    showBannerOnSeriesPage: boolean;
     swipeAdFrequency: number;
     ads: any[]; // Or import Ad from @prisma/client
     category: {
@@ -119,6 +120,10 @@ export type SeriesDetailResponse = {
     episodes: ViewerFeedItem[];
   }>;
   standaloneEpisodes: ViewerFeedItem[];
+  pagination?: {
+    nextCursor: string | null;
+    totalCount: number;
+  };
 };
 
 export type RelatedSeriesResponse = {
@@ -298,6 +303,7 @@ export function buildFeedItem(
       ad_link: ad.adLink,
       start_seconds: ad.startSeconds,
       end_seconds: ad.endSeconds,
+      banner: ad.banner ?? false,
     })) ?? [],
   };
 }
@@ -428,13 +434,15 @@ export class ViewerCatalogService {
 
   async getSeriesDetail(params: {
     slug: string;
+    limit?: number;
+    cursor?: string | null;
   }): Promise<(SeriesDetailResponse & { fromCache: boolean }) | null> {
     return withSpan(
       "ViewerCatalogService.getSeriesDetail",
-      { slug: params.slug },
+      { slug: params.slug, limit: params.limit ?? 0, cursor: params.cursor ?? "" },
       async (span) => {
-        const cacheKey = this.buildSeriesCacheKey(params.slug);
-        if (this.redis) {
+        const cacheKey = params.limit ? null : this.buildSeriesCacheKey(params.slug); // Disable cache for paginated requests for now to ensure freshness, or build complex cache key
+        if (cacheKey && this.redis) {
           const cached = await getCachedJson<SeriesDetailResponse>(
             this.redis,
             cacheKey
@@ -446,59 +454,101 @@ export class ViewerCatalogService {
         }
 
 
-        let series;
+        let series: SeriesWithRelations | (Series & { category: Category | null; seasons: Season[]; ads: Ad[] }) | null;
+        let episodesResult: { items: EpisodeWithRelations[]; nextCursor: string | null; totalCounts?: number } | null = null;
+
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (uuidRegex.test(params.slug)) {
-          series = await this.repo.findSeriesForViewerById({
-            id: params.slug,
+        const isUuid = uuidRegex.test(params.slug);
+
+        if (params.limit) {
+          // Paginated fetch: Metadata + Episodes separately
+          series = await this.repo.findSeriesMetadataForViewer({
+            id: isUuid ? params.slug : undefined,
+            slug: isUuid ? undefined : params.slug,
           });
+
+          if (series) {
+            episodesResult = await this.repo.listEpisodes({
+              seriesId: series.id,
+              limit: params.limit,
+              cursor: params.cursor,
+            });
+          }
         } else {
-          series = await this.repo.findSeriesForViewer({
-            slug: params.slug,
-          });
+          // Full fetch: Series with all episodes joined
+          if (isUuid) {
+            series = await this.repo.findSeriesForViewerById({
+              id: params.slug,
+            });
+          } else {
+            series = await this.repo.findSeriesForViewer({
+              slug: params.slug,
+            });
+          }
         }
+
         if (!series) {
           return null;
         }
 
-        console.log(`[DEBUG] getSeriesDetail DB Hit. ID: ${series.id}, Seasons: ${series.seasons.length}, Standalone: ${series.standaloneEpisodes.length}`);
-
         span.setAttribute("series.id", series.id);
 
-        const seasonItems = series.seasons.map((season) => {
-          const episodes: ViewerFeedItem[] = [];
-          season.episodes.forEach((episode) => {
-            try {
-              this.ensureEpisodeQuality(episode, { source: "viewer.series" });
-              episodes.push(
-                buildFeedItem(episode, { reason: "viewer_following" }, null)
-              );
-            } catch (error) {
-              // Invalid catalog rows should not take down the whole series detail page.
-            }
+        let seasonItems: any[] = [];
+        let standaloneEpisodes: ViewerFeedItem[] = [];
+        let pagination: { nextCursor: string | null; totalCount: number } | undefined;
+
+        if (episodesResult) {
+          // Map paginated results (flattened)
+          standaloneEpisodes = episodesResult.items.map((episode) => {
+            return buildFeedItem(episode, { reason: "viewer_following" }, null);
+          });
+          pagination = {
+            nextCursor: episodesResult.nextCursor,
+            totalCount: episodesResult.totalCounts ?? standaloneEpisodes.length,
+          };
+          
+          // Seasons info for metadata (no episodes joined in series.seasons)
+          seasonItems = series.seasons.map((s: Season) => ({
+            id: s.id,
+            sequenceNumber: s.sequenceNumber,
+            title: s.title,
+            synopsis: s.synopsis,
+            releaseDate: s.releaseDate?.toISOString() ?? null,
+            episodes: []
+          }));
+        } else {
+          // Map full results with seasons (original logic)
+          const fullSeries = series as SeriesWithRelations;
+          seasonItems = fullSeries.seasons.map((season) => {
+            const episodes: ViewerFeedItem[] = [];
+            season.episodes.forEach((episode) => {
+              try {
+                this.ensureEpisodeQuality(episode, { source: "viewer.series" });
+                episodes.push(
+                  buildFeedItem(episode, { reason: "viewer_following" }, null)
+                );
+              } catch (error) { }
+            });
+
+            return {
+              id: season.id,
+              sequenceNumber: season.sequenceNumber,
+              title: season.title,
+              synopsis: season.synopsis ?? null,
+              releaseDate: season.releaseDate?.toISOString() ?? null,
+              episodes,
+            };
           });
 
-          return {
-            id: season.id,
-            sequenceNumber: season.sequenceNumber,
-            title: season.title,
-            synopsis: season.synopsis ?? null,
-            releaseDate: season.releaseDate?.toISOString() ?? null,
-            episodes,
-          };
-        });
-
-        const standaloneEpisodes: ViewerFeedItem[] = [];
-        series.standaloneEpisodes.forEach((episode) => {
-          try {
-            this.ensureEpisodeQuality(episode, { source: "viewer.series" });
-            standaloneEpisodes.push(
-              buildFeedItem(episode, { reason: "viewer_following" }, null)
-            );
-          } catch (error) {
-            // Invalid catalog rows should not take down the whole series detail page.
-          }
-        });
+          fullSeries.standaloneEpisodes.forEach((episode) => {
+            try {
+              this.ensureEpisodeQuality(episode, { source: "viewer.series" });
+              standaloneEpisodes.push(
+                buildFeedItem(episode, { reason: "viewer_following" }, null)
+              );
+            } catch (error) { }
+          });
+        }
 
         const response: SeriesDetailResponse = {
           series: {
@@ -513,8 +563,9 @@ export class ViewerCatalogService {
             isFree: series.isFree,
             adOnSeriesOpen: (series as any).adOnSeriesOpen ?? false,
             adOnEpisodeSwipe: (series as any).adOnEpisodeSwipe ?? false,
+            showBannerOnSeriesPage: (series as any).showBannerOnSeriesPage ?? false,
             swipeAdFrequency: (series as any).swipeAdFrequency ?? 0,
-            ads: series.ads?.map(ad => ({
+            ads: series.ads?.map((ad: Ad) => ({
               id: ad.id,
               ad_type: ad.adType,
               timestamp_seconds: ad.timestampSeconds,
@@ -522,7 +573,8 @@ export class ViewerCatalogService {
               ad_image_url: ad.adImageUrl,
               ad_link: ad.adLink,
               start_seconds: ad.startSeconds,
-              end_seconds: ad.endSeconds
+              end_seconds: ad.endSeconds,
+              banner: (ad as any).banner ?? false
             })) ?? [],
             category: series.category
               ? {
@@ -535,9 +587,10 @@ export class ViewerCatalogService {
           },
           seasons: seasonItems,
           standaloneEpisodes,
+          pagination,
         };
 
-        if (this.redis) {
+        if (cacheKey && this.redis) {
           await setCachedJson(this.redis, cacheKey, response, this.seriesTtl);
           span.setAttribute("cache.write", true);
         }
@@ -618,127 +671,18 @@ export class ViewerCatalogService {
 
   async getSeriesById(params: {
     id: string;
+    limit?: number;
+    cursor?: string | null;
   }): Promise<any> {
     return withSpan(
       "ViewerCatalogService.getSeriesById",
-      { id: params.id },
+      { id: params.id, limit: params.limit ?? 0, cursor: params.cursor ?? "" },
       async (span) => {
-        const series = await this.repo.findSeriesForViewerById({ id: params.id });
-        if (!series) {
-          return null;
-        }
-
-        let reviews = {
-          summary: { average_rating: 0, total_reviews: 0 },
-          user_reviews: [] as any[],
-        };
-
-        if (this.engagement) {
-          try {
-            const reviewData = await this.engagement.getReviews({
-              seriesId: series.id,
-              limit: 5,
-            });
-            reviews = {
-              summary: reviewData.summary,
-              user_reviews: reviewData.user_reviews,
-            };
-          } catch (error) {
-            console.error("Failed to fetch reviews", error);
-          }
-        }
-
-        const allEpisodes: ViewerFeedItem[] = [];
-
-        series.seasons.forEach((season) => {
-          season.episodes.forEach((episode) => {
-            this.ensureEpisodeQuality(episode as unknown as EpisodeWithRelations, { source: "viewer.series_detail" });
-            allEpisodes.push(buildFeedItem(episode as unknown as EpisodeWithRelations, { reason: "viewer_following" }, null));
-          });
+        return this.getSeriesDetail({
+          slug: params.id,
+          limit: params.limit,
+          cursor: params.cursor,
         });
-
-        series.standaloneEpisodes.forEach((episode) => {
-          this.ensureEpisodeQuality(episode, { source: "viewer.series_detail" });
-          allEpisodes.push(buildFeedItem(episode, { reason: "viewer_following" }, null));
-        });
-
-        const response = {
-          success: true,
-          statusCode: 0,
-          userMessage: "Series fetched successfully",
-          developerMessage: "Success",
-          data: {
-            series_id: series.id,
-            series_title: series.title,
-            synopsis: series.synopsis ?? "",
-            thumbnail: ensureCdnUrl(series.heroImageUrl ?? ""),
-            banner: ensureCdnUrl(series.bannerImageUrl ?? ""),
-            tags: series.tags,
-            category: series.category?.name ?? "Uncategorized",
-            ad_on_series_open: (series as any).adOnSeriesOpen ?? false,
-            ad_on_episode_swipe: (series as any).adOnEpisodeSwipe ?? false,
-            swipe_ad_frequency: (series as any).swipe_ad_frequency ?? 0,
-            ads: series.ads?.map(ad => ({
-              id: ad.id,
-              ad_type: ad.adType,
-              timestamp_seconds: ad.timestampSeconds,
-              ad_name: ad.adName,
-              ad_image_url: ensureCdnUrl(ad.adImageUrl),
-              ad_link: ad.adLink,
-              start_seconds: ad.startSeconds,
-              end_seconds: ad.endSeconds
-            })) ?? [],
-            trailer: {
-              thumbnail: ensureCdnUrl(series.heroImageUrl ?? ""),
-              duration_seconds: 0,
-              streaming: {
-                can_watch: true,
-                plan_purchased: true,
-                type: "hls",
-                master_playlist: "",
-                qualities: []
-              }
-            },
-            episodes: allEpisodes.map(ep => ({
-              series_id: series.id,
-              episode_id: ep.id,
-              episode: ep.season?.sequenceNumber ?? 0,
-              season: ep.season?.sequenceNumber ?? 0,
-              title: ep.title,
-              description: ep.synopsis ?? "",
-              thumbnail: ensureCdnUrl(ep.defaultThumbnailUrl ?? ""),
-              duration_seconds: ep.durationSeconds,
-              release_date: ep.publishedAt,
-              is_download_allowed: true,
-              rating: ep.ratings.average ?? 0,
-              views: 0,
-              streaming: {
-                can_watch: true,
-                plan_purchased: true,
-                type: "hls",
-                master_playlist: ensureCdnUrl(ep.playback.manifestUrl ?? ""),
-                qualities: ep.playback.variants.map(v => ({
-                  quality: v.label,
-                  bitrate: v.bitrateKbps?.toString() ?? "0",
-                  resolution: `${v.width}x${v.height}`,
-                  size_mb: 0,
-                  url: ""
-                }))
-              },
-              progress: {
-                watched_duration: 0,
-                total_duration: ep.durationSeconds,
-                percentage: 0,
-                last_watched_at: new Date().toISOString(),
-                is_completed: false
-              },
-              ads: ep.ads ?? []
-            })),
-            reviews: reviews
-          }
-        };
-
-        return response;
       }
     );
   }

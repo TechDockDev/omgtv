@@ -19,6 +19,7 @@ import {
   mobileReelsQuerySchema,
   mobileSeriesEnvelopeSchema,
   mobileSeriesParamsSchema,
+  mobileSeriesQuerySchema,
   mobileAudioSeriesEnvelopeSchema,
   mobileTagsEnvelopeSchema,
   mobileTagsQuerySchema,
@@ -219,17 +220,20 @@ export default async function mobileAppRoutes(fastify: FastifyInstance) {
     preHandler: verifyRequest,
     schema: {
       params: mobileSeriesParamsSchema,
+      querystring: mobileSeriesQuerySchema,
       response: {
         200: mobileSeriesEnvelopeSchema,
       },
     },
     handler: async (request) => {
       const params = mobileSeriesParamsSchema.parse(request.params);
+      const query = mobileSeriesQuerySchema.parse(request.query);
       const context = buildRequestContext(request);
       try {
         const detail = await mobileApp.getSeriesDetail(params, {
           context,
           logger: request.log,
+          query,
         });
         if (!detail) {
           throw fastify.httpErrors.notFound("Series not found");

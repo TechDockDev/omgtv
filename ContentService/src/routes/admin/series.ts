@@ -24,6 +24,7 @@ const createSeriesSchema = z.object({
   isFree: z.boolean().optional(),
   adOnSeriesOpen: z.boolean().optional(),
   adOnEpisodeSwipe: z.boolean().optional(),
+  showBannerOnSeriesPage: z.boolean().optional(),
   swipeAdFrequency: z.number().int().min(0).optional(),
   displayOrder: z.number().int().optional(),
   isCarousel: z.boolean().optional(),

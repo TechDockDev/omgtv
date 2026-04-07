@@ -68,6 +68,7 @@ model Series {
   isFree           Boolean           @default(false)
   adOnSeriesOpen   Boolean           @default(false)
   adOnEpisodeSwipe Boolean           @default(false)
+  showBannerOnSeriesPage Boolean     @default(false)
   swipeAdFrequency Int               @default(0)
   status           PublicationStatus @default(DRAFT)
   visibility       Visibility        @default(PUBLIC)
@@ -325,6 +326,7 @@ model Ad {
   adLink           String?
   startSeconds     Float?
   endSeconds       Float?
+  banner           Boolean? @default(false)
 
   createdByAdminId String?
   updatedByAdminId String?
