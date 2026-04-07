@@ -960,7 +960,7 @@ export class MobileAppService {
       ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
       show_banner_on_series_page: detail.series.showBannerOnSeriesPage && !isSubscribed,
       swipe_ad_frequency: detail.series.swipeAdFrequency ?? 0,
-      total_episodes: isSubscribed ? detail.series.total_episodes : episodes.length,
+      total_episodes: detail.series.total_episodes,
       free_episodes: detail.series.free_episodes,
       ads_list: seriesAdsMobile,
       trailer: trailerSource
@@ -1025,7 +1025,7 @@ export class MobileAppService {
           ...this.toSeriesEpisode(
             episode,
             season.sequenceNumber,
-            idx + 1,
+            episode.episodeNumber ?? idx + 1,
             options.entitlements.episode,
             options.progressMap.get(episode.id),
             engagement?.averageRating,
@@ -1044,7 +1044,7 @@ export class MobileAppService {
         ...this.toSeriesEpisode(
           episode,
           null,
-          idx + 1,
+          (episode as any).episodeNumber ?? idx + 1,
           options.entitlements.episode,
           options.progressMap.get(episode.id),
           engagement?.averageRating,
@@ -1095,7 +1095,7 @@ export class MobileAppService {
       duration_seconds: episode.durationSeconds,
       release_date: episode.publishedAt,
       is_download_allowed: episode.playback.status === MediaAssetStatus.READY,
-      is_locked: episodeIndex !== 1 && !episode.isFree && !entitlement.planPurchased,
+      is_locked: !episode.isFree && !entitlement.planPurchased,
       ads: !entitlement.planPurchased,
       ads_list: adsList ?? [],
       rating: engagementRating ?? episode.ratings.average,

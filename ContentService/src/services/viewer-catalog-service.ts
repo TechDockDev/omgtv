@@ -25,6 +25,8 @@ export type ViewerFeedItem = {
   heroImageUrl: string | null;
   defaultThumbnailUrl: string | null;
   durationSeconds: number;
+  episodeNumber: number | null;
+  displayOrder: number | null;
   publishedAt: string;
   availability: {
     start: string | null;
@@ -243,6 +245,8 @@ export function buildFeedItem(
     defaultThumbnailUrl:
       ensureCdnUrl(episode.defaultThumbnailUrl ?? asset?.defaultThumbnailUrl ?? null),
     durationSeconds: episode.durationSeconds,
+    episodeNumber: (episode as any).episodeNumber ?? null,
+    displayOrder: (episode as any).displayOrder ?? null,
     publishedAt: episode.publishedAt?.toISOString() ?? new Date().toISOString(),
     availability: {
       start: episode.availabilityStart?.toISOString() ?? null,
@@ -457,7 +461,7 @@ export class ViewerCatalogService {
 
 
         let series: SeriesWithRelations | (Series & { category: Category | null; seasons: Season[]; ads: Ad[] }) | null;
-        let episodesResult: { items: EpisodeWithRelations[]; nextCursor: string | null; totalCounts?: number } | null = null;
+        let episodesResult: { items: EpisodeWithRelations[]; nextCursor: string | null; totalCounts?: number; totalFreeCounts?: number } | null = null;
 
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         const isUuid = uuidRegex.test(params.slug);
@@ -561,9 +565,10 @@ export class ViewerCatalogService {
 
         if (episodesResult) {
           // For paginated requests, use the count from pagination
-          totalEpisodes = pagination?.totalCount ?? 0;
-          // Count free episodes from the paginated result
-          freeEpisodes = episodesResult.items.filter((ep, idx) => idx === 0 || (ep as any).isFree).length;
+          totalEpisodes = episodesResult.totalCounts ?? 0;
+          freeEpisodes = episodesResult.totalFreeCounts ?? 0;
+          // Items in standaloneEpisodes are already marked by repo.listEpisodes but let's be sure for the first one ever
+          // Actually, repo.listEpisodes marks the first according to global sort.
         } else {
           // For full requests, count all episodes from seasons and standalone
           const allEps = [
@@ -573,7 +578,12 @@ export class ViewerCatalogService {
           totalEpisodes = allEps.length;
 
           // Count free episodes: first episode is always free, or marked as isFree
-          freeEpisodes = allEps.filter((ep, idx) => idx === 0 || (ep as any).isFree).length;
+          // Since allEps is fully sorted, idx === 0 is the true first episode
+          freeEpisodes = allEps.filter((ep, idx) => {
+             const isFree = idx === 0 || (ep as any).isFree;
+             if (idx === 0) (ep as any).isFree = true; // Mark it!
+             return isFree;
+          }).length;
         }
 
         const response: SeriesDetailResponse = {
@@ -592,7 +602,7 @@ export class ViewerCatalogService {
             showBannerOnSeriesPage: (series as any).showBannerOnSeriesPage ?? false,
             swipeAdFrequency: (series as any).swipeAdFrequency ?? 0,
             total_episodes: totalEpisodes,
-            free_episodes: freeEpisodes,
+            free_episodes: series.isFree ? totalEpisodes : freeEpisodes,
             ads: series.ads?.map((ad: Ad) => ({
               id: ad.id,
               ad_type: ad.adType,
@@ -914,6 +924,8 @@ export class ViewerCatalogService {
               average: null,
             },
             isFree: series.isFree,
+            episodeNumber: null,
+            displayOrder: null,
             ads: [],
           } satisfies ViewerFeedItem;
         });
@@ -1020,6 +1032,8 @@ export class ViewerCatalogService {
               average: null,
             },
             isFree: series.isFree,
+            episodeNumber: null,
+            displayOrder: null,
             ads: [],
           } satisfies ViewerFeedItem;
         });

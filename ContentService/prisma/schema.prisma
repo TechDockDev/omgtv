@@ -124,6 +124,7 @@ model Episode {
   title              String
   synopsis           String?
   episodeNumber      Int?              // Order within Season (or Series if sorting standalone)
+  displayOrder       Int?              // Custom display order set by admin in series
   durationSeconds    Int
   isFree             Boolean           @default(false)
   status             PublicationStatus @default(DRAFT)

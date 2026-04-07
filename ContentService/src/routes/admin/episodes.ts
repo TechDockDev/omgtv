@@ -265,7 +265,9 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
         const adminId = requireAdminId(request, reply);
         const result = await catalog.updateEpisode(adminId, params.id, {
           ...body,
-          episodeNumber: body.episodeNumber ?? body.displayOrder,
+          episodeNumber: body.episodeNumber,
+          displayOrder: body.displayOrder ?? body.episodeNumber,
+          durationSeconds: body.durationSeconds ?? 0,
         });
         return reply.status(200).send(result);
       } catch (error) {

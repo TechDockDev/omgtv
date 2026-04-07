@@ -544,6 +544,7 @@ export class CatalogRepository {
     captions?: Prisma.InputJsonValue | null;
     tags?: string[];
     episodeNumber?: number | null;
+    displayOrder?: number | null;
     isFree?: boolean;
     adminId?: string;
   }) {
@@ -568,10 +569,11 @@ export class CatalogRepository {
             : (data.captions ?? Prisma.JsonNull),
         tags: data.tags ?? [],
         episodeNumber: data.episodeNumber ?? null,
+        displayOrder: data.displayOrder ?? null,
         isFree: data.isFree ?? false,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
-      },
+      } as any,
     });
   }
 
@@ -593,6 +595,7 @@ export class CatalogRepository {
       slug?: string;
       tags?: string[];
       episodeNumber?: number | null;
+      displayOrder?: number | null;
       isFree?: boolean;
       adminId?: string;
     }
@@ -618,9 +621,10 @@ export class CatalogRepository {
         slug: data.slug,
         tags: data.tags,
         episodeNumber: data.episodeNumber,
+        displayOrder: data.displayOrder,
         isFree: data.isFree,
         updatedByAdminId: data.adminId,
-      },
+      } as any,
     });
   }
 
@@ -1102,7 +1106,7 @@ export class CatalogRepository {
     limit?: number;
     cursor?: string | null;
     page?: number;
-  }): Promise<PaginatedResult<EpisodeWithRelations> & { totalCounts?: number; totalPages?: number; page?: number }> {
+  }): Promise<PaginatedResult<EpisodeWithRelations> & { totalCounts?: number; totalFreeCounts?: number; totalPages?: number; page?: number }> {
     const limit = normalizeLimit(params.limit);
     const where: Prisma.EpisodeWhereInput = {
       deletedAt: null, // Only active episodes
@@ -1112,10 +1116,23 @@ export class CatalogRepository {
       where.seriesId = params.seriesId;
     }
 
+    // Identify the first episode of the series to treat it as free
+    const firstEpisode = params.seriesId ? await this.prisma.episode.findFirst({
+      where: { seriesId: params.seriesId, deletedAt: null },
+      orderBy: [
+        { season: { sequenceNumber: "asc" } },
+        { displayOrder: "asc" },
+        { episodeNumber: "asc" },
+        { publishedAt: "desc" },
+        { id: "asc" },
+      ] as any,
+      select: { id: true }
+    }) : null;
+
     // Optional: if cursor is provided, we can't easily do offset-based pagination page numbers, 
     // but the user asked for page, limit, totalCounts. 
     // Since this uses cursor-based pagination, we'll return totalCounts.
-    const [rows, totalCounts] = await Promise.all([
+    const [rows, totalCounts, totalFreeCounts] = await Promise.all([
       this.prisma.episode.findMany({
         where,
         include: {
@@ -1126,18 +1143,34 @@ export class CatalogRepository {
             include: { category: true },
           },
           season: true,
+          ads: { where: { deletedAt: null } },
         },
         orderBy: [
-          { seasonId: "asc" }, // Nulls last usually by default but specific to DB
-          { publishedAt: "asc" }, // Oldest episodes first (1, 2, 3...)
-          { createdAt: "asc" },
-          { id: "asc" }, // Stable tiebreaker for deterministic cursor pagination
-        ],
+          { season: { sequenceNumber: "asc" } },
+          { displayOrder: "asc" },
+          { episodeNumber: "asc" },
+          { publishedAt: "desc" },
+          { id: "asc" },
+        ] as any,
         take: limit + 1,
         cursor: params.cursor ? { id: params.cursor } : undefined,
         skip: params.cursor ? 0 : (params.page && params.page > 1 ? (params.page - 1) * limit : 0),
       }),
-      this.prisma.episode.count({ where })
+      this.prisma.episode.count({ where }),
+      params.seriesId ? (async () => {
+        const countWhere: Prisma.EpisodeWhereInput = {
+          ...where,
+          OR: [
+            { isFree: true },
+            { id: firstEpisode?.id }
+          ]
+        };
+        // If no firstEpisode exists (empty series), the OR with id: undefined might be problematic
+        if (!firstEpisode) {
+          return this.prisma.episode.count({ where: { ...where, isFree: true } });
+        }
+        return this.prisma.episode.count({ where: countWhere });
+      })() : Promise.resolve(0)
     ]);
 
     let nextCursor: string | null = null;
@@ -1146,12 +1179,22 @@ export class CatalogRepository {
       nextCursor = next?.id ?? null;
     }
 
+    // Force isFree for the first episode in the result set if it matches firstEpisode
+    const items = rows.map(row => {
+      if (firstEpisode && row.id === firstEpisode.id) {
+        return { ...row, isFree: true };
+      }
+      return row;
+    });
+
     return {
-      items: rows as EpisodeWithRelations[],
+      items: items as EpisodeWithRelations[],
       nextCursor,
       totalCounts,
+      totalFreeCounts: totalFreeCounts ?? 0,
     };
   }
+
 
   async listFeedEpisodes(params: {
     limit?: number;
@@ -1555,7 +1598,7 @@ export class CatalogRepository {
                 season: true,
                 ads: { where: { deletedAt: null } },
               },
-              orderBy: [{ episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }],
+              orderBy: [{ displayOrder: "asc" }, { episodeNumber: "asc" }, { publishedAt: "desc" }, { id: "desc" }] as any,
             },
           },
         },

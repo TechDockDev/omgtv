@@ -923,6 +923,7 @@ export class CatalogService {
       isFree?: boolean;
       mediaAssetId?: string;
       uploadId?: string;
+      displayOrder?: number | null;
     }
   ): Promise<Episode> {
     const tags = input.tags?.map((tag) => tag.trim()).filter(Boolean) ?? [];
@@ -1003,7 +1004,8 @@ export class CatalogService {
         seasonId: input.seasonId ?? null,
         title: input.title,
         synopsis: input.synopsis ?? null,
-        episodeNumber: input.episodeNumber ?? null, // Add episodeNumber support
+        episodeNumber: input.episodeNumber ?? null,
+        displayOrder: input.displayOrder ?? input.episodeNumber ?? null,
         durationSeconds: input.durationSeconds,
         status: input.status,
         visibility: input.visibility,
@@ -1146,6 +1148,7 @@ export class CatalogService {
       mediaAssetId?: string | null;
       uploadId?: string | null;
       episodeNumber?: number | null;
+      displayOrder?: number | null;
       isFree?: boolean;
     }
   ) {
