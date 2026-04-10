@@ -204,7 +204,8 @@ export class FFmpegService {
             audioArgs.push(
                 `-c:a:${i}`, "aac",
                 `-b:a:${i}`, `${audioBitrate}k`,
-                `-ac:a:${i}`, "2"
+                `-ac:a:${i}`, "2",
+                `-ar:a:${i}`, "48000"
             );
         });
 
@@ -225,9 +226,9 @@ export class FFmpegService {
             // === MOBILE OPTIMIZATIONS ===
             "-r", "30",
             "-bf", "2",
-            "-preset", "veryfast",
+            "-preset", "fast",
             "-tune", "fastdecode",
-            "-profile:v", "main",
+            "-profile:v", "high",
             "-level", "4.0",
             // === KEYFRAME ALIGNMENT ===
             "-g", String(gopSize),

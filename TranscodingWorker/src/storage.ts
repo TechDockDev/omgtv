@@ -149,8 +149,8 @@ export class StorageClient {
             // Manifests: short cache (for live updates)
             return "public, max-age=2, s-maxage=2";
         }
-        if (filename.endsWith(".ts")) {
-            // Segments: long cache (immutable)
+        if (filename.endsWith(".ts") || filename.endsWith(".m4s") || filename.endsWith(".mp4")) {
+            // Segments and init files: long cache (immutable VOD content)
             return "public, max-age=31536000, immutable";
         }
         return "public, max-age=3600";
@@ -165,6 +165,12 @@ export class StorageClient {
         }
         if (filename.endsWith(".ts")) {
             return "video/mp2t";
+        }
+        if (filename.endsWith(".m4s")) {
+            return "video/iso.segment";
+        }
+        if (filename.endsWith(".mp4")) {
+            return "video/mp4";
         }
         if (filename.endsWith(".jpg") || filename.endsWith(".jpeg")) {
             return "image/jpeg";
