@@ -330,8 +330,8 @@ export default async function adminRoutes(app: FastifyInstance) {
         }),
         // 3. Total Subscribers (Active Paid Users - Including Canceled but not Expired)
         prisma.userSubscription.count({
-          where: { 
-            status: { in: ["ACTIVE", "CANCELED"] }, 
+          where: {
+            status: { in: ["ACTIVE", "CANCELED"] },
             trialPlanId: null,
             endsAt: { gt: new Date() }
           },
@@ -600,4 +600,89 @@ export default async function adminRoutes(app: FastifyInstance) {
       };
     }
   );
+
+  // --- Coin Bundle Admin Routes ---
+
+  const coinBundleSchema = z.object({
+    title: z.string().min(1),
+    coins: z.number().int().positive(),
+    price: z.number().int().nonnegative(),
+    currency: z.string().default("INR"),
+    active: z.boolean().default(true),
+  });
+
+  app.post<{ Body: z.infer<typeof coinBundleSchema> }>(
+    "/coins/bundles",
+    {
+      schema: { body: coinBundleSchema },
+    },
+    async (request, reply) => {
+      const body = coinBundleSchema.parse(request.body);
+      const bundle = await prisma.coinBundle.create({ data: body });
+      return reply.code(201).send({
+        success: true,
+        userMessage: "Coin bundle created successfully",
+        data: bundle,
+      });
+    }
+  );
+
+  app.get("/coins/bundles", async () => {
+    const bundles = await prisma.coinBundle.findMany({
+      orderBy: { price: "asc" },
+    });
+    return { success: true, data: bundles };
+  });
+
+  app.patch<{ Params: { id: string }; Body: { active: boolean } }>(
+    "/coins/bundles/:id",
+    {
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({ active: z.boolean() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { active } = request.body;
+
+      const bundle = await prisma.coinBundle.update({
+        where: { id },
+        data: { active },
+      });
+
+      return {
+        success: true,
+        userMessage: `Coin bundle ${active ? "activated" : "deactivated"} successfully`,
+        data: bundle,
+      };
+    }
+  );
+
+  app.get("/coins/purchases", {
+    schema: { querystring: paginationSchema },
+  }, async (request) => {
+    const { page, limit } = request.query as z.infer<typeof paginationSchema>;
+    const skip = (page - 1) * limit;
+
+    const [total, data] = await Promise.all([
+      prisma.userCoinPurchase.count(),
+      prisma.userCoinPurchase.findMany({
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      success: true,
+      data,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  });
 }

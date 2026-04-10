@@ -142,3 +142,106 @@ model SubscriptionGlobalConfig {
 
   @@unique([id])
 }
+
+
+model UserWallet {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+
+  status    WalletStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum WalletStatus {
+  ACTIVE
+  BLOCKED
+}
+
+model CoinTransaction {
+  id              String   @id @default(uuid())
+  userId          String
+
+  type            CoinTransactionType
+  source          TransactionSource
+
+  amount          Int
+  remainingAmount Int?     // ✅ CRITICAL (for safe debit)
+
+  referenceId     String?  @unique
+
+  expiryAt        DateTime? // Phase 2 (earned coins)
+
+  metadata        Json?
+
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, expiryAt])
+}
+
+enum CoinTransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum TransactionSource {
+  PURCHASE
+  UNLOCK
+  ADMIN
+  AD
+}
+
+model CoinBundle {
+  id        String   @id @default(uuid())
+
+  title     String
+  coins     Int
+  price     Int
+  currency  String   @default("INR")
+
+  active    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserCoinPurchase {
+  id          String   @id @default(uuid())
+
+  userId      String
+  bundleId    String
+
+  orderId     String?  // payment gateway order
+  paymentId   String?  @unique
+
+  amountPaid  Int
+  coins       Int
+
+  status      PurchaseStatus
+
+  metadata    Json?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum PurchaseStatus {
+  CREATED
+  SUCCESS
+  FAILED
+}
+
+model UserEpisodeUnlock {
+  id         String   @id @default(uuid())
+
+  userId     String
+  episodeId  String
+
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, episodeId])
+}

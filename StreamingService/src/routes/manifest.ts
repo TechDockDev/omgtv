@@ -16,6 +16,7 @@ const manifestService = new ManifestService(
   deps.repository,
   deps.cdnSigner,
   deps.authClient,
+  deps.subscriptionClient,
   deps.alertingService,
   deps.metrics,
   deps.config

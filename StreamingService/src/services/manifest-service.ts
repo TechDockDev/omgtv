@@ -8,6 +8,7 @@ import type { MetricsRegistry } from "./metrics-registry";
 import type { Env } from "../config";
 import { randomUUID } from "node:crypto";
 import type { ChannelMetadata } from "../types/channel";
+import type { SubscriptionClient } from "../clients/subscription-client";
 
 export class ManifestAccessError extends Error {
   constructor(
@@ -48,10 +49,11 @@ export class ManifestService {
     private readonly repository: ChannelMetadataRepository,
     private readonly cdnSigner: CdnTokenSigner,
     private readonly authClient: AuthServiceClient,
+    private readonly subscriptionClient: SubscriptionClient,
     private readonly alerting: AlertingService,
     private readonly metrics: MetricsRegistry,
     private readonly config: Env
-  ) {}
+  ) { }
 
   async getManifest(
     request: ManifestRequest
@@ -130,15 +132,33 @@ export class ManifestService {
     return channel;
   }
 
-  private ensureScopes(viewer: ViewerContext, contentId: string) {
+  // private ensureScopes(viewer: ViewerContext, contentId: string) {
+  //   if (!viewer.scopes?.includes("streams.read")) {
+  //     throw new ManifestAccessError("Viewer lacks streams.read scope", 403);
+  //   }
+  //   if (
+  //     viewer.entitlements.length > 0 &&
+  //     !viewer.entitlements.includes(contentId)
+  //   ) {
+  //     throw new ManifestAccessError("Viewer not entitled to content", 403);
+  //   }
+  // }
+
+  private async ensureScopes(viewer: ViewerContext, contentId: string) {
     if (!viewer.scopes?.includes("streams.read")) {
       throw new ManifestAccessError("Viewer lacks streams.read scope", 403);
     }
-    if (
-      viewer.entitlements.length > 0 &&
-      !viewer.entitlements.includes(contentId)
-    ) {
-      throw new ManifestAccessError("Viewer not entitled to content", 403);
+    // 1. Check if user has an active global/plan subscription
+    const hasPlanAccess = viewer.entitlements.includes("all_access") ||
+      viewer.entitlements.includes(contentId);
+    if (hasPlanAccess) return;
+    // 2. If no plan, check if they unlocked this specific item with coins
+    const isUnlockedWithCoins = await this.subscriptionClient.validateEpisodeAccess(
+      viewer.userId,
+      contentId
+    );
+    if (!isUnlockedWithCoins) {
+      throw new ManifestAccessError("Access Denied: Please subscribe or unlock this episode with coins.", 403);
     }
   }
 

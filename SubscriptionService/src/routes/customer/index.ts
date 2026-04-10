@@ -2,6 +2,8 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
 import { invalidateEntitlementCache } from "../../lib/redis";
+import { CoinService } from "../../services/coinService";
+const coinService = new CoinService();
 
 const purchaseIntentSchema = z.object({
   planId: z.string().uuid(),
@@ -272,8 +274,8 @@ export default async function customerRoutes(app: FastifyInstance) {
       });
     }
 
-    let plan = await prisma.subscriptionPlan.findFirst({ 
-      where: { id: planId, deletedAt: null } 
+    let plan = await prisma.subscriptionPlan.findFirst({
+      where: { id: planId, deletedAt: null }
     });
     let trialPlan: any = null;
 
@@ -522,4 +524,166 @@ export default async function customerRoutes(app: FastifyInstance) {
       data: { status: "active" }
     });
   });
+
+  // --- Coin Routes ---
+
+  // GET User balance
+  app.get("/coins/balance", async (request, reply) => {
+    const userId = request.headers['x-user-id'] as string;
+    if (!userId) {
+      return reply.code(401).send({ error: "User not authenticated" });
+    }
+    const balance = await coinService.getBalance(userId);
+    return { balance };
+  });
+
+  // GET User Transaction History
+  app.get("/coins/transactions", async (request) => {
+    const userId = request.headers['x-user-id'] as string;
+    const { limit, offset } = request.query as { limit?: number; offset?: number };
+    
+    if (!userId) {
+      throw app.httpErrors.unauthorized("User not authenticated");
+    }
+
+    const transactions = await coinService.getTransactions(userId, limit, offset);
+    return { success: true, data: transactions };
+  });
+
+  // GET Available Bundles
+  app.get("/coins/bundles", async () => {
+    return await prisma.coinBundle.findMany({ where: { active: true } });
+  });
+
+  // POST Create Coin Purchase Order
+  app.post<{ Body: { bundleId: string } }>(
+    "/coins/purchase/create",
+    async (request, reply) => {
+      const userId = request.headers['x-user-id'] as string;
+      const { bundleId } = request.body;
+
+      if (!userId) {
+        return reply.code(401).send({ error: "User not authenticated" });
+      }
+
+      const bundle = await prisma.coinBundle.findUnique({
+        where: { id: bundleId, active: true }
+      });
+
+      if (!bundle) {
+        return reply.code(404).send({ error: "Coin bundle not found" });
+      }
+
+      const { getRazorpay } = await import("../../lib/razorpay");
+      const razorpay = getRazorpay();
+
+      try {
+        const order = await razorpay.orders.create({
+          amount: bundle.price, // Using 'price' from schema
+          currency: "INR",
+          notes: {
+            userId,
+            bundleId,
+            type: "COIN_PURCHASE"
+          }
+        });
+
+        const purchase = await prisma.userCoinPurchase.create({
+          data: {
+            userId,
+            bundleId,
+            amountPaid: bundle.price, // Using 'amountPaid' and 'price' from schema
+            coins: bundle.coins,
+            orderId: order.id, // Using 'orderId' from schema
+            status: "CREATED" // Using 'CREATED' from schema
+          }
+        });
+
+        return {
+          success: true,
+          orderId: order.id,
+          amount: bundle.price,
+          coins: bundle.coins,
+          purchaseId: purchase.id
+        };
+      } catch (error) {
+        request.log.error(error, "Failed to create Razorpay order for coins");
+        return reply.code(500).send({ error: "Failed to create purchase order" });
+      }
+    }
+  );
+
+  // POST Verify Coin Purchase
+  app.post<{ Body: { orderId: string, paymentId: string, signature: string } }>(
+    "/coins/purchase/verify",
+    async (request, reply) => {
+      const userId = request.headers['x-user-id'] as string;
+      const { orderId, paymentId, signature } = request.body;
+
+      if (!userId) {
+        return reply.code(401).send({ error: "User not authenticated" });
+      }
+
+      // Verify Signature
+      const crypto = await import("crypto");
+      const config = await import("../../config").then(m => m.loadConfig());
+      const expectedSignature = crypto.default
+        .createHmac("sha256", config.RAZORPAY_KEY_SECRET)
+        .update(`${orderId}|${paymentId}`)
+        .digest("hex");
+
+      if (expectedSignature !== signature) {
+        return reply.code(400).send({ error: "Invalid payment signature" });
+      }
+
+      // Update Purchase Record
+      const purchase = await prisma.userCoinPurchase.findFirst({
+        where: { orderId: orderId } // Using findFirst + orderId since it's not a @unique field in some versions or using correct lookup
+      });
+
+      if (!purchase || purchase.userId !== userId) {
+        return reply.code(404).send({ error: "Purchase record not found" });
+      }
+
+      if (purchase.status === "SUCCESS") {
+        return { success: true, message: "Already verified" };
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.userCoinPurchase.update({
+          where: { id: purchase.id },
+          data: {
+            status: "SUCCESS",
+            paymentId: paymentId, // Using 'paymentId' from schema
+            metadata: { signature } // Store signature in metadata as it's missing from schema
+          }
+        });
+
+        // Credit the coins!
+        await coinService.creditCoins({
+            userId,
+            amount: purchase.coins,
+            source: "PURCHASE",
+            referenceId: orderId, // Use orderId as idempotent reference
+            expiryDays: undefined // Purchased coins never expire
+        });
+      });
+
+      return { success: true, balance: await coinService.getBalance(userId) };
+    }
+  );
+
+  // POST Unlock Episode
+  app.post<{ Body: { episodeId: string, cost: number } }>(
+    "/coins/unlock",
+    async (request, reply) => {
+      const userId = request.headers['x-user-id'] as string;
+      const { episodeId, cost } = request.body;
+      if (!userId) {
+        return reply.code(401).send({ error: "User not authenticated" });
+      }
+      const result = await coinService.unlockEpisode(userId, episodeId, cost);
+      return result;
+    }
+  );
 }
