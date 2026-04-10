@@ -4,6 +4,7 @@ import { disconnectPrisma } from "./lib/prisma";
 import { shutdownObservability, startObservability } from "./observability";
 import { shutdownRedis } from "./lib/redis";
 import packageJson from "../package.json";
+import { startGrpcServer } from "./grpc/server";
 
 async function main() {
   const config = loadConfig();
@@ -14,6 +15,9 @@ async function main() {
 
   try {
     await app.listen({ host: config.HTTP_HOST, port: config.HTTP_PORT });
+
+    await startGrpcServer();
+
     app.log.info(
       { version: packageJson.version, http: `${config.HTTP_HOST}:${config.HTTP_PORT}` },
       "SubscriptionService ready"

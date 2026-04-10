@@ -8,6 +8,7 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   HTTP_HOST: z.string().default("0.0.0.0"),
+  SUBSCRIPTION_SERVICE_GRPC_ADDRESS: z.string().default("localhost:50071"),
   HTTP_PORT: z.coerce.number().int().positive().default(4900),
   HTTP_BODY_LIMIT: z.coerce.number().int().positive().default(1_048_576),
   LOG_LEVEL: z

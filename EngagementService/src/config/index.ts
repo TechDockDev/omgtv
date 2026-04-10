@@ -33,6 +33,7 @@ const envSchema = z.object({
     ),
   USER_SERVICE_URL: z.string().default("http://user-service:4500"),
   SUBSCRIPTION_SERVICE_URL: z.string().default("http://subscription-service:5100"),
+  AD_REWARD_COINS: z.coerce.number().int().positive().default(10),
   CONTENT_SERVICE_URL: z.string().default("http://content-service:4600"),
 });
 

@@ -1,4 +1,5 @@
 import pino from "pino";
+import { SubscriptionClient } from "../clients/subscription-client";
 import { loadConfig, type Env } from "../config";
 import { createChannelMetadataRepository } from "../repositories/channel-metadata-repository";
 import { OvenMediaEngineClient } from "../clients/ome-client";
@@ -29,6 +30,7 @@ export interface ServiceDependencies {
   metrics: MetricsRegistry;
   analytics: AnalyticsExporter;
   monitoring: MonitoringService;
+  subscriptionClient: SubscriptionClient;
 }
 
 let cached: ServiceDependencies | null = null;
@@ -111,6 +113,8 @@ export function getServiceDependencies(): ServiceDependencies {
     logger,
   });
 
+  const subscriptionClient = new SubscriptionClient(config.SUBSCRIPTION_SERVICE_GRPC_ADDRESS);
+
   const alertingService = new AlertingService({
     observabilityUrl: config.OBSERVABILITY_EXPORT_URL,
     auditTopic: config.AUDIT_LOG_TOPIC,
@@ -142,6 +146,7 @@ export function getServiceDependencies(): ServiceDependencies {
     metrics,
     analytics,
     monitoring,
+    subscriptionClient,
   };
 
   return cached;

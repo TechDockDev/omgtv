@@ -53,6 +53,7 @@ import {
   getUserProgressList,
   syncVisibility,
 } from "../services/collection-engagement";
+import { loadConfig } from "../config";
 
 function requireUserId(headers: Record<string, unknown>) {
   const value = headers["x-user-id"];
@@ -63,6 +64,7 @@ function requireUserId(headers: Record<string, unknown>) {
 }
 
 export default async function internalRoutes(fastify: FastifyInstance) {
+  const config = loadConfig();
   const redis = getRedisOptional();
   const prisma = getPrismaOptional();
 
@@ -97,6 +99,33 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       // Retrieve current instances to avoid stale module-level nulls
       const currentPrisma = getPrismaOptional();
       const currentRedis = getRedisOptional();
+      // --- NEW: AD REWARD LOGIC ---
+      if (body.events && body.events.length > 0) {
+        for (const event of body.events) {
+          if (event.eventType === "custom_ad_complete") {
+            const adId = event.eventData?.adId;
+            try {
+              await fetch(`${config.SUBSCRIPTION_SERVICE_URL}/internal/coins/credit`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-service-token": config.SERVICE_AUTH_TOKEN || ""
+                },
+                body: JSON.stringify({
+                  userId,
+                  amount: config.AD_REWARD_COINS,
+                  source: "AD",
+                  referenceId: `ad_reward:${adId}:${Date.now()}`,
+                  expiryDays: 30
+                })
+              });
+              request.log.info({ userId, adId }, "Successfully credited ad reward coins");
+            } catch (err) {
+              request.log.error(err, "Failed to credit ad reward coins");
+            }
+          }
+        }
+      }
 
       request.log.info(
         {

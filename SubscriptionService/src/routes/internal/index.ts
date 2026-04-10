@@ -1,6 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
+import { CoinService } from "../../services/coinService";
+const coinService = new CoinService();
 
 const entitlementRequest = z.object({
   userId: z.string(),
@@ -177,4 +179,34 @@ export default async function internalRoutes(app: FastifyInstance) {
 
     return { userIds: subscriptions.map(s => s.userId) };
   });
+
+  app.post("/coins/credit", {
+    schema: {
+      body: z.object({
+        userId: z.string(),
+        amount: z.number().int().positive(),
+        source: z.string(),
+        referenceId: z.string().optional(),
+        expiryDays: z.number().int().optional()
+      })
+    }
+  }, async (request, reply) => {
+    const { userId, amount, source, referenceId, expiryDays } = request.body as any;
+
+    try {
+      const transaction = await coinService.creditCoins({
+        userId,
+        amount,
+        source: source as any,
+        referenceId,
+        expiryDays
+      });
+      return { success: true, transactionId: transaction.id };
+    } catch (error) {
+      request.log.error(error, "Failed to credit coins internally");
+      return reply.code(500).send({ error: "Internal credit failed" });
+    }
+  });
 }
+
+
