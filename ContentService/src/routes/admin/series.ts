@@ -7,6 +7,7 @@ import {
 import { EngagementClient } from "../../clients/engagement-client";
 import { PublicationStatus, Visibility } from "@prisma/client";
 import { loadConfig } from "../../config";
+import { getRedis } from "../../lib/redis";
 
 const createSeriesSchema = z.object({
   slug: z.string().min(3).optional(), // Optional, backend generates if missing
@@ -353,9 +354,10 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
           }
 
           // Invalidate Cache
-          if (fastify.redis) {
+          const redis = getRedis();
+          if (redis) {
             const cacheKey = `catalog:series:v2:${series.slug}`;
-            await fastify.redis.del(cacheKey).catch(() => {});
+            await redis.del(cacheKey).catch(() => {});
             request.log.info({ cacheKey }, "Invalidated series cache after episode access update");
           }
 
@@ -393,9 +395,10 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
           });
 
           // Invalidate Cache
-          if (fastify.redis) {
+          const redis = getRedis();
+          if (redis) {
             const cacheKey = `catalog:series:v2:${series.slug}`;
-            await fastify.redis.del(cacheKey).catch(() => {});
+            await redis.del(cacheKey).catch(() => {});
           }
 
           return reply.status(204).send();

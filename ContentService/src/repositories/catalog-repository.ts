@@ -546,6 +546,7 @@ export class CatalogRepository {
     episodeNumber?: number | null;
     displayOrder?: number | null;
     isFree?: boolean;
+    isTrial?: boolean;
     adminId?: string;
   }) {
     return this.prisma.episode.create({

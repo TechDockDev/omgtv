@@ -1018,7 +1018,7 @@ export class CatalogService {
         captions: input.captions as Prisma.JsonValue | null,
         tags,
         isFree: input.isFree ?? false,
-        isTrial: (input as any).isTrial ?? true,
+        isTrial: input.isTrial ?? true,
         adminId,
       });
 

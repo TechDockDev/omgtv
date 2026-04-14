@@ -117,7 +117,7 @@ export class CoinService {
             referenceId: data.referenceId,
             expiryAt
         }
-    }).then(async (res) => {
+    }).then(async (res: any) => {
         await this.invalidateBalanceCache(data.userId);
         return res;
     });
