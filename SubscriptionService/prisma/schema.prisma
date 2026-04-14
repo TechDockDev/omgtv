@@ -179,6 +179,7 @@ model CoinTransaction {
 
   @@index([userId])
   @@index([userId, expiryAt])
+  @@index([userId, type, remainingAmount])
 }
 
 enum CoinTransactionType {
@@ -227,6 +228,7 @@ model UserCoinPurchase {
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
+  @@unique([orderId])
 }
 
 enum PurchaseStatus {

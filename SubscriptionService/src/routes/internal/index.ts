@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
 import { CoinService } from "../../services/coinService";
+import { TransactionSource } from "@prisma/client";
 const coinService = new CoinService();
 
 const entitlementRequest = z.object({
@@ -185,7 +186,7 @@ export default async function internalRoutes(app: FastifyInstance) {
       body: z.object({
         userId: z.string(),
         amount: z.number().int().positive(),
-        source: z.string(),
+        source: z.nativeEnum(TransactionSource),
         referenceId: z.string().optional(),
         expiryDays: z.number().int().optional()
       })

@@ -921,6 +921,7 @@ export class CatalogService {
       captions?: unknown;
       tags?: string[];
       isFree?: boolean;
+      isTrial?: boolean;
       mediaAssetId?: string;
       uploadId?: string;
       displayOrder?: number | null;
@@ -1017,6 +1018,7 @@ export class CatalogService {
         captions: input.captions as Prisma.JsonValue | null,
         tags,
         isFree: input.isFree ?? false,
+        isTrial: (input as any).isTrial ?? true,
         adminId,
       });
 
@@ -1150,6 +1152,7 @@ export class CatalogService {
       episodeNumber?: number | null;
       displayOrder?: number | null;
       isFree?: boolean;
+      isTrial?: boolean;
     }
   ) {
     const existing = await this.repo.findEpisodeById(episodeId, true); // Include relations to get current media asset

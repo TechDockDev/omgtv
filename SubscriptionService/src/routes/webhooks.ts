@@ -6,6 +6,9 @@ import { getPrisma } from "../lib/prisma";
 import { getRazorpay } from "../lib/razorpay";
 import { SubscriptionStatus } from "@prisma/client";
 import { invalidateEntitlementCache } from "../lib/redis";
+import { CoinService } from "../services/coinService";
+
+const coinService = new CoinService();
 
 const webhookRoutes: FastifyPluginAsync = async (app) => {
     const config = loadConfig();
@@ -237,22 +240,37 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     await invalidateEntitlementCache(existingSub.userId);
                     request.log.info({ msg: `Subscription ${event}`, subscriptionId, status });
                 }
-            } else if (event === "payment.failed") {
-                const payment = payload.payment.entity;
-                request.log.warn({
-                    msg: "Razorpay payment failed",
-                    paymentId: payment.id,
-                    reason: payment.error_description,
-                    subscriptionId: payment.subscription_id
-                });
+            } else if (event === "payment.captured" || event === "order.paid") {
+                const isOrder = event === "order.paid";
+                const entity = isOrder ? payload.order?.entity : payload.payment?.entity;
+                
+                if (entity?.notes?.type === "COIN_PURCHASE") {
+                    const orderId = isOrder ? entity.id : entity.order_id;
+                    const paymentId = isOrder ? null : entity.id;
+                    const userId = entity.notes.userId;
 
-                if (payment.subscription_id) {
-                    const existingSub = await prisma.userSubscription.findFirst({
-                        where: { razorpayOrderId: payment.subscription_id }
+                    const purchase = await prisma.userCoinPurchase.findUnique({
+                        where: { orderId }
                     });
 
-                    if (existingSub && event === "subscription.halted") {
-                        // This is handled above, but payment.failed often precedes it
+                    if (purchase && purchase.status !== "SUCCESS") {
+                        await prisma.$transaction(async (tx) => {
+                            await tx.userCoinPurchase.update({
+                                where: { id: purchase.id },
+                                data: {
+                                    status: "SUCCESS",
+                                    paymentId: paymentId || purchase.paymentId,
+                                }
+                            });
+
+                            await coinService.creditCoins({
+                                userId: purchase.userId,
+                                amount: purchase.coins,
+                                source: "PURCHASE",
+                                referenceId: orderId,
+                            }, tx);
+                        });
+                        request.log.info({ msg: "Coin purchase fulfilled via webhook", orderId, userId });
                     }
                 }
             }

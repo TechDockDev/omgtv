@@ -1,8 +1,9 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
-import { invalidateEntitlementCache } from "../../lib/redis";
+import { invalidateEntitlementCache, getRedis } from "../../lib/redis";
 import { CoinService } from "../../services/coinService";
+import { TransactionSource } from "@prisma/client";
 const coinService = new CoinService();
 
 const purchaseIntentSchema = z.object({
@@ -538,9 +539,16 @@ export default async function customerRoutes(app: FastifyInstance) {
   });
 
   // GET User Transaction History
-  app.get("/coins/transactions", async (request) => {
+  app.get("/coins/transactions", {
+    schema: {
+      querystring: z.object({
+        limit: z.coerce.number().int().positive().optional().default(20),
+        offset: z.coerce.number().int().min(0).optional().default(0),
+      })
+    }
+  }, async (request) => {
     const userId = request.headers['x-user-id'] as string;
-    const { limit, offset } = request.query as { limit?: number; offset?: number };
+    const { limit, offset } = request.query as { limit: number; offset: number };
     
     if (!userId) {
       throw app.httpErrors.unauthorized("User not authenticated");
@@ -552,7 +560,21 @@ export default async function customerRoutes(app: FastifyInstance) {
 
   // GET Available Bundles
   app.get("/coins/bundles", async () => {
-    return await prisma.coinBundle.findMany({ where: { active: true } });
+    const redis = getRedis();
+    const cacheKey = "coins:bundles:all";
+    
+    // Try to get from cache
+    const cached = await redis.get(cacheKey).catch(() => null);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
+    const bundles = await prisma.coinBundle.findMany({ where: { active: true } });
+    
+    // Cache for 10 minutes
+    await redis.setex(cacheKey, 600, JSON.stringify(bundles)).catch(() => {});
+    
+    return bundles;
   });
 
   // POST Create Coin Purchase Order
@@ -566,7 +588,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         return reply.code(401).send({ error: "User not authenticated" });
       }
 
-      const bundle = await prisma.coinBundle.findUnique({
+      const bundle = await prisma.coinBundle.findFirst({
         where: { id: bundleId, active: true }
       });
 
@@ -606,9 +628,13 @@ export default async function customerRoutes(app: FastifyInstance) {
           coins: bundle.coins,
           purchaseId: purchase.id
         };
-      } catch (error) {
+      } catch (error: any) {
         request.log.error(error, "Failed to create Razorpay order for coins");
-        return reply.code(500).send({ error: "Failed to create purchase order" });
+        return reply.code(500).send({ 
+          error: "Failed to create purchase order",
+          message: error.message,
+          razorpayError: error.description || error.error?.description || "Unknown provider error"
+        });
       }
     }
   );
@@ -637,8 +663,8 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
 
       // Update Purchase Record
-      const purchase = await prisma.userCoinPurchase.findFirst({
-        where: { orderId: orderId } // Using findFirst + orderId since it's not a @unique field in some versions or using correct lookup
+      const purchase = await prisma.userCoinPurchase.findUnique({
+        where: { orderId }
       });
 
       if (!purchase || purchase.userId !== userId) {
@@ -646,7 +672,21 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
 
       if (purchase.status === "SUCCESS") {
-        return { success: true, message: "Already verified" };
+        return { success: true, message: "Already verified", balance: await coinService.getBalance(userId) };
+      }
+
+      // Pre-check for existing coin transaction with this orderId (idempotency guard)
+      const existingTx = await prisma.coinTransaction.findUnique({
+        where: { referenceId: orderId }
+      });
+
+      if (existingTx) {
+        // If transaction exists but purchase record was not marked SUCCESS, sync it now
+        await prisma.userCoinPurchase.update({
+          where: { id: purchase.id },
+          data: { status: "SUCCESS", paymentId }
+        });
+        return { success: true, message: "Already credited", balance: await coinService.getBalance(userId) };
       }
 
       await prisma.$transaction(async (tx) => {
@@ -654,19 +694,18 @@ export default async function customerRoutes(app: FastifyInstance) {
           where: { id: purchase.id },
           data: {
             status: "SUCCESS",
-            paymentId: paymentId, // Using 'paymentId' from schema
-            metadata: { signature } // Store signature in metadata as it's missing from schema
+            paymentId,
+            metadata: { signature }
           }
         });
 
-        // Credit the coins!
+        // Credit the coins — pass tx so both ops are in the same DB transaction
         await coinService.creditCoins({
             userId,
             amount: purchase.coins,
-            source: "PURCHASE",
-            referenceId: orderId, // Use orderId as idempotent reference
-            expiryDays: undefined // Purchased coins never expire
-        });
+            source: TransactionSource.PURCHASE,
+            referenceId: orderId,
+        }, tx);
       });
 
       return { success: true, balance: await coinService.getBalance(userId) };

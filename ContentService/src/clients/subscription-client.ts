@@ -11,6 +11,7 @@ const entitlementResponseSchema = z.object({
   allowed: z.boolean(),
   planId: z.string(),
   status: z.string(),
+  isTrial: z.boolean().optional(),
   contentType: z.enum(["REEL", "EPISODE"]),
   freeLimits: z.record(z.any()).optional(),
 });
@@ -19,6 +20,7 @@ export type EntitlementRequest = z.infer<typeof entitlementRequestSchema>;
 export type ContentEntitlement = {
   canWatch: boolean;
   planPurchased: boolean;
+  isTrial: boolean;
 };
 
 export class SubscriptionClient {
@@ -35,7 +37,7 @@ export class SubscriptionClient {
     payload: EntitlementRequest
   ): Promise<ContentEntitlement> {
     const body = entitlementRequestSchema.parse(payload);
-    const cacheKey = `entitlement:${body.userId}:${body.contentType}`;
+    const cacheKey = `entitlement:v2:${body.userId}:${body.contentType}`;
     const { redis, cacheTtlSeconds = 300 } = this.options;
 
     if (redis) {
@@ -71,6 +73,7 @@ export class SubscriptionClient {
     const result: ContentEntitlement = {
       canWatch: parsed.data.allowed,
       planPurchased,
+      isTrial: parsed.data.isTrial === true,
     };
 
     if (redis) {

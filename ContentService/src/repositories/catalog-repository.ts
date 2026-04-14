@@ -51,7 +51,7 @@ export type ReelWithRelations = Reel & {
   mediaAsset: (MediaAsset & { variants: MediaAssetVariant[] }) | null;
   category: Category | null;
   series: Pick<Series, "id" | "title" | "heroImageUrl" | "bannerImageUrl" | "isAudioSeries" | "visibility"> | null;
-  episode: Pick<Episode, "id" | "slug" | "episodeNumber"> | null;
+  episode: Pick<Episode, "id" | "slug" | "episodeNumber" | "isFree" | "isTrial"> | null;
 };
 
 export type CarouselEntryWithContent = CarouselEntry & {
@@ -571,6 +571,7 @@ export class CatalogRepository {
         episodeNumber: data.episodeNumber ?? null,
         displayOrder: data.displayOrder ?? null,
         isFree: data.isFree ?? false,
+        isTrial: data.isTrial ?? true,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       } as any,
@@ -597,6 +598,7 @@ export class CatalogRepository {
       episodeNumber?: number | null;
       displayOrder?: number | null;
       isFree?: boolean;
+      isTrial?: boolean;
       adminId?: string;
     }
   ) {
@@ -623,6 +625,7 @@ export class CatalogRepository {
         episodeNumber: data.episodeNumber,
         displayOrder: data.displayOrder,
         isFree: data.isFree,
+        isTrial: data.isTrial,
         updatedByAdminId: data.adminId,
       } as any,
     });
@@ -1393,6 +1396,8 @@ export class CatalogRepository {
             id: true,
             slug: true,
             episodeNumber: true,
+            isFree: true,
+            isTrial: true,
           }
         },
       },

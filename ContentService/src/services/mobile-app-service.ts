@@ -109,6 +109,7 @@ export type MobileAppConfig = {
 type EntitlementSnapshot = {
   canWatch: boolean;
   planPurchased: boolean;
+  isTrial: boolean;
 };
 
 type EntitlementLookup = {
@@ -348,6 +349,20 @@ export class MobileAppService {
     const cwEngagementStates = await this.loadEngagementStates(cwSeriesEngagementItems, options);
 
     const continueWatch = continueWatchEpisodes
+      .filter((item) => {
+        // Only show items the user can actually watch (Free -> Free, Trial -> Free+Trial, Sub -> All)
+        const isFullySubscribed = entitlements.episode.planPurchased && !entitlements.episode.isTrial;
+        const isTrialUser       = entitlements.episode.isTrial;
+        const episodeIsFree     = item.isFree;
+        const episodeIsTrial    = item.isTrial;
+
+        const hasAccess =
+          episodeIsFree ||
+          isFullySubscribed ||
+          (episodeIsTrial && (isTrialUser || isFullySubscribed));
+
+        return hasAccess;
+      })
       .slice(0, this.deps.config.continueWatchLimit)
       .map((item) => {
         const seriesId = item.series?.id;
@@ -539,7 +554,19 @@ export class MobileAppService {
         if (reel.series && reel.series.visibility !== "PUBLIC") {
           return false;
         }
-        return true;
+
+        // 3-Tier Access Filtering: Only show reels user can actually watch
+        const isFullySubscribed = entitlements.reel.planPurchased && !entitlements.reel.isTrial;
+        const isTrialUser       = entitlements.reel.isTrial;
+        const episodeIsFree     = reel.episode?.isFree ?? false;
+        const episodeIsTrial    = (reel.episode as any)?.isTrial ?? false;
+
+        const hasAccess =
+          episodeIsFree ||
+          isFullySubscribed ||
+          (episodeIsTrial && (isTrialUser || isFullySubscribed));
+
+        return hasAccess;
       })
       .map((reel) => {
         const engagement = engagementStates.get(reel.id);
@@ -684,10 +711,26 @@ export class MobileAppService {
     entitlement: EntitlementSnapshot,
     progress?: ContinueWatchEntry
   ) {
+    const isFullySubscribed = entitlement.planPurchased && !entitlement.isTrial;
+    const isTrialUser       = entitlement.isTrial;
+    const episodeIsFree     = item.isFree;
+    const episodeIsTrial    = item.isTrial;
+
+    const hasAccess =
+      episodeIsFree ||
+      isFullySubscribed ||
+      (episodeIsTrial && (isTrialUser || isFullySubscribed));
+
+    const effectiveEntitlement: EntitlementSnapshot = {
+      canWatch: hasAccess,
+      planPurchased: entitlement.planPurchased,
+      isTrial: entitlement.isTrial,
+    };
+
     const streaming = this.buildStreamingInfo(
       item.playback,
       item.durationSeconds,
-      entitlement
+      effectiveEntitlement
     );
     const watchedDuration = progress
       ? Math.min(progress.watched_duration, item.durationSeconds)
@@ -918,13 +961,14 @@ export class MobileAppService {
       episodeAdsMap,
     });
 
-    const isSubscribed = options.entitlements.episode.planPurchased;
+    const isSubscribed = options.entitlements.episode.planPurchased && !options.entitlements.episode.isTrial; // ACTIVE only
+    const isTrial = options.entitlements.episode.isTrial;
 
     // Filter episodes based on subscription status
-    // If not subscribed, only show free episodes
+    // If not subscribed, only show free + trial episodes for trial users, or just free for free users
     if (!isSubscribed) {
       episodes = episodes.filter((episode) => {
-        // Check if episode is locked (not free)
+        // trial users see free + trial episodes; free users see only free episodes
         return !episode.is_locked;
       });
     }
@@ -954,11 +998,12 @@ export class MobileAppService {
       tags: detail.series.tags,
       category: detail.series.category?.name ?? null,
       is_subscribed: isSubscribed,
-      is_locked: !detail.series.isFree && !isSubscribed,
-      ads: !isSubscribed,
-      ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed,
-      ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
-      show_banner_on_series_page: detail.series.showBannerOnSeriesPage && !isSubscribed,
+      is_trial: isTrial,
+      is_locked: !detail.series.isFree && !isSubscribed && !isTrial,
+      ads: !isSubscribed && !isTrial,
+      ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed && !isTrial,
+      ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed && !isTrial,
+      show_banner_on_series_page: detail.series.showBannerOnSeriesPage && !isSubscribed && !isTrial,
       swipe_ad_frequency: detail.series.swipeAdFrequency ?? 0,
       total_episodes: detail.series.total_episodes,
       free_episodes: detail.series.free_episodes,
@@ -1066,9 +1111,22 @@ export class MobileAppService {
     engagementRating?: number | null,
     adsList?: ReturnType<typeof formatAdForMobile>[]
   ) {
-    const effectiveEntitlement: EntitlementSnapshot = episode.isFree
-      ? { canWatch: true, planPurchased: entitlement.planPurchased }
-      : entitlement;
+    const isFullySubscribed = entitlement.planPurchased && !entitlement.isTrial;
+    const isTrialUser       = entitlement.isTrial;
+    const episodeIsFree     = episode.isFree;
+    const episodeIsTrial    = episode.isTrial;
+
+    const hasAccess =
+      episodeIsFree ||
+      isFullySubscribed ||
+      (episodeIsTrial && (isTrialUser || isFullySubscribed));
+
+    const effectiveEntitlement: EntitlementSnapshot = {
+      canWatch: hasAccess,
+      planPurchased: entitlement.planPurchased,
+      isTrial: entitlement.isTrial,
+    };
+
     const streaming = this.buildStreamingInfo(
       episode.playback,
       episode.durationSeconds,
@@ -1095,8 +1153,9 @@ export class MobileAppService {
       duration_seconds: episode.durationSeconds,
       release_date: episode.publishedAt,
       is_download_allowed: episode.playback.status === MediaAssetStatus.READY,
-      is_locked: !episode.isFree && !entitlement.planPurchased,
-      ads: !entitlement.planPurchased,
+      is_locked: !hasAccess,
+      is_trial_episode: episodeIsTrial,
+      ads: !isFullySubscribed,
       ads_list: adsList ?? [],
       rating: engagementRating ?? episode.ratings.average,
       views: null,
@@ -1234,6 +1293,7 @@ export class MobileAppService {
     const fallback: EntitlementSnapshot = {
       canWatch: this.deps.config.defaultGuestCanWatch,
       planPurchased: this.deps.config.defaultPlanPurchased,
+      isTrial: false,
     };
 
     const userId = options?.context?.userId;
@@ -1275,6 +1335,7 @@ export class MobileAppService {
     return {
       canWatch: result.canWatch,
       planPurchased: result.planPurchased,
+      isTrial: result.isTrial,
     } satisfies EntitlementSnapshot;
   }
 

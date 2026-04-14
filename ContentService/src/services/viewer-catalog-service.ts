@@ -83,6 +83,7 @@ export type ViewerFeedItem = {
   };
   ads: any[];
   isFree: boolean;
+  isTrial: boolean;
 };
 
 export type ViewerFeedResponse = {
@@ -278,6 +279,7 @@ export function buildFeedItem(
       tags: episode.series.tags,
     },
     isFree: episode.isFree || episode.series.isFree,
+    isTrial: (episode as any).isTrial ?? true,
     playback: {
       status: asset?.status ?? MediaAssetStatus.PENDING,
       manifestUrl: ensureCdnUrl(asset?.manifestUrl ?? null),

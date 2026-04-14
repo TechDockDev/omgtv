@@ -270,4 +270,140 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
       }
     },
   });
+
+  // Series Episode Access Management
+  fastify.get<{ Params: { id: string }; Querystring: { type?: string } }>(
+    "/:id/episode-access",
+    {
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        querystring: z.object({
+          type: z.enum(["FREE", "TRIAL", "PREMIUM"]).optional(),
+        }),
+      },
+      handler: async (request, reply) => {
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const { type } = request.query;
+
+        try {
+          requireAdminId(request, reply);
+          const result = await catalog.listEpisodes({
+            seriesId: id,
+            limit: 500, // Reasonable max for a series
+          });
+
+          let episodes = result.items.map((e) => ({
+            id: e.id,
+            title: e.title,
+            episodeNumber: e.episodeNumber,
+            isFree: e.isFree,
+            isTrial: (e as any).isTrial ?? false,
+          }));
+
+          if (type === "FREE") {
+            episodes = episodes.filter((e) => e.isFree);
+          } else if (type === "TRIAL") {
+            episodes = episodes.filter((e) => e.isTrial && !e.isFree);
+          } else if (type === "PREMIUM") {
+            episodes = episodes.filter((e) => !e.isFree && !e.isTrial);
+          }
+
+          return reply.send({ items: episodes });
+        } catch (error) {
+          request.log.error({ err: error, seriesId: id }, "Failed to get series episode access");
+          return reply.status(500).send({ message: "Unable to get episode access" });
+        }
+      },
+    }
+  );
+
+  fastify.post<{ Params: { id: string } }>(
+    "/:id/episode-access",
+    {
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({
+          episodeIds: z.array(z.string().uuid()),
+          access: z.enum(["FREE", "TRIAL", "PREMIUM"]),
+        }),
+      },
+      handler: async (request, reply) => {
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const { episodeIds, access } = request.body as any;
+
+        try {
+          const adminId = requireAdminId(request, reply);
+          const series = await catalog.getSeries(id);
+
+          const isFree = access === "FREE";
+          const isTrial = access === "TRIAL" || access === "FREE"; // Free implies Trial access too conceptually, but logic-wise we just need one.
+
+          // Actually, our logic is:
+          // FREE: isFree=true, isTrial=false (or true)
+          // TRIAL: isFree=false, isTrial=true
+          // PREMIUM: isFree=false, isTrial=false
+          // Let's stick to the cleanest mapping:
+          const updateData = {
+            isFree: access === "FREE",
+            isTrial: access === "TRIAL",
+          };
+
+          for (const episodeId of episodeIds) {
+            await catalog.updateEpisode(adminId, episodeId, updateData);
+          }
+
+          // Invalidate Cache
+          if (fastify.redis) {
+            const cacheKey = `catalog:series:v2:${series.slug}`;
+            await fastify.redis.del(cacheKey).catch(() => {});
+            request.log.info({ cacheKey }, "Invalidated series cache after episode access update");
+          }
+
+          return reply.send({ success: true, updatedCount: episodeIds.length });
+        } catch (error) {
+          request.log.error({ err: error, seriesId: id }, "Failed to bulk update episode access");
+          return reply.status(500).send({ message: "Unable to update episode access" });
+        }
+      },
+    }
+  );
+
+  fastify.delete<{ Params: { id: string; episodeId: string } }>(
+    "/:id/episode-access/:episodeId",
+    {
+      schema: {
+        params: z.object({
+          id: z.string().uuid(),
+          episodeId: z.string().uuid(),
+        }),
+      },
+      handler: async (request, reply) => {
+        const { id, episodeId } = z.object({
+          id: z.string().uuid(),
+          episodeId: z.string().uuid(),
+        }).parse(request.params);
+
+        try {
+          const adminId = requireAdminId(request, reply);
+          const series = await catalog.getSeries(id);
+
+          await catalog.updateEpisode(adminId, episodeId, {
+            isFree: false,
+            isTrial: false,
+          });
+
+          // Invalidate Cache
+          if (fastify.redis) {
+            const cacheKey = `catalog:series:v2:${series.slug}`;
+            await fastify.redis.del(cacheKey).catch(() => {});
+          }
+
+          return reply.status(204).send();
+        } catch (error) {
+          request.log.error({ err: error, seriesId: id, episodeId }, "Failed to reset episode access");
+          return reply.status(500).send({ message: "Unable to reset episode access" });
+        }
+      },
+    }
+  );
 }
