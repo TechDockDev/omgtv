@@ -973,6 +973,11 @@ export class MobileAppService {
       });
     }
 
+    const totalTrialEpisodes = [
+      ...detail.seasons.flatMap((s) => s.episodes),
+      ...detail.standaloneEpisodes,
+    ].filter((e) => e.isFree || (e as any).isTrial !== false).length;
+
     const ratings = episodes
       .map((episode) => episode.rating ?? null)
       .filter((value): value is number => value !== null);
@@ -1000,13 +1005,14 @@ export class MobileAppService {
       is_subscribed: isSubscribed,
       is_trial: isTrial,
       is_locked: !detail.series.isFree && !isSubscribed && !isTrial,
-      ads: !isSubscribed && !isTrial,
-      ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed && !isTrial,
-      ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed && !isTrial,
-      show_banner_on_series_page: detail.series.showBannerOnSeriesPage && !isSubscribed && !isTrial,
+      ads: !isSubscribed,
+      ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed,
+      ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
+      show_banner_on_series_page: detail.series.showBannerOnSeriesPage && !isSubscribed,
       swipe_ad_frequency: detail.series.swipeAdFrequency ?? 0,
       total_episodes: detail.series.total_episodes,
       free_episodes: detail.series.free_episodes,
+      total_trial_episodes: totalTrialEpisodes,
       ads_list: seriesAdsMobile,
       trailer: trailerSource
         ? {

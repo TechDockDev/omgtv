@@ -31,8 +31,8 @@ export async function shutdownRedis() {
 
 export function buildEntitlementCacheKeys(userId: string): string[] {
   return [
-    `entitlement:${userId}:EPISODE`,
-    `entitlement:${userId}:REEL`,
+    `entitlement:v2:${userId}:EPISODE`,
+    `entitlement:v2:${userId}:REEL`,
   ];
 }
 

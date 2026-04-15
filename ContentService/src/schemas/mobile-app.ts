@@ -192,6 +192,7 @@ export const mobileSeriesDataSchema = z.object({
   swipe_ad_frequency: z.number(),
   total_episodes: z.number().int().nonnegative(),
   free_episodes: z.number().int().nonnegative(),
+  total_trial_episodes: z.number().int().nonnegative(),
   ads_list: z.array(adItemSchema),
   trailer: trailerSchema,
   episodes: z.array(seriesEpisodeSchema),
