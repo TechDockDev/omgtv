@@ -30,11 +30,11 @@ spec:
           resources:
             limits:
               cpu: "12"
-              ephemeral-storage: 20Gi
+              ephemeral-storage: 9Gi
               memory: 16Gi
             requests:
               cpu: "6"
-              ephemeral-storage: 10Gi
+              ephemeral-storage: 9Gi
               memory: 12Gi
         - name: cloud-sql-proxy
           image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
