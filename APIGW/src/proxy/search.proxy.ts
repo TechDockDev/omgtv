@@ -28,6 +28,7 @@ function mapToSearchResult(item: any): SearchResult {
     rating: 0, // User's personal rating, needs Engagement Service
     lastWatchedAt: null, // Dynamic: needs Engagement Service
     series_id: item.id,
+    isAudioSeries: !!item.is_audio_series,
     engagement: {
       likeCount: 0, // Placeholder
       viewCount: 0, // Placeholder

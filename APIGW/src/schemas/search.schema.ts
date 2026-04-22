@@ -21,6 +21,7 @@ export const searchResultSchema = z.object({
   rating: z.number(),
   lastWatchedAt: z.string().datetime().nullable(),
   series_id: z.string(),
+  isAudioSeries: z.boolean(),
   engagement: z.object({
     likeCount: z.number(),
     viewCount: z.number(),

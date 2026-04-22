@@ -29,13 +29,13 @@ spec:
               value: "https://media.omgtv.in"
           resources:
             limits:
+              cpu: "4"
+              ephemeral-storage: 6Gi
+              memory: 6Gi
+            requests:
               cpu: "2"
               ephemeral-storage: 4Gi
-              memory: 2Gi
-            requests:
-              cpu: "1"
-              ephemeral-storage: 2Gi
-              memory: 1Gi
+              memory: 4Gi
         - name: cloud-sql-proxy
           image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
           command: ["/cloud-sql-proxy"]
