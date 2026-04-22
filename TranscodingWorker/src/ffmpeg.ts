@@ -218,6 +218,7 @@ export class FFmpegService {
 
         const args = [
             "-y",
+            "-threads", "0",
             "-i", sourcePath,
             "-filter_complex", filterComplex,
             ...mapArgs,
