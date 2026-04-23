@@ -44,6 +44,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Detect Changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            apigw: 'APIGW/**'
+            auth-service: 'AuthService/**'
+            user-service: 'UserService/**'
+            content-service: 'ContentService/**'
+            engagement-service: 'EngagementService/**'
+            search-service: 'SearchService/**'
+            upload-service: 'UploadService/**'
+            subscription-service: 'SubscriptionService/**'
+            transcoding-worker: 'TranscodingWorker/**'
+            notification-service: 'NotificationService/**'
+
       - name: Build and Push Images
         run: |
           set -euo pipefail
@@ -53,20 +69,26 @@ jobs:
           build_push() {
             local name="$1"
             local dir="$2"
+            local changed="$3"
+            if [ "$changed" = "false" ]; then
+              echo "Skipping $name (no changes detected)"
+              return 0
+            fi
             echo "Building $name..."
             docker buildx build --platform linux/amd64 -t "${registry}/${name}:${TAG}" "${dir}" --push
           }
 
-          build_push apigw ./APIGW
-          build_push auth-service ./AuthService
-          build_push user-service ./UserService
-          build_push content-service ./ContentService
-          build_push engagement-service ./EngagementService
-          build_push search-service ./SearchService
-          build_push upload-service ./UploadService
-          build_push subscription-service ./SubscriptionService
-          build_push transcoding-worker ./TranscodingWorker
-          build_push notification-service ./NotificationService
+          build_push apigw ./APIGW "${{ steps.filter.outputs.apigw }}"
+          build_push auth-service ./AuthService "${{ steps.filter.outputs.auth-service }}"
+          build_push user-service ./UserService "${{ steps.filter.outputs.user-service }}"
+          build_push content-service ./ContentService "${{ steps.filter.outputs.content-service }}"
+          build_push engagement-service ./EngagementService "${{ steps.filter.outputs.engagement-service }}"
+          build_push search-service ./SearchService "${{ steps.filter.outputs.search-service }}"
+          build_push upload-service ./UploadService "${{ steps.filter.outputs.upload-service }}"
+          build_push subscription-service ./SubscriptionService "${{ steps.filter.outputs.subscription-service }}"
+          build_push transcoding-worker ./TranscodingWorker "${{ steps.filter.outputs.transcoding-worker }}"
+          build_push notification-service ./NotificationService "${{ steps.filter.outputs.notification-service }}"
+
 
       # ======================================================
       # 2. DEPLOY TO VM (SSH)

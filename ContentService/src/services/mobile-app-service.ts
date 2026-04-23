@@ -491,10 +491,14 @@ export class MobileAppService {
       ...detail.seasons.flatMap((season) => season.episodes),
       ...detail.standaloneEpisodes,
     ];
-    const progressMap = await this.loadProgressMap(allEpisodes, {
-      options,
-      limit: 200,
-    });
+    const allEpisodeIds = allEpisodes.map((ep) => ep.id);
+
+    const [progressMap, coinUnlockedIds] = await Promise.all([
+      this.loadProgressMap(allEpisodes, { options, limit: 200 }),
+      options?.context?.userId && this.deps.subscriptionClient
+        ? this.deps.subscriptionClient.checkCoinUnlockStatus(options.context.userId, allEpisodeIds)
+        : Promise.resolve(new Set<string>()),
+    ]);
 
     // Load engagement states for series and all episodes
     const engagementItems: Array<{ id: string; contentType: "reel" | "series" | "episode" }> = [
@@ -524,6 +528,7 @@ export class MobileAppService {
       entitlements,
       progressMap,
       engagementStates,
+      coinUnlockedIds,
       reviews: reviewsData,
       logger: options?.logger
     });
@@ -919,6 +924,7 @@ export class MobileAppService {
         string,
         { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
       >;
+      coinUnlockedIds?: Set<string>;
       logger: LoggerLike | undefined;
       reviews: { summary: any; user_reviews: any[] } | null;
     }
@@ -1061,6 +1067,7 @@ export class MobileAppService {
         string,
         { likeCount: number; viewCount: number; isLiked: boolean; isSaved: boolean; averageRating: number; reviewCount: number }
       >;
+      coinUnlockedIds?: Set<string>;
       seriesAdsMobile: ReturnType<typeof formatAdForMobile>[];
       episodeAdsMap: Map<string, ReturnType<typeof formatAdForMobile>[]>;
     }
@@ -1080,7 +1087,8 @@ export class MobileAppService {
             options.entitlements.episode,
             options.progressMap.get(episode.id),
             engagement?.averageRating,
-            mergedAds
+            mergedAds,
+            options.coinUnlockedIds
           ),
           engagement: engagement ?? null,
         });
@@ -1099,7 +1107,8 @@ export class MobileAppService {
           options.entitlements.episode,
           options.progressMap.get(episode.id),
           engagement?.averageRating,
-          mergedAds
+          mergedAds,
+          options.coinUnlockedIds
         ),
         engagement: engagement ?? null,
       });
@@ -1115,17 +1124,20 @@ export class MobileAppService {
     entitlement: EntitlementSnapshot,
     progress?: ContinueWatchEntry,
     engagementRating?: number | null,
-    adsList?: ReturnType<typeof formatAdForMobile>[]
+    adsList?: ReturnType<typeof formatAdForMobile>[],
+    coinUnlockedIds?: Set<string>
   ) {
-    const isFullySubscribed = entitlement.planPurchased && !entitlement.isTrial;
-    const isTrialUser       = entitlement.isTrial;
-    const episodeIsFree     = episode.isFree;
-    const episodeIsTrial    = episode.isTrial;
+    const isFullySubscribed  = entitlement.planPurchased && !entitlement.isTrial;
+    const isTrialUser        = entitlement.isTrial;
+    const episodeIsFree      = episode.isFree;
+    const episodeIsTrial     = episode.isTrial;
+    const isCoinUnlocked     = coinUnlockedIds?.has(episode.id) ?? false;
 
     const hasAccess =
       episodeIsFree ||
       isFullySubscribed ||
-      (episodeIsTrial && (isTrialUser || isFullySubscribed));
+      (episodeIsTrial && (isTrialUser || isFullySubscribed)) ||
+      isCoinUnlocked;
 
     const effectiveEntitlement: EntitlementSnapshot = {
       canWatch: hasAccess,
@@ -1161,6 +1173,8 @@ export class MobileAppService {
       is_download_allowed: episode.playback.status === MediaAssetStatus.READY,
       is_locked: !hasAccess,
       is_trial_episode: episodeIsTrial,
+      coin_cost: (episode as any).coinCost ?? null,
+      coin_unlock_purchased: isCoinUnlocked,
       ads: !isFullySubscribed,
       ads_list: adsList ?? [],
       rating: engagementRating ?? episode.ratings.average,

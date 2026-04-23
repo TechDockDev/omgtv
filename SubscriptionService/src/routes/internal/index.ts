@@ -181,6 +181,28 @@ export default async function internalRoutes(app: FastifyInstance) {
     return { userIds: subscriptions.map(s => s.userId) };
   });
 
+  app.post("/episodes/unlock-status", {
+    schema: {
+      body: z.object({
+        userId: z.string().min(1),
+        episodeIds: z.array(z.string()).max(200),
+      })
+    }
+  }, async (request) => {
+    const { userId, episodeIds } = request.body as { userId: string; episodeIds: string[] };
+
+    if (!episodeIds.length) {
+      return { unlockedIds: [] };
+    }
+
+    const unlocks = await prisma.userEpisodeUnlock.findMany({
+      where: { userId, episodeId: { in: episodeIds } },
+      select: { episodeId: true },
+    });
+
+    return { unlockedIds: unlocks.map((u) => u.episodeId) };
+  });
+
   app.post("/coins/credit", {
     schema: {
       body: z.object({

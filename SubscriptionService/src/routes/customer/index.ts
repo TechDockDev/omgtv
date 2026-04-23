@@ -3,8 +3,10 @@ import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
 import { invalidateEntitlementCache, getRedis } from "../../lib/redis";
 import { CoinService } from "../../services/coinService";
+import { ContentClient } from "../../clients/content-client";
 import { TransactionSource } from "@prisma/client";
 const coinService = new CoinService();
+const contentClient = new ContentClient();
 
 const purchaseIntentSchema = z.object({
   planId: z.string().uuid(),
@@ -599,9 +601,10 @@ export default async function customerRoutes(app: FastifyInstance) {
       const { getRazorpay } = await import("../../lib/razorpay");
       const razorpay = getRazorpay();
 
-      try {
+    try {
+        const amountPaise = bundle.price * 100; // Convert Rupees to Paise for Razorpay
         const order = await razorpay.orders.create({
-          amount: bundle.price, // Using 'price' from schema
+          amount: amountPaise,
           currency: "INR",
           notes: {
             userId,
@@ -614,17 +617,17 @@ export default async function customerRoutes(app: FastifyInstance) {
           data: {
             userId,
             bundleId,
-            amountPaid: bundle.price, // Using 'amountPaid' and 'price' from schema
+            amountPaid: amountPaise, // Store in Paise for consistency
             coins: bundle.coins,
-            orderId: order.id, // Using 'orderId' from schema
-            status: "CREATED" // Using 'CREATED' from schema
+            orderId: order.id,
+            status: "CREATED"
           }
         });
 
         return {
           success: true,
           orderId: order.id,
-          amount: bundle.price,
+          amountPaise: amountPaise,
           coins: bundle.coins,
           purchaseId: purchase.id
         };
@@ -713,16 +716,118 @@ export default async function customerRoutes(app: FastifyInstance) {
   );
 
   // POST Unlock Episode
-  app.post<{ Body: { episodeId: string, cost: number } }>(
+  app.post<{ Body: { episodeId: string } }>(
     "/coins/unlock",
+    {
+      schema: {
+        body: z.object({ episodeId: z.string().uuid() }),
+      },
+    },
     async (request, reply) => {
       const userId = request.headers['x-user-id'] as string;
-      const { episodeId, cost } = request.body;
+      const { episodeId } = request.body;
+
       if (!userId) {
         return reply.code(401).send({ error: "User not authenticated" });
       }
-      const result = await coinService.unlockEpisode(userId, episodeId, cost);
-      return result;
+
+      let coinCost: number | null;
+      try {
+        const episode = await contentClient.getEpisodeCoinCost(episodeId);
+        coinCost = episode.coinCost;
+      } catch (err: any) {
+        if (err.message?.includes("not found")) {
+          return reply.code(404).send({ error: "Episode not found" });
+        }
+        request.log.error(err, "Failed to fetch episode coin cost");
+        return reply.code(502).send({ error: "Failed to fetch episode details" });
+      }
+
+      if (coinCost === null) {
+        return reply.code(400).send({ error: "Episode is not available for coin unlock" });
+      }
+
+      try {
+        const result = await coinService.unlockEpisode(userId, episodeId, coinCost);
+        const newBalance = await coinService.getBalance(userId);
+        return {
+          status: result.status,
+          episodeId,
+          coinsSpent: coinCost,
+          newBalance,
+          coinUnlockPurchased: true,
+        };
+      } catch (err: any) {
+        if (err.message === "Insufficient coin balance") {
+          return reply.code(402).send({ error: "Insufficient coin balance", required: coinCost });
+        }
+        throw err;
+      }
+    }
+  );
+
+  // GET Unlock History with episode details
+  app.get(
+    "/coins/unlocks",
+    {
+      schema: {
+        querystring: z.object({
+          limit: z.coerce.number().int().positive().max(50).default(20),
+          offset: z.coerce.number().int().min(0).default(0),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const userId = request.headers['x-user-id'] as string;
+      if (!userId) {
+        return reply.code(401).send({ error: "User not authenticated" });
+      }
+
+      const { limit, offset } = request.query as { limit: number; offset: number };
+
+      const [unlocks, total] = await Promise.all([
+        prisma.userEpisodeUnlock.findMany({
+          where: { userId },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+          skip: offset,
+        }),
+        prisma.userEpisodeUnlock.count({ where: { userId } }),
+      ]);
+
+      if (!unlocks.length) {
+        return { success: true, data: [], total: 0 };
+      }
+
+      // Fetch coins spent per episode from debit transactions
+      const referenceIds = unlocks.map((u) => `unlock:${userId}:${u.episodeId}`);
+      const debitTxs = await prisma.coinTransaction.findMany({
+        where: { referenceId: { in: referenceIds } },
+        select: { referenceId: true, amount: true },
+      });
+      const spentMap = new Map(
+        debitTxs.map((tx) => [tx.referenceId, Math.abs(tx.amount)])
+      );
+
+      // Fetch episode details from ContentService
+      const episodeIds = unlocks.map((u) => u.episodeId);
+      const episodeDetails = await contentClient.getEpisodesBatch(episodeIds);
+      const episodeMap = new Map(episodeDetails.map((ep) => [ep.id, ep]));
+
+      const data = unlocks.map((unlock) => {
+        const ep = episodeMap.get(unlock.episodeId);
+        const refId = `unlock:${userId}:${unlock.episodeId}`;
+        return {
+          episodeId: unlock.episodeId,
+          title: ep?.title ?? null,
+          thumbnail: ep?.thumbnail ?? null,
+          seriesName: ep?.seriesTitle ?? null,
+          coinsSpent: spentMap.get(refId) ?? null,
+          unlockedAt: unlock.createdAt,
+        };
+      });
+
+      return { success: true, data, total };
     }
   );
 }

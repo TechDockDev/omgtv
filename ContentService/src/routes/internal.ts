@@ -39,6 +39,24 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   });
   const systemActorId = "SYSTEM";
 
+  fastify.get("/episodes/:id/coin-cost", {
+    schema: {
+      params: z.object({ id: z.string().uuid() }),
+    },
+    handler: async (request) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+      const episode = await catalog.getEpisode(id);
+      if (!episode) {
+        throw fastify.httpErrors.notFound("Episode not found");
+      }
+      return {
+        episodeId: episode.id,
+        title: episode.title,
+        coinCost: (episode as any).coinCost ?? null,
+      };
+    },
+  });
+
   fastify.get("/videos/:id", {
     schema: {
       params: z.object({ id: z.string().uuid() }),

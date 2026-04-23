@@ -1,0 +1,9 @@
+# Transcoding worker runs on a dedicated Spot VM, not GKE.
+# This patch keeps the base deployment manifest valid but scales it to 0
+# so a GKE deploy never accidentally restarts it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcoding-worker
+spec:
+  replicas: 0

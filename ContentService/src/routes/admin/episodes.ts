@@ -32,6 +32,7 @@ const createEpisodeSchema = z.object({
   mediaAssetId: z.string().uuid().optional(), // Added support for Media Asset ID
   isFree: z.boolean().optional(),
   isTrial: z.boolean().optional(),
+  coinCost: z.number().int().nonnegative().nullable().optional(),
   displayOrder: z.number().int().optional(),
   episodeNumber: z.number().int().optional(),
 });
@@ -249,6 +250,7 @@ export default async function adminEpisodeRoutes(fastify: FastifyInstance) {
     mediaAssetId: z.union([z.string().uuid(), z.null()]).optional(),
     isFree: z.boolean().optional(),
     isTrial: z.boolean().optional(),
+    coinCost: z.number().int().nonnegative().nullable().optional(),
     displayOrder: z.number().int().optional(),
     episodeNumber: z.number().int().optional(),
   });

@@ -922,6 +922,7 @@ export class CatalogService {
       tags?: string[];
       isFree?: boolean;
       isTrial?: boolean;
+      coinCost?: number | null;
       mediaAssetId?: string;
       uploadId?: string;
       displayOrder?: number | null;
@@ -1019,6 +1020,7 @@ export class CatalogService {
         tags,
         isFree: input.isFree ?? false,
         isTrial: input.isTrial ?? true,
+        coinCost: input.coinCost ?? null,
         adminId,
       });
 
@@ -1153,6 +1155,7 @@ export class CatalogService {
       displayOrder?: number | null;
       isFree?: boolean;
       isTrial?: boolean;
+      coinCost?: number | null;
     }
   ) {
     const existing = await this.repo.findEpisodeById(episodeId, true); // Include relations to get current media asset

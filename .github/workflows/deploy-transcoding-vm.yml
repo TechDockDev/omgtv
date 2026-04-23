@@ -1,0 +1,96 @@
+name: Deploy Transcoding Worker to Prod VM
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "TranscodingWorker/**"
+      - "docker-compose.transcoding-prod.yml"
+      - ".github/workflows/deploy-transcoding-vm.yml"
+
+concurrency:
+  group: deploy-transcoding-vm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: "pocketlol-68ca6"
+  REGION: "asia-south1"
+  AR_REPO: "pocketlol"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ======================================================
+      # 1. AUTHENTICATE & BUILD
+      # ======================================================
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/912340818228/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-deployer@pocketlol-68ca6.iam.gserviceaccount.com"
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push transcoding-worker
+        run: |
+          set -euo pipefail
+          registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}"
+          echo "Building transcoding-worker..."
+          docker buildx build \
+            --platform linux/amd64 \
+            -t "${registry}/transcoding-worker:latest" \
+            ./TranscodingWorker \
+            --push
+
+      # ======================================================
+      # 2. DEPLOY TO PROD TRANSCODING VM (SSH)
+      # ======================================================
+      - name: Copy Compose File to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_TRANSCODING_VM_HOST }}
+          username: ${{ secrets.PROD_TRANSCODING_VM_USERNAME }}
+          key: ${{ secrets.PROD_TRANSCODING_VM_SSH_KEY }}
+          source: "docker-compose.transcoding-prod.yml"
+          target: "~/transcoding-app/"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PROD_TRANSCODING_VM_HOST }}
+          username: ${{ secrets.PROD_TRANSCODING_VM_USERNAME }}
+          key: ${{ secrets.PROD_TRANSCODING_VM_SSH_KEY }}
+          envs: DB_USER,DB_PASS
+          script: |
+            set -e
+            cd ~/transcoding-app
+
+            # Rename to the standard filename docker compose expects
+            mv docker-compose.transcoding-prod.yml docker-compose.yml
+
+            # Re-authenticate Docker with Artifact Registry (uses VM's service account)
+            gcloud auth configure-docker asia-south1-docker.pkg.dev --quiet
+
+            # Pull latest image and restart only the worker (cloud-sql-proxy stays up)
+            docker compose pull transcoding-worker
+            docker compose up -d --remove-orphans transcoding-worker
+
+            # Remove dangling images to free disk space
+            docker image prune -f
+        env:
+          DB_USER: ${{ secrets.PROD_DB_USER }}
+          DB_PASS: ${{ secrets.PROD_DB_PASS }}

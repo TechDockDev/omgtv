@@ -128,6 +128,7 @@ model Episode {
   durationSeconds    Int
   isFree             Boolean           @default(false)
   isTrial            Boolean           @default(true)
+  coinCost           Int?
   status             PublicationStatus @default(DRAFT)
   visibility         Visibility        @default(PUBLIC)
   publishedAt        DateTime?

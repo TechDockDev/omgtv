@@ -1,0 +1,28 @@
+services:
+  cloud-sql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.11.4
+    command:
+      - "--address=0.0.0.0"
+      - "--port=5432"
+      - "pocketlol-68ca6:asia-south1:pocketlol-pg"
+    restart: always
+
+  transcoding-worker:
+    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/transcoding-worker:latest
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - GCP_PROJECT_ID=pocketlol-68ca6
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_content?schema=public
+      - GCS_UPLOADS_BUCKET=videos-bucket-pocketlol-prod
+      - GCS_STREAMING_BUCKET=videos-bucket-pocketlol-prod
+      - PUBSUB_SUBSCRIPTION=projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-prod
+      - PUBSUB_READY_TOPIC=streaming-audit-prod
+      - PREVIEW_GENERATION_TOPIC=media.preview.requested-prod
+      - MEDIA_PROCESSED_TOPIC=media.processed-prod
+      - CDN_BASE_URL=https://media.omgtv.in
+      - MAX_CONCURRENT_JOBS=1
+      - ACK_DEADLINE_EXTENSION_MINUTES=10
+      - LOG_LEVEL=info
+    depends_on:
+      - cloud-sql-proxy

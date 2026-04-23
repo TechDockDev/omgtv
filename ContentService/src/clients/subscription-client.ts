@@ -23,6 +23,15 @@ export type ContentEntitlement = {
   isTrial: boolean;
 };
 
+const unlockStatusRequestSchema = z.object({
+  userId: z.string().min(1),
+  episodeIds: z.array(z.string()),
+});
+
+const unlockStatusResponseSchema = z.object({
+  unlockedIds: z.array(z.string()),
+});
+
 export class SubscriptionClient {
   constructor(
     private readonly options: {
@@ -83,5 +92,30 @@ export class SubscriptionClient {
     }
 
     return result;
+  }
+
+  async checkCoinUnlockStatus(userId: string, episodeIds: string[]): Promise<Set<string>> {
+    if (!episodeIds.length) return new Set();
+
+    const body = unlockStatusRequestSchema.parse({ userId, episodeIds });
+
+    try {
+      const response = await performServiceRequest<unknown>({
+        serviceName: "subscription",
+        baseUrl: this.options.baseUrl,
+        path: "/internal/episodes/unlock-status",
+        method: "POST",
+        body,
+        timeoutMs: this.options.timeoutMs,
+        spanName: "client:subscription:coin-unlock-status",
+      });
+
+      const parsed = unlockStatusResponseSchema.safeParse(response.payload);
+      if (!parsed.success) return new Set();
+
+      return new Set(parsed.data.unlockedIds);
+    } catch {
+      return new Set();
+    }
   }
 }

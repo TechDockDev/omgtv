@@ -547,6 +547,7 @@ export class CatalogRepository {
     displayOrder?: number | null;
     isFree?: boolean;
     isTrial?: boolean;
+    coinCost?: number | null;
     adminId?: string;
   }) {
     return this.prisma.episode.create({
@@ -573,6 +574,7 @@ export class CatalogRepository {
         displayOrder: data.displayOrder ?? null,
         isFree: data.isFree ?? false,
         isTrial: data.isTrial ?? true,
+        coinCost: data.coinCost ?? null,
         createdByAdminId: data.adminId,
         updatedByAdminId: data.adminId,
       } as any,
@@ -600,6 +602,7 @@ export class CatalogRepository {
       displayOrder?: number | null;
       isFree?: boolean;
       isTrial?: boolean;
+      coinCost?: number | null;
       adminId?: string;
     }
   ) {
@@ -627,6 +630,7 @@ export class CatalogRepository {
         displayOrder: data.displayOrder,
         isFree: data.isFree,
         isTrial: data.isTrial,
+        coinCost: data.coinCost,
         updatedByAdminId: data.adminId,
       } as any,
     });

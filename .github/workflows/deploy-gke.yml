@@ -123,8 +123,8 @@ jobs:
 
           build_push upload-service ./UploadService
           build_push subscription-service ./SubscriptionService
-          build_push transcoding-worker ./TranscodingWorker
           build_push notification-service ./NotificationService
+          # transcoding-worker is deployed separately to the prod transcoding VM
 
       - name: Deploy manifests (kustomize)
         run: |
@@ -143,7 +143,6 @@ jobs:
 
           kustomize edit set image upload-service="${registry}/upload-service:${TAG}"
           kustomize edit set image subscription-service="${registry}/subscription-service:${TAG}"
-          kustomize edit set image transcoding-worker="${registry}/transcoding-worker:${TAG}"
           kustomize edit set image notification-service="${registry}/notification-service:${TAG}"
 
           kubectl apply -k .
