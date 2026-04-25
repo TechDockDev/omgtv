@@ -4,7 +4,7 @@ services:
     command:
       - "--address=0.0.0.0"
       - "--port=5432"
-      - "pocketlol-68ca6:asia-south1:pocketlol-pg"
+      - "pocketlol-68ca6:asia-south1:pocketlol-pg-prod"
     restart: always
 
   transcoding-worker:

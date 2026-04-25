@@ -8,6 +8,7 @@ const listMediaQuerySchema = z.object({
     unassigned: z.coerce.boolean().optional(), // Only show unassigned library items
     limit: z.coerce.number().int().positive().max(100).default(20),
     cursor: z.string().uuid().optional(),
+    search: z.string().min(1).max(200).optional(),
 });
 
 const assignMediaBodySchema = z.object({
@@ -57,19 +58,27 @@ export default async function adminMediaRoutes(fastify: FastifyInstance) {
                 where.seriesId = null;
             }
 
+            // Search bypasses pagination — scans all matching records
+            if (query.search) {
+                where.OR = [
+                    { title: { contains: query.search, mode: "insensitive" } },
+                    { filename: { contains: query.search, mode: "insensitive" } },
+                ];
+            }
+
+            const isSearch = Boolean(query.search);
+
             const items = await prisma.mediaAsset.findMany({
                 where,
-                include: {
-                    variants: true,
-                },
+                include: { variants: true },
                 orderBy: { createdAt: "desc" },
-                take: query.limit + 1,
-                cursor: query.cursor ? { id: query.cursor } : undefined,
-                skip: query.cursor ? 1 : 0,
+                take: isSearch ? 500 : query.limit + 1,
+                cursor: !isSearch && query.cursor ? { id: query.cursor } : undefined,
+                skip: !isSearch && query.cursor ? 1 : 0,
             });
 
             let nextCursor: string | null = null;
-            if (items.length > query.limit) {
+            if (!isSearch && items.length > query.limit) {
                 const next = items.pop();
                 nextCursor = next?.id ?? null;
             }
