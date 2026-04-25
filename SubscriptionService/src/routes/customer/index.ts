@@ -22,20 +22,6 @@ export default async function customerRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { userId } = request.query as { userId?: string };
 
-    // Check if user has already used a trial (subscription OR pending trial transaction)
-    let hasUsedTrial = false;
-    if (userId) {
-      const [trialSub, pendingTrialTx] = await Promise.all([
-        prisma.userSubscription.findFirst({
-          where: { userId, trialPlanId: { not: null } }
-        }),
-        prisma.transaction.findFirst({
-          where: { userId, trialPlanId: { not: null }, status: { in: ["SUCCESS", "PENDING"] } }
-        })
-      ]);
-      hasUsedTrial = !!(trialSub || pendingTrialTx);
-    }
-
     // Fetch global trial plan (not tied to any specific plan)
     const globalTrialPlan = await prisma.trialPlan.findFirst({
       where: { isActive: true }
@@ -71,8 +57,8 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Plans retrieved successfully",
       developerMessage: "Public plans retrieved",
-      hasUsedTrial,
-      trialPlan: (globalTrialPlan && !hasUsedTrial) ? {
+      hasUsedTrial: false,
+      trialPlan: globalTrialPlan ? {
         id: globalTrialPlan.id,
         trialPricePaise: globalTrialPlan.trialPricePaise,
         durationDays: globalTrialPlan.durationDays,
@@ -86,34 +72,7 @@ export default async function customerRoutes(app: FastifyInstance) {
 
   app.get("/trial-plans", {
     schema: { querystring: z.object({ userId: z.string().optional() }) },
-  }, async (request) => {
-    const { userId } = request.query as { userId?: string };
-
-    // Check if user has already used a trial (subscription OR pending/success trial transaction)
-    let hasUsedTrial = false;
-    if (userId) {
-      const [trialSub, pendingTrialTx] = await Promise.all([
-        prisma.userSubscription.findFirst({
-          where: { userId, trialPlanId: { not: null } }
-        }),
-        prisma.transaction.findFirst({
-          where: { userId, trialPlanId: { not: null }, status: { in: ["SUCCESS", "PENDING"] } }
-        })
-      ]);
-      hasUsedTrial = !!(trialSub || pendingTrialTx);
-    }
-
-    if (hasUsedTrial) {
-      return {
-        success: true,
-        statusCode: 200,
-        userMessage: "Trial plans retrieved successfully",
-        developerMessage: "User has already used a trial, returning empty list",
-        hasUsedTrial: true,
-        data: [],
-      };
-    }
-
+  }, async (_request) => {
     const trialPlans = await prisma.trialPlan.findMany({
       where: { isActive: true },
       orderBy: { createdAt: 'desc' }
@@ -208,10 +167,6 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
     }
 
-    // Determine if user has ever used a trial (for frontend to hide trial option)
-    const hasUsedTrial = !!(await prisma.userSubscription.findFirst({
-      where: { userId, trialPlanId: { not: null } }
-    }));
 
     // If user has a trial, return trial details instead of main plan
     const isTrial = subscription?.status === "TRIAL" || !!subscription?.trialPlanId;
@@ -227,7 +182,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Subscription retrieved successfully",
       developerMessage: "User subscription details retrieved",
-      hasUsedTrial,
+      hasUsedTrial: false,
       data,
     };
   });
@@ -296,23 +251,6 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     if (trialPlan) {
       if (!trialPlan.isActive) return reply.notFound("Trial plan is inactive");
-
-      // One trial per user check
-      const existingTrial = await prisma.userSubscription.findFirst({
-        where: {
-          userId,
-          trialPlanId: { not: null }
-        }
-      });
-
-      if (existingTrial) {
-        // User has already used a trial. 
-        // Fallback to standard plan: ensure plan is set, then disable trial.
-        // Fallback to standard plan: ensure plan is set, then disable trial.
-        trialPlan = null;
-      }
-      // If eligible, we simply proceed with both plan (target) and trialPlan set.
-
     }
 
     if (!plan || !plan.isActive) {

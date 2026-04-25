@@ -60,6 +60,10 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
                 const subscriptionId = isInvoice ? subscriptionEntity.subscription_id : subscriptionEntity.id;
                 const paymentId = typeof payment === 'string' ? payment : payment?.id;
+                // Invoice entities use billing_end, subscription entities use current_end
+                if (isInvoice && subscriptionEntity.billing_end && !subscriptionEntity.current_end) {
+                    subscriptionEntity.current_end = subscriptionEntity.billing_end;
+                }
 
                 // 1. Try to find a pending transaction for this subscription (Initial purchase)
                 const transaction = await prisma.transaction.findFirst({
