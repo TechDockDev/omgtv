@@ -4,7 +4,7 @@ import crypto from "crypto";
 import { loadConfig } from "../config";
 import { getPrisma } from "../lib/prisma";
 import { getRazorpay } from "../lib/razorpay";
-import { SubscriptionStatus } from "@prisma/client";
+import { SubscriptionStatus, TransactionSource } from "@prisma/client";
 import { invalidateEntitlementCache } from "../lib/redis";
 import { CoinService } from "../services/coinService";
 
@@ -270,7 +270,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             await coinService.creditCoins({
                                 userId: purchase.userId,
                                 amount: purchase.coins,
-                                source: "PURCHASE",
+                                source: TransactionSource.PURCHASE,
                                 referenceId: orderId,
                             }, tx);
                         });

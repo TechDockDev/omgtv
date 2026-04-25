@@ -1,8 +1,15 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import crypto from "crypto";
 import { getPrisma } from "../../lib/prisma";
 import { getRazorpay } from "../../lib/razorpay";
 import { fetchUserDetails } from "../../services/userService";
+import { CoinService } from "../../services/coinService";
+import { ContentClient } from "../../clients/content-client";
+import { CoinTransactionType, TransactionSource, WalletStatus } from "@prisma/client";
+
+const coinService = new CoinService();
+const contentClient = new ContentClient();
 
 const planBodySchema = z.object({
   name: z.string().min(1),
@@ -685,4 +692,304 @@ export default async function adminRoutes(app: FastifyInstance) {
       },
     };
   });
+
+  // --- Admin Coin User Management ---
+
+  // GET /admin/coins/users/:userId/wallet  — balance + wallet status
+  app.get<{ Params: { userId: string } }>(
+    "/coins/users/:userId/wallet",
+    { schema: { params: z.object({ userId: z.string() }) } },
+    async (request, reply) => {
+      const { userId } = request.params;
+      const [balance, wallet] = await Promise.all([
+        coinService.getBalance(userId),
+        prisma.userWallet.findUnique({ where: { userId } }),
+      ]);
+      return {
+        success: true,
+        data: {
+          userId,
+          balance,
+          status: wallet?.status ?? "ACTIVE",
+          walletExists: !!wallet,
+        },
+      };
+    }
+  );
+
+  // PATCH /admin/coins/users/:userId/wallet  — block or unblock wallet
+  app.patch<{ Params: { userId: string }; Body: { status: WalletStatus } }>(
+    "/coins/users/:userId/wallet",
+    {
+      schema: {
+        params: z.object({ userId: z.string() }),
+        body: z.object({ status: z.nativeEnum(WalletStatus) }),
+      },
+    },
+    async (request, reply) => {
+      const { userId } = request.params;
+      const { status } = request.body;
+      const wallet = await prisma.userWallet.upsert({
+        where: { userId },
+        update: { status },
+        create: { userId, status },
+      });
+      return { success: true, data: wallet };
+    }
+  );
+
+  // POST /admin/coins/users/:userId/credit  — manually credit coins
+  app.post<{ Params: { userId: string }; Body: { amount: number; note?: string } }>(
+    "/coins/users/:userId/credit",
+    {
+      schema: {
+        params: z.object({ userId: z.string() }),
+        body: z.object({
+          amount: z.number().int().positive(),
+          note: z.string().optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { userId } = request.params;
+      const { amount, note } = request.body;
+      const referenceId = `admin-credit:${userId}:${crypto.randomUUID()}`;
+      const tx = await coinService.creditCoins({
+        userId,
+        amount,
+        source: TransactionSource.ADMIN,
+        referenceId,
+      });
+      const newBalance = await coinService.getBalance(userId);
+      return { success: true, data: { transaction: tx, newBalance, note } };
+    }
+  );
+
+  // POST /admin/coins/users/:userId/debit  — manually debit coins
+  app.post<{ Params: { userId: string }; Body: { amount: number; note?: string } }>(
+    "/coins/users/:userId/debit",
+    {
+      schema: {
+        params: z.object({ userId: z.string() }),
+        body: z.object({
+          amount: z.number().int().positive(),
+          note: z.string().optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { userId } = request.params;
+      const { amount, note } = request.body;
+      const referenceId = `admin-debit:${userId}:${crypto.randomUUID()}`;
+      try {
+        const tx = await coinService.debitCoins(userId, amount, referenceId);
+        const newBalance = await coinService.getBalance(userId);
+        return { success: true, data: { transaction: tx, newBalance, note } };
+      } catch (err: any) {
+        if (err.message === "Insufficient coin balance") {
+          return reply.code(402).send({ error: "Insufficient coin balance" });
+        }
+        throw err;
+      }
+    }
+  );
+
+  // GET /admin/coins/users/:userId/transactions  — full enriched history for one user
+  app.get<{ Params: { userId: string } }>(
+    "/coins/users/:userId/transactions",
+    {
+      schema: {
+        params: z.object({ userId: z.string() }),
+        querystring: z.object({
+          type: z.enum(["coin_buy", "coin_spend"]).optional(),
+          page: z.coerce.number().int().positive().default(1),
+          limit: z.coerce.number().int().positive().max(100).default(20),
+        }),
+      },
+    },
+    async (request) => {
+      const { userId } = request.params;
+      const { type, page, limit } = request.query as {
+        type?: "coin_buy" | "coin_spend";
+        page: number;
+        limit: number;
+      };
+      const skip = (page - 1) * limit;
+
+      const typeWhere =
+        type === "coin_buy"
+          ? { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE }
+          : type === "coin_spend"
+          ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
+          : {
+              OR: [
+                { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE },
+                { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK },
+              ],
+            };
+
+      const where = { userId, ...typeWhere };
+
+      const [total, txs] = await Promise.all([
+        prisma.coinTransaction.count({ where }),
+        prisma.coinTransaction.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit,
+        }),
+      ]);
+
+      const buyTxs = txs.filter(
+        (tx) => tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.PURCHASE
+      );
+      const orderIds = buyTxs.map((tx) => tx.referenceId).filter(Boolean) as string[];
+
+      const [purchases, episodeDetails] = await Promise.all([
+        orderIds.length
+          ? prisma.userCoinPurchase.findMany({ where: { orderId: { in: orderIds } } })
+          : Promise.resolve([]),
+        (async () => {
+          const spendTxs = txs.filter(
+            (tx) => tx.type === CoinTransactionType.DEBIT && tx.source === TransactionSource.UNLOCK
+          );
+          const episodeIds = spendTxs
+            .map((tx) => tx.referenceId?.split(":")?.[2])
+            .filter(Boolean) as string[];
+          return episodeIds.length ? contentClient.getEpisodesBatch(episodeIds) : [];
+        })(),
+      ]);
+
+      const bundleIds = [...new Set(purchases.map((p) => p.bundleId))];
+      const bundles = bundleIds.length
+        ? await prisma.coinBundle.findMany({ where: { id: { in: bundleIds } } })
+        : [];
+
+      const purchaseMap = new Map(purchases.map((p) => [p.orderId, p]));
+      const bundleMap = new Map(bundles.map((b) => [b.id, b]));
+      const episodeMap = new Map(episodeDetails.map((ep: any) => [ep.id, ep]));
+
+      const data = txs.map((tx) => {
+        const base = { id: tx.id, createdAt: tx.createdAt };
+        if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.PURCHASE) {
+          const purchase = purchaseMap.get(tx.referenceId ?? "");
+          const bundle = purchase ? bundleMap.get(purchase.bundleId) : null;
+          return {
+            ...base,
+            transactionType: "coin_buy" as const,
+            coins: tx.amount,
+            payment: purchase
+              ? {
+                  orderId: purchase.orderId,
+                  paymentId: purchase.paymentId,
+                  amountPaid: purchase.amountPaid,
+                  currency: bundle?.currency ?? "INR",
+                  status: purchase.status,
+                }
+              : null,
+            bundle: bundle
+              ? { title: bundle.title, coins: bundle.coins, price: bundle.price, currency: bundle.currency }
+              : null,
+          };
+        }
+        const episodeId = tx.referenceId?.split(":")?.[2] ?? null;
+        const ep = episodeId ? episodeMap.get(episodeId) : null;
+        return {
+          ...base,
+          transactionType: "coin_spend" as const,
+          coinsSpent: Math.abs(tx.amount),
+          episode: ep
+            ? { id: episodeId, title: ep.title, thumbnail: ep.thumbnail, seriesName: ep.seriesTitle }
+            : { id: episodeId },
+        };
+      });
+
+      return {
+        success: true,
+        data,
+        pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      };
+    }
+  );
+
+  // GET /admin/coins/episode-unlocks  — which users unlocked which episodes
+  app.get(
+    "/coins/episode-unlocks",
+    {
+      schema: {
+        querystring: z.object({
+          episodeId: z.string().uuid().optional(),
+          userId: z.string().optional(),
+          page: z.coerce.number().int().positive().default(1),
+          limit: z.coerce.number().int().positive().max(100).default(20),
+        }),
+      },
+    },
+    async (request) => {
+      const { episodeId, userId, page, limit } = request.query as {
+        episodeId?: string;
+        userId?: string;
+        page: number;
+        limit: number;
+      };
+      const skip = (page - 1) * limit;
+
+      const where = {
+        ...(episodeId ? { episodeId } : {}),
+        ...(userId ? { userId } : {}),
+      };
+
+      const [total, unlocks] = await Promise.all([
+        prisma.userEpisodeUnlock.count({ where }),
+        prisma.userEpisodeUnlock.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit,
+        }),
+      ]);
+
+      // Fetch coins spent per unlock from debit transactions
+      const referenceIds = unlocks.map((u) => `unlock:${u.userId}:${u.episodeId}`);
+      const debitTxs = referenceIds.length
+        ? await prisma.coinTransaction.findMany({
+            where: { referenceId: { in: referenceIds } },
+            select: { referenceId: true, amount: true },
+          })
+        : [];
+      const spentMap = new Map(debitTxs.map((tx) => [tx.referenceId, Math.abs(tx.amount)]));
+
+      // Fetch episode details
+      const episodeIds = [...new Set(unlocks.map((u) => u.episodeId))];
+      const episodeDetails = episodeIds.length ? await contentClient.getEpisodesBatch(episodeIds) : [];
+      const episodeMap = new Map(episodeDetails.map((ep: any) => [ep.id, ep]));
+
+      // Fetch user details
+      const userIds = [...new Set(unlocks.map((u) => u.userId))];
+      const userMap = await fetchUserDetails(userIds);
+
+      const data = unlocks.map((u) => {
+        const ep = episodeMap.get(u.episodeId);
+        const user = userMap.get(u.userId);
+        const refId = `unlock:${u.userId}:${u.episodeId}`;
+        return {
+          id: u.id,
+          unlockedAt: u.createdAt,
+          coinsSpent: spentMap.get(refId) ?? null,
+          user: user
+            ? { id: u.userId, name: user.name, email: user.email, phoneNumber: user.phoneNumber }
+            : { id: u.userId },
+          episode: ep
+            ? { id: u.episodeId, title: ep.title, thumbnail: ep.thumbnail, seriesName: ep.seriesTitle }
+            : { id: u.episodeId },
+        };
+      });
+
+      return {
+        success: true,
+        data,
+        pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      };
+    }
+  );
 }

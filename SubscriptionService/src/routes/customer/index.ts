@@ -1,12 +1,16 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import crypto from "crypto";
 import { getPrisma } from "../../lib/prisma";
 import { invalidateEntitlementCache, getRedis } from "../../lib/redis";
 import { CoinService } from "../../services/coinService";
 import { ContentClient } from "../../clients/content-client";
-import { TransactionSource } from "@prisma/client";
+import { TransactionSource, CoinTransactionType } from "@prisma/client";
+import { loadConfig } from "../../config";
+import { getRazorpay } from "../../lib/razorpay";
 const coinService = new CoinService();
 const contentClient = new ContentClient();
+const config = loadConfig();
 
 const purchaseIntentSchema = z.object({
   planId: z.string().uuid(),
@@ -478,24 +482,146 @@ export default async function customerRoutes(app: FastifyInstance) {
     return { balance };
   });
 
-  // GET User Transaction History
+  // GET Unified Transaction History (coin_buy + coin_spend)
   app.get("/coins/transactions", {
     schema: {
       querystring: z.object({
-        limit: z.coerce.number().int().positive().optional().default(20),
-        offset: z.coerce.number().int().min(0).optional().default(0),
+        type: z.enum(["coin_buy", "coin_spend"]).optional(),
+        page: z.coerce.number().int().positive().default(1),
+        limit: z.coerce.number().int().positive().max(50).default(20),
       })
     }
-  }, async (request) => {
+  }, async (request, reply) => {
     const userId = request.headers['x-user-id'] as string;
-    const { limit, offset } = request.query as { limit: number; offset: number };
-    
     if (!userId) {
-      throw app.httpErrors.unauthorized("User not authenticated");
+      return reply.code(401).send({ error: "User not authenticated" });
     }
 
-    const transactions = await coinService.getTransactions(userId, limit, offset);
-    return { success: true, data: transactions };
+    const { type, page, limit } = request.query as { type?: "coin_buy" | "coin_spend"; page: number; limit: number };
+    const skip = (page - 1) * limit;
+
+    const typeWhere = type === "coin_buy"
+      ? { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE }
+      : type === "coin_spend"
+      ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
+      : { OR: [
+          { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE },
+          { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK },
+        ]};
+
+    const where = { userId, ...typeWhere };
+
+    const [total, txs] = await Promise.all([
+      prisma.coinTransaction.count({ where }),
+      prisma.coinTransaction.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    // --- Enrich coin_buy ---
+    const buyTxs = txs.filter(tx => tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.PURCHASE);
+    const orderIds = buyTxs.map(tx => tx.referenceId).filter(Boolean) as string[];
+
+    const [purchases, episodeDetails] = await Promise.all([
+      orderIds.length
+        ? prisma.userCoinPurchase.findMany({ where: { orderId: { in: orderIds } } })
+        : Promise.resolve([]),
+      // --- Enrich coin_spend ---
+      (async () => {
+        const spendTxs = txs.filter(tx => tx.type === CoinTransactionType.DEBIT && tx.source === TransactionSource.UNLOCK);
+        const episodeIds = spendTxs
+          .map(tx => tx.referenceId?.split(":")?.[2])
+          .filter(Boolean) as string[];
+        return episodeIds.length ? contentClient.getEpisodesBatch(episodeIds) : [];
+      })(),
+    ]);
+
+    const bundleIds = [...new Set(purchases.map(p => p.bundleId))];
+    const bundles = bundleIds.length
+      ? await prisma.coinBundle.findMany({ where: { id: { in: bundleIds } } })
+      : [];
+
+    const purchaseMap = new Map(purchases.map(p => [p.orderId, p]));
+    const bundleMap = new Map(bundles.map(b => [b.id, b]));
+    const episodeMap = new Map(episodeDetails.map((ep: any) => [ep.id, ep]));
+
+    // --- Build enriched items ---
+    const items = txs.map(tx => {
+      const base = { id: tx.id, createdAt: tx.createdAt };
+
+      if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.PURCHASE) {
+        const purchase = purchaseMap.get(tx.referenceId ?? "");
+        const bundle = purchase ? bundleMap.get(purchase.bundleId) : null;
+        return {
+          ...base,
+          transactionType: "coin_buy" as const,
+          coins: tx.amount,
+          payment: purchase ? {
+            orderId: purchase.orderId,
+            paymentId: purchase.paymentId,
+            amountPaid: purchase.amountPaid,
+            currency: bundle?.currency ?? "INR",
+            status: purchase.status,
+          } : null,
+          bundle: bundle ? {
+            title: bundle.title,
+            coins: bundle.coins,
+            price: bundle.price,
+            currency: bundle.currency,
+          } : null,
+        };
+      }
+
+      // coin_spend
+      const episodeId = tx.referenceId?.split(":")?.[2] ?? null;
+      const ep = episodeId ? episodeMap.get(episodeId) : null;
+      return {
+        ...base,
+        transactionType: "coin_spend" as const,
+        coinsSpent: Math.abs(tx.amount),
+        episode: ep
+          ? { id: episodeId, title: ep.title, thumbnail: ep.thumbnail, seriesName: ep.seriesTitle }
+          : { id: episodeId },
+      };
+    });
+
+    // --- Group by today / yesterday / other ---
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayStart = new Date(todayStart.getTime() - 86400000);
+
+    const groupItem = (item: (typeof items)[0]) => {
+      const d = new Date(item.createdAt);
+      if (d >= todayStart) return "today";
+      if (d >= yesterdayStart) return "yesterday";
+      return "other";
+    };
+
+    const today: typeof items = [];
+    const yesterday: typeof items = [];
+    const other: typeof items = [];
+    for (const item of items) {
+      const g = groupItem(item);
+      if (g === "today") today.push(item);
+      else if (g === "yesterday") yesterday.push(item);
+      else other.push(item);
+    }
+
+    return {
+      success: true,
+      today,
+      yesterday,
+      other,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   });
 
   // GET Available Bundles
@@ -518,83 +644,95 @@ export default async function customerRoutes(app: FastifyInstance) {
   });
 
   // POST Create Coin Purchase Order
-  app.post<{ Body: { bundleId: string } }>(
+  app.post(
     "/coins/purchase/create",
+    {
+      schema: {
+        body: z.object({ bundleId: z.string().uuid() }),
+      },
+    },
     async (request, reply) => {
       const userId = request.headers['x-user-id'] as string;
-      const { bundleId } = request.body;
+      const { bundleId } = request.body as { bundleId: string };
 
       if (!userId) {
         return reply.code(401).send({ error: "User not authenticated" });
       }
 
-      const bundle = await prisma.coinBundle.findFirst({
-        where: { id: bundleId, active: true }
-      });
+      try {
+        await coinService.checkWalletStatus(userId);
 
-      if (!bundle) {
-        return reply.code(404).send({ error: "Coin bundle not found" });
-      }
+        const bundle = await prisma.coinBundle.findFirst({
+          where: { id: bundleId, active: true },
+        });
 
-      const { getRazorpay } = await import("../../lib/razorpay");
-      const razorpay = getRazorpay();
+        if (!bundle) {
+          return reply.code(404).send({ error: "Coin bundle not found" });
+        }
 
-    try {
-        const amountPaise = bundle.price * 100; // Convert Rupees to Paise for Razorpay
+        const razorpay = getRazorpay();
+        const amountPaise = bundle.price * 100;
         const order = await razorpay.orders.create({
           amount: amountPaise,
           currency: "INR",
-          notes: {
-            userId,
-            bundleId,
-            type: "COIN_PURCHASE"
-          }
+          notes: { userId, bundleId, type: "COIN_PURCHASE" },
         });
 
         const purchase = await prisma.userCoinPurchase.create({
           data: {
             userId,
             bundleId,
-            amountPaid: amountPaise, // Store in Paise for consistency
+            amountPaid: amountPaise,
             coins: bundle.coins,
             orderId: order.id,
-            status: "CREATED"
-          }
+            status: "CREATED",
+          },
         });
 
         return {
           success: true,
           orderId: order.id,
-          amountPaise: amountPaise,
+          amountPaise,
           coins: bundle.coins,
-          purchaseId: purchase.id
+          purchaseId: purchase.id,
+          razorpayKeyId: config.RAZORPAY_KEY_ID,
         };
       } catch (error: any) {
+        if (error.message === "Wallet is blocked. Please contact support.") {
+          return reply.code(403).send({ error: error.message });
+        }
         request.log.error(error, "Failed to create Razorpay order for coins");
-        return reply.code(500).send({ 
+        return reply.code(500).send({
           error: "Failed to create purchase order",
           message: error.message,
-          razorpayError: error.description || error.error?.description || "Unknown provider error"
+          razorpayError: error.description || error.error?.description || "Unknown provider error",
         });
       }
     }
   );
 
   // POST Verify Coin Purchase
-  app.post<{ Body: { orderId: string, paymentId: string, signature: string } }>(
+  app.post(
     "/coins/purchase/verify",
+    {
+      schema: {
+        body: z.object({
+          orderId: z.string(),
+          paymentId: z.string(),
+          signature: z.string(),
+        }),
+      },
+    },
     async (request, reply) => {
       const userId = request.headers['x-user-id'] as string;
-      const { orderId, paymentId, signature } = request.body;
+      const { orderId, paymentId, signature } = request.body as { orderId: string; paymentId: string; signature: string };
 
       if (!userId) {
         return reply.code(401).send({ error: "User not authenticated" });
       }
 
       // Verify Signature
-      const crypto = await import("crypto");
-      const config = await import("../../config").then(m => m.loadConfig());
-      const expectedSignature = crypto.default
+      const expectedSignature = crypto
         .createHmac("sha256", config.RAZORPAY_KEY_SECRET)
         .update(`${orderId}|${paymentId}`)
         .digest("hex");
@@ -688,10 +826,11 @@ export default async function customerRoutes(app: FastifyInstance) {
       try {
         const result = await coinService.unlockEpisode(userId, episodeId, coinCost);
         const newBalance = await coinService.getBalance(userId);
+        const alreadyUnlocked = result.status === "ALREADY_UNLOCKED";
         return {
           status: result.status,
           episodeId,
-          coinsSpent: coinCost,
+          coinsSpent: alreadyUnlocked ? 0 : coinCost,
           newBalance,
           coinUnlockPurchased: true,
         };
