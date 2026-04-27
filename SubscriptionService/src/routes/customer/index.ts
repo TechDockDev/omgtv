@@ -26,19 +26,16 @@ export default async function customerRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { userId } = request.query as { userId?: string };
 
-    // Fetch global trial plan (not tied to any specific plan)
-    const globalTrialPlan = await prisma.trialPlan.findFirst({
-      where: { isActive: true }
-    });
+    const [globalTrialPlan, plans, appConfig, usedTrialRecord] = await Promise.all([
+      prisma.trialPlan.findFirst({ where: { isActive: true } }),
+      prisma.subscriptionPlan.findMany({ where: { isActive: true, deletedAt: null }, orderBy: { pricePaise: "asc" } }),
+      (prisma as any).subscriptionGlobalConfig.findFirst({ where: { id: 1 } }),
+      userId
+        ? prisma.userSubscription.findFirst({ where: { userId, trialPlanId: { not: null } } })
+        : Promise.resolve(null),
+    ]);
 
-    const plans = await prisma.subscriptionPlan.findMany({
-      where: { isActive: true, deletedAt: null },
-      orderBy: { pricePaise: 'asc' }
-    });
-
-    const config = await (prisma as any).subscriptionGlobalConfig.findFirst({
-      where: { id: 1 }
-    });
+    const hasUsedTrial = !!usedTrialRecord;
 
     const formattedPlans = plans.map(plan => {
       const durationMonths = Math.round(plan.durationDays / 30);
@@ -61,15 +58,15 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Plans retrieved successfully",
       developerMessage: "Public plans retrieved",
-      hasUsedTrial: false,
+      hasUsedTrial,
       trialPlan: globalTrialPlan ? {
         id: globalTrialPlan.id,
         trialPricePaise: globalTrialPlan.trialPricePaise,
         durationDays: globalTrialPlan.durationDays,
         isAutoDebit: globalTrialPlan.isAutoDebit,
-        isEligible: true
+        isEligible: !hasUsedTrial,
       } : null,
-      promoVideoUrl: config?.promoVideoUrl || null,
+      promoVideoUrl: appConfig?.promoVideoUrl || null,
       data: formattedPlans,
     };
   });
@@ -234,6 +231,41 @@ export default async function customerRoutes(app: FastifyInstance) {
         userMessage: "User not authenticated",
         developerMessage: "Missing x-user-id header"
       });
+    }
+
+    // Block if user already has an active or trial subscription
+    const activeSubscription = await prisma.userSubscription.findFirst({
+      where: {
+        userId,
+        status: { in: ["ACTIVE", "TRIAL"] },
+        endsAt: { gt: new Date() },
+      },
+    });
+
+    if (activeSubscription) {
+      return reply.code(409).send({
+        success: false,
+        statusCode: 409,
+        code: "ALREADY_SUBSCRIBED",
+        userMessage: "You already have an active subscription",
+        developerMessage: "User already has an active or trial subscription",
+      });
+    }
+
+    // Block if user is requesting trial but has already used one
+    if (isTrial) {
+      const usedTrial = await prisma.userSubscription.findFirst({
+        where: { userId, trialPlanId: { not: null } },
+      });
+      if (usedTrial) {
+        return reply.code(409).send({
+          success: false,
+          statusCode: 409,
+          code: "TRIAL_ALREADY_USED",
+          userMessage: "You have already used your free trial",
+          developerMessage: "User has previously activated a trial subscription",
+        });
+      }
     }
 
     let plan = await prisma.subscriptionPlan.findFirst({

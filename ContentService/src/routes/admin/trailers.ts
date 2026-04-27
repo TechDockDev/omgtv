@@ -3,6 +3,25 @@ import { z } from "zod";
 import { MediaAssetStatus, MediaAssetType } from "@prisma/client";
 import { getPrisma } from "../../lib/prisma";
 
+// Resolve a media asset by uploadId (UploadService session string) or by its UUID id.
+// Mirrors how CatalogService resolves assets for episodes — tries uploadId first, then id.
+async function resolveMediaAsset(
+  prisma: ReturnType<typeof getPrisma>,
+  opts: { uploadId?: string; mediaAssetId?: string }
+) {
+  if (opts.mediaAssetId) {
+    return prisma.mediaAsset.findUnique({ where: { id: opts.mediaAssetId }, include: { variants: true } });
+  }
+  if (opts.uploadId) {
+    // Try as UploadService session string first
+    const byUploadId = await prisma.mediaAsset.findUnique({ where: { uploadId: opts.uploadId }, include: { variants: true } });
+    if (byUploadId) return byUploadId;
+    // Fallback: treat it as the MediaAsset UUID (admin may send the id field as uploadId)
+    return prisma.mediaAsset.findUnique({ where: { id: opts.uploadId }, include: { variants: true } }).catch(() => null);
+  }
+  return null;
+}
+
 const createTrailerSchema = z.object({
   title: z.string().min(1).optional(),
   thumbnailUrl: z.string().url().optional(),
@@ -46,9 +65,7 @@ export default async function adminTrailerRoutes(fastify: FastifyInstance) {
 
       // Same pattern as episodes — link existing MediaAsset if uploadId or mediaAssetId given
       if (body.uploadId || body.mediaAssetId) {
-        const asset = body.uploadId
-          ? await prisma.mediaAsset.findUnique({ where: { uploadId: body.uploadId } })
-          : await prisma.mediaAsset.findUnique({ where: { id: body.mediaAssetId } });
+        const asset = await resolveMediaAsset(prisma, { uploadId: body.uploadId, mediaAssetId: body.mediaAssetId });
 
         if (!asset) return reply.status(404).send({ message: "Media asset not found" });
 
@@ -118,9 +135,7 @@ export default async function adminTrailerRoutes(fastify: FastifyInstance) {
       // If new video is being linked
       let targetId = trailer.id;
       if (body.uploadId || body.mediaAssetId) {
-        const asset = body.uploadId
-          ? await prisma.mediaAsset.findUnique({ where: { uploadId: body.uploadId } })
-          : await prisma.mediaAsset.findUnique({ where: { id: body.mediaAssetId } });
+        const asset = await resolveMediaAsset(prisma, { uploadId: body.uploadId, mediaAssetId: body.mediaAssetId });
 
         if (!asset) return reply.status(404).send({ message: "Media asset not found" });
 
