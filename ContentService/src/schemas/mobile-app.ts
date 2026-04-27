@@ -133,7 +133,7 @@ export const mobileTagsResponseSchema = z.object({
 const trailerSchema = z
   .object({
     thumbnail: z.string().nullable(),
-    duration_seconds: z.number().int().positive(),
+    duration_seconds: z.number().int().nonnegative(),
     streaming: streamingInfoSchema,
   })
   .nullable();
@@ -194,6 +194,7 @@ export const mobileSeriesDataSchema = z.object({
   free_episodes: z.number().int().nonnegative(),
   total_trial_episodes: z.number().int().nonnegative(),
   ads_list: z.array(adItemSchema),
+  is_trailer_available: z.boolean(),
   trailer: trailerSchema,
   episodes: z.array(seriesEpisodeSchema),
   pagination: paginationSchema,

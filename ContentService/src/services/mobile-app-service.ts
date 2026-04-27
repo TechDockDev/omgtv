@@ -1,4 +1,4 @@
-import { MediaAssetStatus } from "@prisma/client";
+import { MediaAssetStatus, MediaAssetType } from "@prisma/client";
 import type { FastifyBaseLogger } from "fastify";
 import { getPrisma } from "../lib/prisma";
 import {
@@ -936,7 +936,7 @@ export class MobileAppService {
       ...detail.standaloneEpisodes.map((e) => e.id),
     ];
 
-    const [seriesAds, episodeAds] = await Promise.all([
+    const [seriesAds, episodeAds, trailerAsset] = await Promise.all([
       prisma.ad.findMany({
         where: { seriesId: detail.series.id, deletedAt: null },
         orderBy: { createdAt: "asc" },
@@ -947,6 +947,15 @@ export class MobileAppService {
             orderBy: { createdAt: "asc" },
           })
         : Promise.resolve([]),
+      prisma.mediaAsset.findFirst({
+        where: {
+          seriesId: detail.series.id,
+          type: MediaAssetType.TRAILER,
+          listed: true,
+          deletedAt: null,
+        },
+        include: { variants: true },
+      }),
     ]);
 
     const seriesAdsMobile = seriesAds.map(formatAdForMobile);
@@ -997,8 +1006,37 @@ export class MobileAppService {
         )
         : null;
 
-    const trailerSource = episodes[0];
     const seriesEngagement = options.engagementStates?.get(detail.series.id);
+
+    const isTrailerAvailable =
+      trailerAsset !== null &&
+      trailerAsset !== undefined &&
+      trailerAsset.status === MediaAssetStatus.READY &&
+      Boolean(trailerAsset.manifestUrl);
+
+    const trailer = isTrailerAvailable && trailerAsset
+      ? {
+          thumbnail: trailerAsset.defaultThumbnailUrl ?? null,
+          duration_seconds: 0,
+          streaming: this.buildStreamingInfo(
+            {
+              status: trailerAsset.status,
+              manifestUrl: trailerAsset.manifestUrl ?? null,
+              defaultThumbnailUrl: trailerAsset.defaultThumbnailUrl ?? null,
+              variants: ((trailerAsset as any).variants ?? []).map((v: any) => ({
+                label: v.label,
+                width: v.width ?? null,
+                height: v.height ?? null,
+                bitrateKbps: v.bitrateKbps ?? null,
+                codec: v.codec ?? null,
+                frameRate: v.frameRate ?? null,
+              })),
+            },
+            0,
+            { canWatch: true, planPurchased: false, isTrial: false }
+          ),
+        }
+      : null;
 
     return {
       series_id: detail.series.id,
@@ -1020,13 +1058,8 @@ export class MobileAppService {
       free_episodes: detail.series.free_episodes,
       total_trial_episodes: totalTrialEpisodes,
       ads_list: seriesAdsMobile,
-      trailer: trailerSource
-        ? {
-          thumbnail: trailerSource.thumbnail,
-          duration_seconds: trailerSource.duration_seconds,
-          streaming: trailerSource.streaming,
-        }
-        : null,
+      is_trailer_available: isTrailerAvailable,
+      trailer,
       episodes,
       rating: seriesEngagement?.averageRating ?? null,
       engagement: seriesEngagement ?? DEFAULT_ENGAGEMENT,

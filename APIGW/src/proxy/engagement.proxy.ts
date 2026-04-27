@@ -1046,3 +1046,48 @@ export async function getCustomAdAnalyticsProxy(
 
   return (payload as any)?.data ?? payload;
 }
+
+// Admin: Delete a review
+export async function deleteReviewProxy({
+  reviewId,
+  correlationId,
+  user,
+  span,
+}: {
+  reviewId: string;
+  correlationId: string;
+  user: GatewayUser;
+  span?: Span;
+}) {
+  const baseUrl = resolveServiceUrl("engagement");
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/internal/reviews/${reviewId}`,
+      method: "DELETE",
+      correlationId,
+      user,
+      headers: { "x-admin-id": user.id },
+      parentSpan: span,
+      spanName: "proxy:engagement:deleteReview",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 404) {
+        throw createHttpError(404, "Review not found", error.cause);
+      }
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to delete review",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return payload;
+}

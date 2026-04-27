@@ -31,6 +31,7 @@ import {
   uploadImage,
   uploadThumbnail,
 } from "../proxy/content.proxy";
+import { deleteReviewProxy } from "../proxy/engagement.proxy";
 import {
   mediaProcessSuccessResponseSchema,
   mediaAssetListSuccessResponseSchema,
@@ -415,6 +416,36 @@ export default fp(
           seriesId,
           limit,
           cursor,
+          correlationId: request.correlationId,
+          user: request.user!,
+          span: request.telemetrySpan,
+        });
+        return reply.send(result);
+      },
+    });
+
+    // DELETE a review by ID (admin moderation)
+    fastify.route<{
+      Params: { reviewId: string };
+    }>({
+      method: "DELETE",
+      url: "/admin/catalog/reviews/:reviewId",
+      schema: {
+        params: z.object({ reviewId: z.string().uuid() }),
+        response: {
+          404: errorResponseSchema,
+          500: errorResponseSchema,
+        },
+      },
+      config: {
+        auth: { public: false },
+        rateLimitPolicy: "admin",
+      },
+      preHandler: [fastify.authorize(["admin"])],
+      async handler(request, reply) {
+        const { reviewId } = request.params;
+        const result = await deleteReviewProxy({
+          reviewId,
           correlationId: request.correlationId,
           user: request.user!,
           span: request.telemetrySpan,

@@ -37,6 +37,7 @@ enum AdType {
 enum MediaAssetType {
   EPISODE
   REEL
+  TRAILER
 }
 
 model Category {
@@ -203,6 +204,7 @@ model MediaAsset {
   manifestUrl     String?
   defaultThumbnailUrl String?
   status          MediaAssetStatus @default(PENDING)
+  listed          Boolean          @default(true) // For trailers: list/unlist visibility
   createdByAdminId String?
   updatedByAdminId String?
   createdAt       DateTime         @default(now())

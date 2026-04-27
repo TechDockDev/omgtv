@@ -5,8 +5,11 @@ import {
     getGeneralDashboardStats,
     getCustomAdAnalytics,
 } from "../services/admin-analytics";
+import { getReviews, deleteReview } from "../services/collection-engagement";
 import { getPrismaOptional } from "../lib/prisma";
+import { getRedisOptional } from "../lib/redis";
 import { userContentStatsResponseSchema } from "../schemas/admin-analytics";
+import { reviewsResponseSchema, getReviewsQuerySchema } from "../schemas/review";
 
 const userIdParamsSchema = z.object({
     userId: z.string().min(1),
@@ -158,6 +161,84 @@ export default async function adminRoutes(fastify: FastifyInstance) {
             }
 
             return { stats };
+        },
+    });
+
+    // --- Review Management ---
+
+    const redis = getRedisOptional();
+
+    // GET all reviews for a series (admin view)
+    const seriesIdParamsSchema = z.object({
+        seriesId: z.string().uuid(),
+    });
+
+    fastify.get("/reviews/:seriesId", {
+        schema: {
+            params: seriesIdParamsSchema,
+            querystring: getReviewsQuerySchema,
+            response: { 200: reviewsResponseSchema },
+        },
+        handler: async (request) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+
+            const { seriesId } = seriesIdParamsSchema.parse(request.params);
+            const query = getReviewsQuerySchema.parse(request.query);
+
+            const result = await getReviews({
+                redis,
+                prisma,
+                entityType: "series",
+                entityId: seriesId,
+                limit: query.limit,
+                cursor: query.cursor,
+            });
+
+            return {
+                summary: {
+                    average_rating: result.averageRating,
+                    total_reviews: result.totalReviews,
+                },
+                user_reviews: result.reviews as any[],
+                next_cursor: result.nextCursor,
+            };
+        },
+    });
+
+    // DELETE a review by ID (admin moderation)
+    const reviewIdParamsSchema = z.object({
+        reviewId: z.string().uuid(),
+    });
+
+    fastify.delete("/reviews/:reviewId", {
+        schema: {
+            params: reviewIdParamsSchema,
+        },
+        handler: async (request, reply) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+
+            const { reviewId } = reviewIdParamsSchema.parse(request.params);
+
+            const result = await deleteReview({
+                redis,
+                prisma,
+                reviewId,
+            });
+
+            if (!result.deleted) {
+                return reply.code(404).send({ error: "Review not found" });
+            }
+
+            return {
+                success: true,
+                message: "Review deleted successfully",
+                contentType: result.contentType,
+                contentId: result.contentId,
+            };
         },
     });
 }

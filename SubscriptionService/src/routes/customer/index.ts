@@ -849,8 +849,8 @@ export default async function customerRoutes(app: FastifyInstance) {
     {
       schema: {
         querystring: z.object({
+          page: z.coerce.number().int().positive().default(1),
           limit: z.coerce.number().int().positive().max(50).default(20),
-          offset: z.coerce.number().int().min(0).default(0),
         }),
       },
     },
@@ -860,35 +860,34 @@ export default async function customerRoutes(app: FastifyInstance) {
         return reply.code(401).send({ error: "User not authenticated" });
       }
 
-      const { limit, offset } = request.query as { limit: number; offset: number };
+      const { page, limit } = request.query as { page: number; limit: number };
+      const skip = (page - 1) * limit;
 
       const [unlocks, total] = await Promise.all([
         prisma.userEpisodeUnlock.findMany({
           where: { userId },
           orderBy: { createdAt: "desc" },
           take: limit,
-          skip: offset,
+          skip,
         }),
         prisma.userEpisodeUnlock.count({ where: { userId } }),
       ]);
 
       if (!unlocks.length) {
-        return { success: true, data: [], total: 0 };
+        return { success: true, data: [], pagination: { total: 0, page, limit, totalPages: 0 } };
       }
 
       // Fetch coins spent per episode from debit transactions
       const referenceIds = unlocks.map((u) => `unlock:${userId}:${u.episodeId}`);
-      const debitTxs = await prisma.coinTransaction.findMany({
-        where: { referenceId: { in: referenceIds } },
-        select: { referenceId: true, amount: true },
-      });
-      const spentMap = new Map(
-        debitTxs.map((tx) => [tx.referenceId, Math.abs(tx.amount)])
-      );
+      const [debitTxs, episodeDetails] = await Promise.all([
+        prisma.coinTransaction.findMany({
+          where: { referenceId: { in: referenceIds } },
+          select: { referenceId: true, amount: true },
+        }),
+        contentClient.getEpisodesBatch(unlocks.map((u) => u.episodeId)),
+      ]);
 
-      // Fetch episode details from ContentService
-      const episodeIds = unlocks.map((u) => u.episodeId);
-      const episodeDetails = await contentClient.getEpisodesBatch(episodeIds);
+      const spentMap = new Map(debitTxs.map((tx) => [tx.referenceId, Math.abs(tx.amount)]));
       const episodeMap = new Map(episodeDetails.map((ep) => [ep.id, ep]));
 
       const data = unlocks.map((unlock) => {
@@ -904,7 +903,11 @@ export default async function customerRoutes(app: FastifyInstance) {
         };
       });
 
-      return { success: true, data, total };
+      return {
+        success: true,
+        data,
+        pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      };
     }
   );
 }

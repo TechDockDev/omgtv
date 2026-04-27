@@ -7,9 +7,11 @@ import { fetchUserDetails } from "../../services/userService";
 import { CoinService } from "../../services/coinService";
 import { ContentClient } from "../../clients/content-client";
 import { CoinTransactionType, TransactionSource, WalletStatus } from "@prisma/client";
+import { getRedis } from "../../lib/redis";
 
 const coinService = new CoinService();
 const contentClient = new ContentClient();
+const BUNDLES_CACHE_KEY = "coins:bundles:all";
 
 const planBodySchema = z.object({
   name: z.string().min(1),
@@ -620,12 +622,11 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.post<{ Body: z.infer<typeof coinBundleSchema> }>(
     "/coins/bundles",
-    {
-      schema: { body: coinBundleSchema },
-    },
+    { schema: { body: coinBundleSchema } },
     async (request, reply) => {
       const body = coinBundleSchema.parse(request.body);
       const bundle = await prisma.coinBundle.create({ data: body });
+      await getRedis().del(BUNDLES_CACHE_KEY).catch(() => { });
       return reply.code(201).send({
         success: true,
         userMessage: "Coin bundle created successfully",
@@ -635,12 +636,35 @@ export default async function adminRoutes(app: FastifyInstance) {
   );
 
   app.get("/coins/bundles", async () => {
-    const bundles = await prisma.coinBundle.findMany({
-      orderBy: { price: "asc" },
-    });
+    const bundles = await prisma.coinBundle.findMany({ orderBy: { price: "asc" } });
     return { success: true, data: bundles };
   });
 
+  // PUT /admin/coins/bundles/:id — edit all fields
+  app.put<{ Params: { id: string }; Body: z.infer<typeof coinBundleSchema> }>(
+    "/coins/bundles/:id",
+    {
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: coinBundleSchema,
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const existing = await prisma.coinBundle.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: "Coin bundle not found" });
+      }
+      const bundle = await prisma.coinBundle.update({
+        where: { id },
+        data: request.body,
+      });
+      await getRedis().del(BUNDLES_CACHE_KEY).catch(() => { });
+      return { success: true, userMessage: "Coin bundle updated successfully", data: bundle };
+    }
+  );
+
+  // PATCH /admin/coins/bundles/:id — toggle active only
   app.patch<{ Params: { id: string }; Body: { active: boolean } }>(
     "/coins/bundles/:id",
     {
@@ -652,17 +676,33 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { id } = request.params;
       const { active } = request.body;
-
-      const bundle = await prisma.coinBundle.update({
-        where: { id },
-        data: { active },
-      });
-
+      const existing = await prisma.coinBundle.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: "Coin bundle not found" });
+      }
+      const bundle = await prisma.coinBundle.update({ where: { id }, data: { active } });
+      await getRedis().del(BUNDLES_CACHE_KEY).catch(() => { });
       return {
         success: true,
         userMessage: `Coin bundle ${active ? "activated" : "deactivated"} successfully`,
         data: bundle,
       };
+    }
+  );
+
+  // DELETE /admin/coins/bundles/:id
+  app.delete<{ Params: { id: string } }>(
+    "/coins/bundles/:id",
+    { schema: { params: z.object({ id: z.string().uuid() }) } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const existing = await prisma.coinBundle.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: "Coin bundle not found" });
+      }
+      await prisma.coinBundle.delete({ where: { id } });
+      await getRedis().del(BUNDLES_CACHE_KEY).catch(() => { });
+      return { success: true, userMessage: "Coin bundle deleted successfully" };
     }
   );
 
@@ -820,8 +860,8 @@ export default async function adminRoutes(app: FastifyInstance) {
         type === "coin_buy"
           ? { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE }
           : type === "coin_spend"
-          ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
-          : {
+            ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
+            : {
               OR: [
                 { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE },
                 { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK },
@@ -880,12 +920,12 @@ export default async function adminRoutes(app: FastifyInstance) {
             coins: tx.amount,
             payment: purchase
               ? {
-                  orderId: purchase.orderId,
-                  paymentId: purchase.paymentId,
-                  amountPaid: purchase.amountPaid,
-                  currency: bundle?.currency ?? "INR",
-                  status: purchase.status,
-                }
+                orderId: purchase.orderId,
+                paymentId: purchase.paymentId,
+                amountPaid: purchase.amountPaid,
+                currency: bundle?.currency ?? "INR",
+                status: purchase.status,
+              }
               : null,
             bundle: bundle
               ? { title: bundle.title, coins: bundle.coins, price: bundle.price, currency: bundle.currency }
@@ -953,9 +993,9 @@ export default async function adminRoutes(app: FastifyInstance) {
       const referenceIds = unlocks.map((u) => `unlock:${u.userId}:${u.episodeId}`);
       const debitTxs = referenceIds.length
         ? await prisma.coinTransaction.findMany({
-            where: { referenceId: { in: referenceIds } },
-            select: { referenceId: true, amount: true },
-          })
+          where: { referenceId: { in: referenceIds } },
+          select: { referenceId: true, amount: true },
+        })
         : [];
       const spentMap = new Map(debitTxs.map((tx) => [tx.referenceId, Math.abs(tx.amount)]));
 

@@ -176,6 +176,13 @@ export class CoinService {
                 remainingToDebit -= amountToTake;
             }
 
+            // Guard against concurrent debit race condition (READ COMMITTED allows
+            // two transactions to both pass the balance check above, then compete
+            // for the same credits — this catches the loser and rolls back cleanly)
+            if (remainingToDebit > 0) {
+                throw new Error("Insufficient coin balance");
+            }
+
             // 4. Record the final DEBIT transaction for auditing
             const debit = await tx.coinTransaction.create({
                 data: {

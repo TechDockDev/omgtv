@@ -832,6 +832,62 @@ export async function getReviews(params: {
   };
 }
 
+/**
+ * Deletes a review by its ID.
+ * Removes from DB and invalidates Redis review cache.
+ */
+export async function deleteReview(params: {
+  redis: Redis | null;
+  prisma: PrismaClient | null;
+  reviewId: string;
+}): Promise<{ deleted: boolean; contentType?: string; contentId?: string }> {
+  const { redis, prisma, reviewId } = params;
+
+  if (!prisma) {
+    throw new Error("Database not available");
+  }
+
+  // 1. Find the review first to get its details for cache invalidation
+  const review = await prisma.review.findUnique({ where: { id: reviewId } });
+  if (!review) {
+    return { deleted: false };
+  }
+
+  // 2. Delete from DB
+  await prisma.review.delete({ where: { id: reviewId } });
+
+  // 3. Invalidate Redis cache if available
+  if (redis) {
+    const entityType = review.contentType.toLowerCase() as EntityType;
+    const listKey = redisReviewListKey(entityType, review.contentId);
+    const statsKey = redisReviewStatsKey(entityType, review.contentId);
+
+    // Remove the specific review from the Redis list by scanning & removing
+    const allReviews = await redis.lrange(listKey, 0, -1);
+    for (const raw of allReviews) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.review_id === reviewId) {
+          await redis.lrem(listKey, 1, raw);
+          break;
+        }
+      } catch { /* skip malformed entries */ }
+    }
+
+    // Decrement stats
+    const multi = redis.multi();
+    multi.hincrby(statsKey, "count", -1);
+    multi.hincrby(statsKey, "sum", -review.rating);
+    await multi.exec();
+  }
+
+  return {
+    deleted: true,
+    contentType: review.contentType,
+    contentId: review.contentId,
+  };
+}
+
 // User state batch query for content enrichment
 export type UserStateEntry = {
   likeCount: number;
