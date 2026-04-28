@@ -84,6 +84,7 @@ export type ViewerFeedItem = {
   ads: any[];
   isFree: boolean;
   isTrial: boolean;
+  coinCost: number | null;
 };
 
 export type ViewerFeedResponse = {
@@ -313,6 +314,7 @@ export function buildFeedItem(
       end_seconds: ad.endSeconds,
       banner: ad.banner ?? false,
     })) ?? [],
+    coinCost: (episode as any).coinCost ?? null,
   };
 }
 
@@ -930,6 +932,7 @@ export class ViewerCatalogService {
             episodeNumber: null,
             displayOrder: null,
             ads: [],
+            coinCost: null,
           } satisfies ViewerFeedItem;
         });
 
@@ -1039,6 +1042,7 @@ export class ViewerCatalogService {
             episodeNumber: null,
             displayOrder: null,
             ads: [],
+            coinCost: null,
           } satisfies ViewerFeedItem;
         });
 

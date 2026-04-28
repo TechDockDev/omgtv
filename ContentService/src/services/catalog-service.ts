@@ -1018,7 +1018,7 @@ export class CatalogService {
         defaultThumbnailUrl: resolvedThumbnailUrl,
         captions: input.captions as Prisma.JsonValue | null,
         tags,
-        isFree: input.isFree ?? false,
+        isFree: (input.coinCost && input.coinCost > 0) ? true : (input.isFree ?? false),
         isTrial: input.isTrial ?? true,
         coinCost: input.coinCost ?? null,
         adminId,
@@ -1249,6 +1249,10 @@ export class CatalogService {
     const updatePayload: any = { ...data };
     delete updatePayload.uploadId; // Not a field on Episode
     delete updatePayload.mediaAssetId;
+    // If admin sets coinCost > 0, auto-set isFree = true so the episode is visible to free users
+    if (updatePayload.coinCost && updatePayload.coinCost > 0) {
+      updatePayload.isFree = true;
+    }
     if (newThumbnailUrl !== undefined) {
       updatePayload.defaultThumbnailUrl = newThumbnailUrl;
     }

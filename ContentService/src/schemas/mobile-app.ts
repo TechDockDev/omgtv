@@ -165,6 +165,8 @@ const seriesEpisodeSchema = z.object({
   is_download_allowed: z.boolean(),
   is_locked: z.boolean(),
   is_trial_episode: z.boolean(),
+  coin_cost: z.number().int().nonnegative().nullable(),
+  coin_unlock_purchased: z.boolean(),
   ads: z.boolean(),
   ads_list: z.array(adItemSchema),
   rating: z.number().nullable(),

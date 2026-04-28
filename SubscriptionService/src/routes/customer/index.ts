@@ -851,7 +851,7 @@ export default async function customerRoutes(app: FastifyInstance) {
         return reply.code(502).send({ error: "Failed to fetch episode details" });
       }
 
-      if (coinCost === null) {
+      if (!coinCost || coinCost <= 0) {
         return reply.code(400).send({ error: "Episode is not available for coin unlock" });
       }
 

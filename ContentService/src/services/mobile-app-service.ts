@@ -606,19 +606,12 @@ export class MobileAppService {
     >,
     existingEntries?: CarouselEntryWithContent[]
   ): Promise<CarouselEntryView[]> {
-    const limit = this.deps.config.carouselLimit;
     const entries = existingEntries || await this.deps.repository.listCarouselEntries();
     if (entries.length === 0) {
       return [];
     }
 
-    const curated = this.formatCuratedCarouselEntries(entries, engagementStates);
-    if (curated.length === 0) {
-      return [];
-    }
-
-    const trimmed = curated.slice(0, limit);
-    return trimmed;
+    return this.formatCuratedCarouselEntries(entries, engagementStates);
 
 
   }
@@ -980,11 +973,15 @@ export class MobileAppService {
     const isTrial = options.entitlements.episode.isTrial;
 
     // Filter episodes based on subscription status
-    // If not subscribed, only show free + trial episodes for trial users, or just free for free users
     if (!isSubscribed) {
       episodes = episodes.filter((episode) => {
-        // trial users see free + trial episodes; free users see only free episodes
-        return !episode.is_locked;
+        // Always show if accessible (free/trial/coin-unlocked)
+        if (!episode.is_locked) return true;
+        // Free tier users: show coin-gated episodes so they can choose to unlock
+        // Trial users: coins don't work in trial, so hide coin-gated locked episodes
+        if (!isTrial && episode.coin_cost && episode.coin_cost > 0) return true;
+        // Hide everything else (premium-only for free tier, locked for trial)
+        return false;
       });
     }
 
@@ -1165,12 +1162,21 @@ export class MobileAppService {
     const episodeIsFree      = episode.isFree;
     const episodeIsTrial     = episode.isTrial;
     const isCoinUnlocked     = coinUnlockedIds?.has(episode.id) ?? false;
+    const coinCost           = (episode as any).coinCost ?? 0;
+    const requiresCoins      = coinCost > 0;
 
-    const hasAccess =
-      episodeIsFree ||
-      isFullySubscribed ||
-      (episodeIsTrial && (isTrialUser || isFullySubscribed)) ||
-      isCoinUnlocked;
+    let hasAccess: boolean;
+    if (isFullySubscribed || isCoinUnlocked) {
+      // Premium gets full access. Coin-unlocked episodes are always accessible
+      // regardless of subscription status — user already paid with coins.
+      hasAccess = true;
+    } else if (isTrialUser) {
+      // Trial: free + trial episodes accessible. Coins not usable in trial.
+      hasAccess = episodeIsFree || episodeIsTrial;
+    } else {
+      // Free tier: isFree with no coin cost = free. coinCost > 0 = locked until coins spent.
+      hasAccess = episodeIsFree && !requiresCoins;
+    }
 
     const effectiveEntitlement: EntitlementSnapshot = {
       canWatch: hasAccess,

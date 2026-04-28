@@ -34,7 +34,7 @@ const envSchema = z.object({
   SERIES_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(120),
   RELATED_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(180),
   MOBILE_HOME_FEED_LIMIT: z.coerce.number().int().min(5).max(50).default(20),
-  MOBILE_HOME_CAROUSEL_LIMIT: z.coerce.number().int().min(1).max(10).default(5),
+  MOBILE_HOME_CAROUSEL_LIMIT: z.coerce.number().int().min(1).default(100),
   MOBILE_HOME_CONTINUE_WATCH_LIMIT: z.coerce
     .number()
     .int()
