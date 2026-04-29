@@ -26,16 +26,13 @@ export default async function customerRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { userId } = request.query as { userId?: string };
 
-    const [globalTrialPlan, plans, appConfig, usedTrialRecord] = await Promise.all([
+    const [globalTrialPlan, plans, appConfig] = await Promise.all([
       prisma.trialPlan.findFirst({ where: { isActive: true } }),
       prisma.subscriptionPlan.findMany({ where: { isActive: true, deletedAt: null }, orderBy: { pricePaise: "asc" } }),
       (prisma as any).subscriptionGlobalConfig.findFirst({ where: { id: 1 } }),
-      userId
-        ? prisma.userSubscription.findFirst({ where: { userId, trialPlanId: { not: null } } })
-        : Promise.resolve(null),
     ]);
 
-    const hasUsedTrial = !!usedTrialRecord;
+    const hasUsedTrial = false;
 
     const formattedPlans = plans.map(plan => {
       const durationMonths = Math.round(plan.durationDays / 30);
@@ -73,11 +70,15 @@ export default async function customerRoutes(app: FastifyInstance) {
 
   app.get("/trial-plans", {
     schema: { querystring: z.object({ userId: z.string().optional() }) },
-  }, async (_request) => {
+  }, async (request) => {
+    const { userId } = request.query as { userId?: string };
+
     const trialPlans = await prisma.trialPlan.findMany({
       where: { isActive: true },
       orderBy: { createdAt: 'desc' }
     });
+
+    const hasUsedTrial = false;
 
     const formattedTrialPlans = trialPlans.map(tp => ({
       id: tp.id,
@@ -85,7 +86,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       durationDays: tp.durationDays,
       reminderDays: tp.reminderDays,
       isAutoDebit: tp.isAutoDebit,
-      isEligible: true
+      isEligible: !hasUsedTrial
     }));
 
     return {
@@ -93,7 +94,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       statusCode: 200,
       userMessage: "Trial plans retrieved successfully",
       developerMessage: "Active trial plans retrieved",
-      hasUsedTrial: false,
+      hasUsedTrial,
       data: formattedTrialPlans,
     };
   });
@@ -233,37 +234,39 @@ export default async function customerRoutes(app: FastifyInstance) {
       });
     }
 
-    // Block if user already has an active or trial subscription
+    // Block if user already has an active, trial, or canceled-but-not-expired subscription
+    // Exception: Trial users CAN upgrade to a full paid subscription
     const activeSubscription = await prisma.userSubscription.findFirst({
       where: {
         userId,
-        status: { in: ["ACTIVE", "TRIAL"] },
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
         endsAt: { gt: new Date() },
       },
     });
 
     if (activeSubscription) {
-      return reply.code(409).send({
-        success: false,
-        statusCode: 409,
-        code: "ALREADY_SUBSCRIBED",
-        userMessage: "You already have an active subscription",
-        developerMessage: "User already has an active or trial subscription",
-      });
-    }
+      // A subscription is considered a trial if it's currently TRIAL, or if it's CANCELED but has a trialPlanId
+      const isOriginallyTrial = activeSubscription.status === "TRIAL" || (activeSubscription.status === "CANCELED" && activeSubscription.trialPlanId !== null);
 
-    // Block if user is requesting trial but has already used one
-    if (isTrial) {
-      const usedTrial = await prisma.userSubscription.findFirst({
-        where: { userId, trialPlanId: { not: null } },
-      });
-      if (usedTrial) {
+      // Allow trial → full paid upgrade (but NOT trial → trial)
+      const isTrialUpgrade = isOriginallyTrial && !isTrial;
+
+      if (!isTrialUpgrade) {
+        const isCanceled = activeSubscription.status === "CANCELED";
+        const endsAtFormatted = activeSubscription.endsAt.toLocaleDateString("en-IN", {
+          day: "numeric", month: "short", year: "numeric"
+        });
+
         return reply.code(409).send({
           success: false,
           statusCode: 409,
-          code: "TRIAL_ALREADY_USED",
-          userMessage: "You have already used your free trial",
-          developerMessage: "User has previously activated a trial subscription",
+          code: "ALREADY_SUBSCRIBED",
+          userMessage: isCanceled
+            ? `Your current plan is active until ${endsAtFormatted}. You can purchase a new plan after it expires.`
+            : "You already have an active subscription",
+          developerMessage: isCanceled
+            ? `User has a canceled subscription still valid until ${activeSubscription.endsAt.toISOString()}`
+            : "User already has an active or trial subscription",
         });
       }
     }
@@ -299,6 +302,28 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     const { getRazorpay } = await import("../../lib/razorpay");
     const razorpay = getRazorpay();
+
+    // Cancel any abandoned PENDING transactions for this user to prevent ghost Razorpay subscriptions
+    const stalePendingTxs = await prisma.transaction.findMany({
+      where: { userId, status: "PENDING", planId: plan.id },
+    });
+
+    for (const staleTx of stalePendingTxs) {
+      await prisma.transaction.update({
+        where: { id: staleTx.id },
+        data: { status: "FAILED", failureReason: "Superseded by new purchase intent" },
+      });
+
+      // Cancel the orphaned Razorpay subscription
+      if (staleTx.subscriptionId) {
+        try {
+          await razorpay.subscriptions.cancel(staleTx.subscriptionId);
+          request.log.info({ msg: "Cancelled stale Razorpay subscription", subscriptionId: staleTx.subscriptionId });
+        } catch (cancelErr: any) {
+          request.log.warn(cancelErr, "Failed to cancel stale Razorpay subscription (may already be cancelled)");
+        }
+      }
+    }
 
     try {
       const subscriptionOptions: any = {
@@ -477,6 +502,37 @@ export default async function customerRoutes(app: FastifyInstance) {
     // Extract trialPlanId from metadata or transaction
     const metadata = transaction.metadata as Record<string, any> | null;
     const trialPlanId = transaction.trialPlanId || metadata?.trialPlanId;
+
+    // If user is upgrading from trial, expire the old trial subscription
+    const existingTrialSub = await prisma.userSubscription.findFirst({
+      where: {
+        userId: transaction.userId,
+        status: { in: ["TRIAL", "CANCELED"] },
+        trialPlanId: { not: null },
+        endsAt: { gt: new Date() },
+      },
+    });
+
+    if (existingTrialSub) {
+      await prisma.userSubscription.update({
+        where: { id: existingTrialSub.id },
+        data: { status: "EXPIRED", endsAt: new Date() },
+      });
+
+      // Cancel the old trial's Razorpay subscription to stop future charges
+      if (existingTrialSub.razorpayOrderId) {
+        try {
+          await razorpay.subscriptions.cancel(existingTrialSub.razorpayOrderId);
+          request.log.info({
+            msg: "Cancelled old trial Razorpay subscription during upgrade",
+            oldSubId: existingTrialSub.id,
+            razorpaySubId: existingTrialSub.razorpayOrderId,
+          });
+        } catch (cancelErr) {
+          request.log.warn(cancelErr, "Failed to cancel old trial on Razorpay (may already be cancelled)");
+        }
+      }
+    }
 
     await prisma.userSubscription.create({
       data: {

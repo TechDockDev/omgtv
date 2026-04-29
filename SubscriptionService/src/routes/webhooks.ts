@@ -83,23 +83,61 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         }
                     });
 
-                    // Activate user subscription - use TRIAL status if this is a trial purchase
-                    const isTrial = !!transaction.trialPlanId;
-                    const userSubscription = await prisma.userSubscription.create({
-                        data: {
-                            userId: transaction.userId,
-                            planId: transaction.planId,
-                            trialPlanId: transaction.trialPlanId,
-                            status: isTrial ? "TRIAL" : "ACTIVE",
-                            razorpayOrderId: subscriptionId,
-                            transactionId: transaction.id,
-                            startsAt: new Date(subscriptionEntity.current_start * 1000),
-                            endsAt: new Date(subscriptionEntity.current_end * 1000)
-                        }
+                    // Guard: Check if verify endpoint already created this subscription (race condition)
+                    const alreadyCreated = await prisma.userSubscription.findFirst({
+                        where: { razorpayOrderId: subscriptionId }
                     });
 
-                    request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
-                    await invalidateEntitlementCache(transaction.userId);
+                    if (alreadyCreated) {
+                        request.log.info({ msg: "UserSubscription already exists (verify won the race), skipping creation", subscriptionId });
+                        await invalidateEntitlementCache(transaction.userId);
+                    } else {
+                        // If user is upgrading from trial, expire the old trial subscription
+                        const isTrial = !!transaction.trialPlanId;
+                        if (!isTrial) {
+                            const existingTrialSub = await prisma.userSubscription.findFirst({
+                                where: {
+                                    userId: transaction.userId,
+                                    status: { in: ["TRIAL", "CANCELED"] },
+                                    trialPlanId: { not: null },
+                                    endsAt: { gt: new Date() },
+                                },
+                            });
+
+                            if (existingTrialSub) {
+                                await prisma.userSubscription.update({
+                                    where: { id: existingTrialSub.id },
+                                    data: { status: "EXPIRED", endsAt: new Date() },
+                                });
+
+                                if (existingTrialSub.razorpayOrderId) {
+                                    try {
+                                        await razorpay.subscriptions.cancel(existingTrialSub.razorpayOrderId);
+                                        request.log.info({ msg: "Cancelled old trial Razorpay sub during webhook upgrade", oldRpSubId: existingTrialSub.razorpayOrderId });
+                                    } catch (cancelErr) {
+                                        request.log.warn(cancelErr, "Failed to cancel old trial on Razorpay from webhook");
+                                    }
+                                }
+                            }
+                        }
+
+                        // Activate user subscription - use TRIAL status if this is a trial purchase
+                        const userSubscription = await prisma.userSubscription.create({
+                            data: {
+                                userId: transaction.userId,
+                                planId: transaction.planId,
+                                trialPlanId: transaction.trialPlanId,
+                                status: isTrial ? "TRIAL" : "ACTIVE",
+                                razorpayOrderId: subscriptionId,
+                                transactionId: transaction.id,
+                                startsAt: new Date(subscriptionEntity.current_start * 1000),
+                                endsAt: new Date(subscriptionEntity.current_end * 1000)
+                            }
+                        });
+
+                        request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
+                        await invalidateEntitlementCache(transaction.userId);
+                    }
                 } else {
                     // 2. Might be a renewal or trial transition
                     request.log.info({ msg: "Subscription charged for renewal or trial transition", subscriptionId });
@@ -201,6 +239,35 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         where: { subscriptionId: subscriptionId }
                     });
                     if (tx) {
+                        // If user is upgrading from trial, expire the old trial subscription
+                        const isTrial = !!tx.trialPlanId;
+                        if (!isTrial) {
+                            const existingTrialSub = await prisma.userSubscription.findFirst({
+                                where: {
+                                    userId: tx.userId,
+                                    status: { in: ["TRIAL", "CANCELED"] },
+                                    trialPlanId: { not: null },
+                                    endsAt: { gt: new Date() },
+                                },
+                            });
+
+                            if (existingTrialSub) {
+                                await prisma.userSubscription.update({
+                                    where: { id: existingTrialSub.id },
+                                    data: { status: "EXPIRED", endsAt: new Date() },
+                                });
+
+                                if (existingTrialSub.razorpayOrderId) {
+                                    try {
+                                        await razorpay.subscriptions.cancel(existingTrialSub.razorpayOrderId);
+                                        request.log.info({ msg: "Cancelled old trial Razorpay sub during activated webhook upgrade", oldRpSubId: existingTrialSub.razorpayOrderId });
+                                    } catch (cancelErr) {
+                                        request.log.warn(cancelErr, "Failed to cancel old trial on Razorpay from activated webhook");
+                                    }
+                                }
+                            }
+                        }
+
                         await prisma.userSubscription.create({
                             data: {
                                 userId: tx.userId,
