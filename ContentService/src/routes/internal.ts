@@ -45,15 +45,19 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     },
     handler: async (request) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-      const episode = await catalog.getEpisode(id);
-      if (!episode) {
-        throw fastify.httpErrors.notFound("Episode not found");
+      try {
+        const episode = await catalog.getEpisode(id);
+        return {
+          episodeId: episode.id,
+          title: episode.title,
+          coinCost: (episode as any).coinCost ?? null,
+        };
+      } catch (err) {
+        if (err instanceof CatalogServiceError && err.code === "NOT_FOUND") {
+          throw fastify.httpErrors.notFound("Episode not found");
+        }
+        throw err;
       }
-      return {
-        episodeId: episode.id,
-        title: episode.title,
-        coinCost: (episode as any).coinCost ?? null,
-      };
     },
   });
 

@@ -84,4 +84,5 @@ metadata:
   name: subscription-service-config
 data:
   REDIS_URL: "redis://10.244.194.227:6379"
+  CONTENT_SERVICE_URL: "http://content-service:4600"
   # Use secrets for Razorpay in prod as well

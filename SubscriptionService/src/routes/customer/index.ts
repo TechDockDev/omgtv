@@ -903,8 +903,8 @@ export default async function customerRoutes(app: FastifyInstance) {
         if (err.message?.includes("not found")) {
           return reply.code(404).send({ error: "Episode not found" });
         }
-        request.log.error(err, "Failed to fetch episode coin cost");
-        return reply.code(502).send({ error: "Failed to fetch episode details" });
+        request.log.error({ err, episodeId, message: err.message }, "Failed to fetch episode coin cost from ContentService");
+        return reply.code(502).send({ error: "Failed to fetch episode details", detail: err.message });
       }
 
       if (!coinCost || coinCost <= 0) {
