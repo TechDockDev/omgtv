@@ -1126,6 +1126,11 @@ export class CatalogService {
     return episode;
   }
 
+  async getEpisodesBatchInfo(ids: string[]) {
+    if (!ids.length) return [];
+    return this.repo.findEpisodesWithRelationsByIds(ids, { includeNonPublic: true });
+  }
+
   async listEpisodes(params: {
     seriesId?: string;
     limit?: number;

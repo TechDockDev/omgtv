@@ -38,13 +38,13 @@ export class ContentClient {
 
   async getEpisodesBatch(
     episodeIds: string[]
-  ): Promise<Array<{ id: string; title: string; thumbnail: string | null; seriesTitle: string | null }>> {
+  ): Promise<Array<{ id: string; title: string | null; thumbnail: string | null; seriesTitle: string | null }>> {
     if (!episodeIds.length) return [];
 
-    const res = await fetch(`${this.baseUrl}/internal/catalog/batch`, {
+    const res = await fetch(`${this.baseUrl}/internal/episodes/batch-info`, {
       method: "POST",
       headers: this.headers,
-      body: JSON.stringify({ ids: episodeIds, type: "episode" }),
+      body: JSON.stringify({ ids: episodeIds }),
     });
 
     if (!res.ok) return [];
@@ -53,8 +53,8 @@ export class ContentClient {
     return (data.items ?? []).map((item: any) => ({
       id: item.id,
       title: item.title ?? null,
-      thumbnail: item.defaultThumbnailUrl ?? item.thumbnail ?? null,
-      seriesTitle: item.series?.title ?? item.seriesTitle ?? null,
+      thumbnail: item.thumbnail ?? null,
+      seriesTitle: item.seriesTitle ?? null,
     }));
   }
 }

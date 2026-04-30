@@ -232,6 +232,25 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     },
   });
 
+  fastify.post("/episodes/batch-info", {
+    schema: {
+      body: z.object({ ids: z.array(z.string().uuid()).max(200) }),
+    },
+    handler: async (request) => {
+      const { ids } = request.body as { ids: string[] };
+      if (!ids.length) return { items: [] };
+      const episodes = await catalog.getEpisodesBatchInfo(ids);
+      return {
+        items: episodes.map((ep: any) => ({
+          id: ep.id,
+          title: ep.title ?? null,
+          thumbnail: ep.defaultThumbnailUrl ?? ep.heroImageUrl ?? ep.playback?.defaultThumbnailUrl ?? null,
+          seriesTitle: ep.series?.title ?? null,
+        })),
+      };
+    },
+  });
+
   fastify.post("/catalog/batch", {
     schema: {
       body: batchContentRequestSchema,
