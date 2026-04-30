@@ -314,7 +314,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
             } else if (event === "payment.captured" || event === "order.paid") {
                 const isOrder = event === "order.paid";
                 const entity = isOrder ? payload.order?.entity : payload.payment?.entity;
-                
+
                 if (entity?.notes?.type === "COIN_PURCHASE") {
                     const orderId = isOrder ? entity.id : entity.order_id;
                     const paymentId = isOrder ? null : entity.id;
@@ -342,6 +342,21 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }, tx);
                         });
                         request.log.info({ msg: "Coin purchase fulfilled via webhook", orderId, userId });
+                    }
+                }
+            } else if (event === "payment.failed") {
+                const entity = payload.payment?.entity;
+                if (entity?.notes?.type === "COIN_PURCHASE") {
+                    const orderId = entity.order_id;
+                    const purchase = await prisma.userCoinPurchase.findUnique({
+                        where: { orderId }
+                    });
+                    if (purchase && purchase.status === "CREATED") {
+                        await prisma.userCoinPurchase.update({
+                            where: { id: purchase.id },
+                            data: { status: "FAILED" }
+                        });
+                        request.log.info({ msg: "Coin purchase marked FAILED via webhook", orderId });
                     }
                 }
             }

@@ -49,8 +49,8 @@ export class ContentClient {
 
     if (!res.ok) return [];
 
-    const data = await res.json() as { items: any[] };
-    return (data.items ?? []).map((item: any) => ({
+    const data = await res.json() as { data: { items: any[] } };
+    return (data.data?.items ?? []).map((item: any) => ({
       id: item.id,
       title: item.title ?? null,
       thumbnail: item.thumbnail ?? null,

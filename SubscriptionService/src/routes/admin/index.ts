@@ -1004,9 +1004,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       const episodeDetails = episodeIds.length ? await contentClient.getEpisodesBatch(episodeIds) : [];
       const episodeMap = new Map(episodeDetails.map((ep: any) => [ep.id, ep]));
 
-      // Fetch user details
+      // Fetch user details + balances
       const userIds = [...new Set(unlocks.map((u) => u.userId))];
-      const userMap = await fetchUserDetails(userIds);
+      const [userMap, balances] = await Promise.all([
+        fetchUserDetails(userIds),
+        Promise.all(userIds.map(async id => ({ id, balance: await coinService.getBalance(id) }))),
+      ]);
+      const balanceMap = new Map(balances.map(b => [b.id, b.balance]));
 
       const data = unlocks.map((u) => {
         const ep = episodeMap.get(u.episodeId);
@@ -1016,6 +1020,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           id: u.id,
           unlockedAt: u.createdAt,
           coinsSpent: spentMap.get(refId) ?? null,
+          remainingBalance: balanceMap.get(u.userId) ?? 0,
           user: user
             ? { id: u.userId, name: user.name, email: user.email, phoneNumber: user.phoneNumber }
             : { id: u.userId },

@@ -758,8 +758,51 @@ export default async function customerRoutes(app: FastifyInstance) {
           return reply.code(404).send({ error: "Coin bundle not found" });
         }
 
-        const razorpay = getRazorpay();
         const amountPaise = bundle.price * 100;
+
+        // Reuse or refresh existing pending order for this user+bundle
+        const existingPurchase = await prisma.userCoinPurchase.findFirst({
+          where: { userId, bundleId, status: "CREATED" },
+        });
+
+        const razorpay = getRazorpay();
+
+        if (existingPurchase) {
+          const ageMs = Date.now() - new Date(existingPurchase.createdAt).getTime();
+          const isStale = ageMs > 30 * 60 * 1000; // older than 30 minutes
+
+          if (!isStale) {
+            // Fresh enough — return existing order
+            return {
+              success: true,
+              orderId: existingPurchase.orderId,
+              amountPaise,
+              coins: bundle.coins,
+              purchaseId: existingPurchase.id,
+              razorpayKeyId: config.RAZORPAY_KEY_ID,
+            };
+          }
+
+          // Stale — create new Razorpay order and update the same row
+          const freshOrder = await razorpay.orders.create({
+            amount: amountPaise,
+            currency: "INR",
+            notes: { userId, bundleId, type: "COIN_PURCHASE" },
+          });
+          await prisma.userCoinPurchase.update({
+            where: { id: existingPurchase.id },
+            data: { orderId: freshOrder.id, createdAt: new Date() },
+          });
+          return {
+            success: true,
+            orderId: freshOrder.id,
+            amountPaise,
+            coins: bundle.coins,
+            purchaseId: existingPurchase.id,
+            razorpayKeyId: config.RAZORPAY_KEY_ID,
+          };
+        }
+
         const order = await razorpay.orders.create({
           amount: amountPaise,
           currency: "INR",
