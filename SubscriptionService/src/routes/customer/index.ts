@@ -880,35 +880,22 @@ export default async function customerRoutes(app: FastifyInstance) {
   );
 
   // POST Unlock Episode
-  app.post<{ Body: { episodeId: string } }>(
+  app.post<{ Body: { episodeId: string; coinCost: number } }>(
     "/coins/unlock",
     {
       schema: {
-        body: z.object({ episodeId: z.string().uuid() }),
+        body: z.object({
+          episodeId: z.string().uuid(),
+          coinCost: z.number().int().positive(),
+        }),
       },
     },
     async (request, reply) => {
       const userId = request.headers['x-user-id'] as string;
-      const { episodeId } = request.body;
+      const { episodeId, coinCost } = request.body;
 
       if (!userId) {
         return reply.code(401).send({ error: "User not authenticated" });
-      }
-
-      let coinCost: number | null;
-      try {
-        const episode = await contentClient.getEpisodeCoinCost(episodeId);
-        coinCost = episode.coinCost;
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
-          return reply.code(404).send({ error: "Episode not found" });
-        }
-        request.log.error({ err, episodeId, message: err.message }, "Failed to fetch episode coin cost from ContentService");
-        return reply.code(502).send({ error: "Failed to fetch episode details", detail: err.message });
-      }
-
-      if (!coinCost || coinCost <= 0) {
-        return reply.code(400).send({ error: "Episode is not available for coin unlock" });
       }
 
       try {
