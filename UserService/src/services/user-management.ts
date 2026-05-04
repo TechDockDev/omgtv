@@ -23,6 +23,8 @@ export type UserListItem = {
     avatar: string;
     watchTime: number;
     contentViewed: number;
+    coinBalance: number;
+    walletStatus: string;
 };
 
 export type ListUsersResult = {
@@ -97,6 +99,22 @@ async function fetchBulkUserAnalytics(userIds: string[]): Promise<Record<string,
         console.error("[fetchBulkUserAnalytics] Failed to fetch:", error);
     }
     return result;
+}
+
+async function fetchBulkCoinBalances(userIds: string[]): Promise<Record<string, { coinBalance: number; walletStatus: string }>> {
+    if (userIds.length === 0) return {};
+    try {
+        const res = await fetch(`${SUBSCRIPTION_SERVICE_URL}/internal/coins/users/bulk-balance`, {
+            method: "POST",
+            headers: { "x-service-token": SERVICE_AUTH_TOKEN, "content-type": "application/json" },
+            body: JSON.stringify({ userIds }),
+        });
+        if (res.ok) return await res.json();
+        console.error("[fetchBulkCoinBalances] error:", await res.text());
+    } catch (error) {
+        console.error("[fetchBulkCoinBalances] Failed to fetch:", error);
+    }
+    return {};
 }
 
 // Fetch active subscriber and trial user IDs from Subscription Service
@@ -200,11 +218,12 @@ export async function listUsers(
             });
         }
 
-        // 3. Fetch real analytics + subscription data in parallel
+        // 3. Fetch real analytics + subscription + coin data in parallel
         const userIds = authUsers.map(u => u.id);
-        const [analyticsMap, subscriptionData] = await Promise.all([
+        const [analyticsMap, subscriptionData, coinMap] = await Promise.all([
             fetchBulkUserAnalytics(userIds),
             fetchSubscriptionUserIds(),
+            fetchBulkCoinBalances(userIds),
         ]);
 
         // 4. Merge Data
@@ -229,6 +248,7 @@ export async function listUsers(
 
             // Real analytics from Engagement Service
             const analytics = analyticsMap[u.id] || { totalWatchTimeSeconds: 0, contentViewed: 0 };
+            const coins = coinMap[u.id] || { coinBalance: 0, walletStatus: "ACTIVE" };
 
             // Generate Avatar
             const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name.replace(/\s/g, ''))}`;
@@ -247,6 +267,8 @@ export async function listUsers(
                 avatar,
                 watchTime: analytics.totalWatchTimeSeconds,
                 contentViewed: analytics.contentViewed,
+                coinBalance: coins.coinBalance,
+                walletStatus: coins.walletStatus,
             };
         });
 
@@ -295,10 +317,11 @@ export async function getUserDetails(
             status = profile?.status || "active";
         }
 
-        // Real analytics + subscription data
-        const [analyticsMap, subscriptionData] = await Promise.all([
+        // Real analytics + subscription + coin data
+        const [analyticsMap, subscriptionData, coinMap] = await Promise.all([
             fetchBulkUserAnalytics([u.id]),
             fetchSubscriptionUserIds(),
+            fetchBulkCoinBalances([u.id]),
         ]);
 
         let planType: "Free" | "Trial" | "Premium" = "Free";
@@ -310,6 +333,7 @@ export async function getUserDetails(
         const plan = planType;
 
         const analytics = analyticsMap[u.id] || { totalWatchTimeSeconds: 0, contentViewed: 0 };
+        const coins = coinMap[u.id] || { coinBalance: 0, walletStatus: "ACTIVE" };
 
         const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name.replace(/\s/g, ''))}`;
 
@@ -327,6 +351,8 @@ export async function getUserDetails(
             avatar,
             watchTime: analytics.totalWatchTimeSeconds,
             contentViewed: analytics.contentViewed,
+            coinBalance: coins.coinBalance,
+            walletStatus: coins.walletStatus,
         };
     } catch (error) {
         console.error("Failed to get user details:", error);

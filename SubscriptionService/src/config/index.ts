@@ -36,6 +36,7 @@ const envSchema = z.object({
     .transform((v) => (v === "" ? undefined : v))
     .pipe(z.string().url().optional()),
   OTEL_METRICS_EXPORT_INTERVAL_MS: z.coerce.number().int().positive().default(60000),
+  AD_REWARD_COINS: z.coerce.number().int().positive().default(5),
 });
 
 type Env = z.infer<typeof envSchema>;

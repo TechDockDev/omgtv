@@ -116,7 +116,6 @@ export default async function internalRoutes(fastify: FastifyInstance) {
                   amount: config.AD_REWARD_COINS,
                   source: "AD",
                   referenceId: `ad_reward:${adId}:${Date.now()}`,
-                  expiryDays: 30
                 })
               });
               request.log.info({ userId, adId }, "Successfully credited ad reward coins");

@@ -560,6 +560,53 @@ export default async function customerRoutes(app: FastifyInstance) {
 
   // --- Coin Routes ---
 
+  // POST Earn coins by watching an ad
+  app.post("/coins/earn", {
+    schema: {
+      body: z.object({
+        adId: z.string().min(1),
+      }),
+    },
+  }, async (request, reply) => {
+    const userId = request.headers['x-user-id'] as string;
+    if (!userId) {
+      return reply.code(401).send({ error: "User not authenticated" });
+    }
+
+    const { adId } = request.body as { adId: string };
+    const referenceId = `ad_reward:${adId}`;
+
+    // Idempotency — same adId can only earn once
+    const existing = await prisma.coinTransaction.findUnique({
+      where: { referenceId },
+    });
+
+    if (existing) {
+      const balance = await coinService.getBalance(userId);
+      return {
+        success: true,
+        alreadyClaimed: true,
+        coinsEarned: 0,
+        balance,
+      };
+    }
+
+    await coinService.creditCoins({
+      userId,
+      amount: config.AD_REWARD_COINS,
+      source: TransactionSource.AD,
+      referenceId,
+    });
+
+    const balance = await coinService.getBalance(userId);
+    return {
+      success: true,
+      alreadyClaimed: false,
+      coinsEarned: config.AD_REWARD_COINS,
+      balance,
+    };
+  });
+
   // GET User balance
   app.get("/coins/balance", async (request, reply) => {
     const userId = request.headers['x-user-id'] as string;
@@ -574,7 +621,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   app.get("/coins/transactions", {
     schema: {
       querystring: z.object({
-        type: z.enum(["coin_buy", "coin_spend"]).optional(),
+        type: z.enum(["coin_buy", "coin_spend", "earned"]).optional(),
         page: z.coerce.number().int().positive().default(1),
         limit: z.coerce.number().int().positive().max(50).default(20),
       })
@@ -585,17 +632,16 @@ export default async function customerRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: "User not authenticated" });
     }
 
-    const { type, page, limit } = request.query as { type?: "coin_buy" | "coin_spend"; page: number; limit: number };
+    const { type, page, limit } = request.query as { type?: "coin_buy" | "coin_spend" | "earned"; page: number; limit: number };
     const skip = (page - 1) * limit;
 
     const typeWhere = type === "coin_buy"
       ? { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE }
       : type === "coin_spend"
       ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
-      : { OR: [
-          { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE },
-          { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK },
-        ]};
+      : type === "earned"
+      ? { type: CoinTransactionType.CREDIT, source: TransactionSource.AD }
+      : {}; // no filter → all transactions
 
     const where = { userId, ...typeWhere };
 
@@ -660,6 +706,15 @@ export default async function customerRoutes(app: FastifyInstance) {
             price: bundle.price,
             currency: bundle.currency,
           } : null,
+        };
+      }
+
+      // earned (from ad)
+      if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.AD) {
+        return {
+          ...base,
+          transactionType: "earned" as const,
+          coins: tx.amount,
         };
       }
 

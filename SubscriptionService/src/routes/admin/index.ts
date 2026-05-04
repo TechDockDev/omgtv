@@ -553,6 +553,186 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // GET /admin/all-transactions — unified ledger of all real-money transactions
+  const allTxQuerySchema = z.object({
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(20),
+    type: z.enum(["subscription", "coin_purchase"]).optional(),
+    status: z.enum(["SUCCESS", "PENDING", "FAILED", "CREATED"]).optional(),
+    search: z.string().optional(),
+    startDate: z.string().optional(), // YYYY-MM-DD
+    endDate: z.string().optional(),   // YYYY-MM-DD
+  });
+
+  app.get(
+    "/all-transactions",
+    { schema: { querystring: allTxQuerySchema } },
+    async (request) => {
+      const { page, limit, type, status, search, startDate, endDate } = request.query as z.infer<typeof allTxQuerySchema>;
+      const skip = (page - 1) * limit;
+
+      // Date range — start of startDate day to end of endDate day
+      const dateFilter = (startDate || endDate) ? {
+        gte: startDate ? new Date(`${startDate}T00:00:00.000Z`) : undefined,
+        lte: endDate  ? new Date(`${endDate}T23:59:59.999Z`)   : undefined,
+      } : undefined;
+
+      // 1. Build DB-level filters for each table
+      const subWhere: any = {};
+      if (status && ["SUCCESS", "PENDING", "FAILED"].includes(status)) subWhere.status = status;
+      if (search) subWhere.userId = { contains: search };
+      if (dateFilter) subWhere.createdAt = dateFilter;
+
+      const coinWhere: any = {};
+      if (status && ["SUCCESS", "CREATED", "FAILED"].includes(status)) coinWhere.status = status;
+      if (search) coinWhere.userId = { contains: search };
+      if (dateFilter) coinWhere.createdAt = dateFilter;
+
+      // Stats only change by date range — search is a per-user lookup, not a global stat
+      const statsBase = {
+        ...(dateFilter ? { createdAt: dateFilter } : {}),
+      };
+
+      // 2. Fetch page data, counts, and stats all in parallel
+      const [subCount, coinCount, subTxs, coinTxs, subStats, coinStats] = await Promise.all([
+        type === "coin_purchase" ? Promise.resolve(0) : prisma.transaction.count({ where: subWhere }),
+        type === "subscription"  ? Promise.resolve(0) : prisma.userCoinPurchase.count({ where: coinWhere }),
+        type === "coin_purchase" ? Promise.resolve([]) : prisma.transaction.findMany({
+          where: subWhere,
+          include: {
+            plan:      { select: { name: true, durationDays: true, currency: true } },
+            trialPlan: { select: { durationDays: true, trialPricePaise: true } },
+          },
+          orderBy: { createdAt: "desc" },
+          take: skip + limit,
+        }),
+        type === "subscription" ? Promise.resolve([]) : prisma.userCoinPurchase.findMany({
+          where: coinWhere,
+          orderBy: { createdAt: "desc" },
+          take: skip + limit,
+        }),
+        // Stats — group by status for subscription payments
+        prisma.transaction.groupBy({
+          by: ["status"],
+          where: statsBase,
+          _sum: { amountPaise: true },
+          _count: { id: true },
+        }),
+        // Stats — group by status for coin purchases
+        prisma.userCoinPurchase.groupBy({
+          by: ["status"],
+          where: statsBase,
+          _sum: { amountPaid: true },
+          _count: { id: true },
+        }),
+      ]);
+
+      // 3. Enrich coin purchases with bundle details
+      const bundleIds = [...new Set((coinTxs as any[]).map((tx) => tx.bundleId))];
+      const bundles = bundleIds.length
+        ? await prisma.coinBundle.findMany({ where: { id: { in: bundleIds } } })
+        : [];
+      const bundleMap = new Map(bundles.map((b) => [b.id, b]));
+
+      // 4. Merge, sort by createdAt desc, take the requested page slice
+      const merged = [
+        ...(subTxs as any[]).map((tx) => {
+          const isTrial = !!tx.trialPlanId;
+          return {
+            _createdAt: tx.createdAt,
+            userId: tx.userId,
+            id: tx.id,
+            type: "subscription",
+            subscriptionKind: isTrial ? "trial" : "premium",
+            status: tx.status,
+            amountPaise: tx.amountPaise,
+            currency: tx.currency ?? "INR",
+            plan: tx.plan
+              ? { name: tx.plan.name, durationDays: tx.plan.durationDays }
+              : null,
+            trialPlan: tx.trialPlan
+              ? { durationDays: tx.trialPlan.durationDays, pricePaise: tx.trialPlan.trialPricePaise }
+              : null,
+            paymentId: tx.razorpayPaymentId ?? null,
+            subscriptionId: tx.subscriptionId ?? null,
+            failureReason: tx.failureReason ?? null,
+            createdAt: tx.createdAt,
+          };
+        }),
+        ...(coinTxs as any[]).map((tx) => {
+          const bundle = bundleMap.get(tx.bundleId);
+          return {
+            _createdAt: tx.createdAt,
+            userId: tx.userId,
+            id: tx.id,
+            type: "coin_purchase",
+            status: tx.status,
+            amountPaise: tx.amountPaid,
+            currency: bundle?.currency ?? "INR",
+            coins: tx.coins,
+            bundle: bundle ? { title: bundle.title, coins: bundle.coins } : null,
+            paymentId: tx.paymentId ?? null,
+            orderId: tx.orderId ?? null,
+            createdAt: tx.createdAt,
+          };
+        }),
+      ]
+        .sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime())
+        .slice(skip, skip + limit);
+
+      // 5. Enrich only the current page with user details
+      const userIds = [...new Set(merged.map((tx) => tx.userId))];
+      const userMap = await fetchUserDetails(userIds);
+
+      const data = merged.map(({ _createdAt, ...tx }) => ({
+        ...tx,
+        user: userMap.get(tx.userId)
+          ? {
+              id: tx.userId,
+              name: userMap.get(tx.userId)!.name,
+              email: userMap.get(tx.userId)!.email,
+              phone: userMap.get(tx.userId)!.phoneNumber,
+            }
+          : { id: tx.userId },
+      }));
+
+      // Compute stats from groupBy results
+      const subByStatus = Object.fromEntries(subStats.map((s) => [s.status, { count: s._count.id, revenuePaise: s._sum.amountPaise ?? 0 }]));
+      const coinByStatus = Object.fromEntries(coinStats.map((s) => [s.status, { count: s._count.id, revenuePaise: s._sum.amountPaid ?? 0 }]));
+
+      const subSuccessRevenue  = subByStatus["SUCCESS"]?.revenuePaise  ?? 0;
+      const coinSuccessRevenue = coinByStatus["SUCCESS"]?.revenuePaise ?? 0;
+
+      const stats = {
+        totalRevenuePaise: subSuccessRevenue + coinSuccessRevenue,
+        subscriptionRevenuePaise: subSuccessRevenue,
+        coinPurchaseRevenuePaise: coinSuccessRevenue,
+        byType: {
+          subscription: subStats.reduce((sum, s) => sum + s._count.id, 0),
+          coin_purchase: coinStats.reduce((sum, s) => sum + s._count.id, 0),
+        },
+        byStatus: {
+          SUCCESS:  (subByStatus["SUCCESS"]?.count  ?? 0) + (coinByStatus["SUCCESS"]?.count  ?? 0),
+          PENDING:  (subByStatus["PENDING"]?.count  ?? 0) + (coinByStatus["PENDING"]?.count  ?? 0),
+          FAILED:   (subByStatus["FAILED"]?.count   ?? 0) + (coinByStatus["FAILED"]?.count   ?? 0),
+          CREATED:  coinByStatus["CREATED"]?.count  ?? 0,
+        },
+      };
+
+      return {
+        success: true,
+        stats,
+        data,
+        pagination: {
+          total: subCount + coinCount,
+          page,
+          limit,
+          totalPages: Math.ceil((subCount + coinCount) / limit),
+        },
+      };
+    }
+  );
+
   app.get(
     "/users/:userId/subscription",
     {
@@ -841,7 +1021,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       schema: {
         params: z.object({ userId: z.string() }),
         querystring: z.object({
-          type: z.enum(["coin_buy", "coin_spend"]).optional(),
+          type: z.enum(["credit", "earned", "debit", "admin_credit", "admin_debit"]).optional(),
           page: z.coerce.number().int().positive().default(1),
           limit: z.coerce.number().int().positive().max(100).default(20),
         }),
@@ -850,23 +1030,24 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (request) => {
       const { userId } = request.params;
       const { type, page, limit } = request.query as {
-        type?: "coin_buy" | "coin_spend";
+        type?: "credit" | "earned" | "debit" | "admin_credit" | "admin_debit";
         page: number;
         limit: number;
       };
       const skip = (page - 1) * limit;
 
       const typeWhere =
-        type === "coin_buy"
+        type === "credit"
           ? { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE }
-          : type === "coin_spend"
-            ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
-            : {
-              OR: [
-                { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE },
-                { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK },
-              ],
-            };
+          : type === "earned"
+          ? { type: CoinTransactionType.CREDIT, source: TransactionSource.AD }
+          : type === "debit"
+          ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
+          : type === "admin_credit"
+          ? { type: CoinTransactionType.CREDIT, source: TransactionSource.ADMIN }
+          : type === "admin_debit"
+          ? { type: CoinTransactionType.DEBIT, source: TransactionSource.ADMIN }
+          : {}; // no filter → all transactions
 
       const where = { userId, ...typeWhere };
 
@@ -880,24 +1061,25 @@ export default async function adminRoutes(app: FastifyInstance) {
         }),
       ]);
 
+      // Enrich PURCHASE credits with bundle/payment info
       const buyTxs = txs.filter(
         (tx) => tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.PURCHASE
       );
       const orderIds = buyTxs.map((tx) => tx.referenceId).filter(Boolean) as string[];
 
+      // Enrich UNLOCK debits with episode info
+      const unlockTxs = txs.filter(
+        (tx) => tx.type === CoinTransactionType.DEBIT && tx.source === TransactionSource.UNLOCK
+      );
+      const episodeIds = unlockTxs
+        .map((tx) => tx.referenceId?.split(":")?.[2])
+        .filter(Boolean) as string[];
+
       const [purchases, episodeDetails] = await Promise.all([
         orderIds.length
           ? prisma.userCoinPurchase.findMany({ where: { orderId: { in: orderIds } } })
           : Promise.resolve([]),
-        (async () => {
-          const spendTxs = txs.filter(
-            (tx) => tx.type === CoinTransactionType.DEBIT && tx.source === TransactionSource.UNLOCK
-          );
-          const episodeIds = spendTxs
-            .map((tx) => tx.referenceId?.split(":")?.[2])
-            .filter(Boolean) as string[];
-          return episodeIds.length ? contentClient.getEpisodesBatch(episodeIds) : [];
-        })(),
+        episodeIds.length ? contentClient.getEpisodesBatch(episodeIds) : Promise.resolve([]),
       ]);
 
       const bundleIds = [...new Set(purchases.map((p) => p.bundleId))];
@@ -909,38 +1091,75 @@ export default async function adminRoutes(app: FastifyInstance) {
       const bundleMap = new Map(bundles.map((b) => [b.id, b]));
       const episodeMap = new Map(episodeDetails.map((ep: any) => [ep.id, ep]));
 
+      const now = new Date();
+
       const data = txs.map((tx) => {
         const base = { id: tx.id, createdAt: tx.createdAt };
+
+        // Purchased coins
         if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.PURCHASE) {
           const purchase = purchaseMap.get(tx.referenceId ?? "");
           const bundle = purchase ? bundleMap.get(purchase.bundleId) : null;
           return {
             ...base,
-            transactionType: "coin_buy" as const,
+            transactionType: "credit" as const,
             coins: tx.amount,
             payment: purchase
               ? {
-                orderId: purchase.orderId,
-                paymentId: purchase.paymentId,
-                amountPaid: purchase.amountPaid,
-                currency: bundle?.currency ?? "INR",
-                status: purchase.status,
-              }
+                  orderId: purchase.orderId,
+                  paymentId: purchase.paymentId,
+                  amountPaid: purchase.amountPaid,
+                  currency: bundle?.currency ?? "INR",
+                  status: purchase.status,
+                }
               : null,
             bundle: bundle
               ? { title: bundle.title, coins: bundle.coins, price: bundle.price, currency: bundle.currency }
               : null,
           };
         }
-        const episodeId = tx.referenceId?.split(":")?.[2] ?? null;
-        const ep = episodeId ? episodeMap.get(episodeId) : null;
+
+        // Earned coins (from watching ads)
+        if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.AD) {
+          const isExpired = tx.expiryAt ? tx.expiryAt <= now : false;
+          return {
+            ...base,
+            transactionType: "earned" as const,
+            coins: tx.amount,
+            remainingCoins: tx.remainingAmount ?? 0,
+            expiresAt: tx.expiryAt ?? null,
+            expired: isExpired,
+          };
+        }
+
+        // Admin-credited coins
+        if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.ADMIN) {
+          return {
+            ...base,
+            transactionType: "admin_credit" as const,
+            coins: tx.amount,
+          };
+        }
+
+        // Episode unlock spend
+        if (tx.type === CoinTransactionType.DEBIT && tx.source === TransactionSource.UNLOCK) {
+          const episodeId = tx.referenceId?.split(":")?.[2] ?? null;
+          const ep = episodeId ? episodeMap.get(episodeId) : null;
+          return {
+            ...base,
+            transactionType: "debit" as const,
+            coinsSpent: Math.abs(tx.amount),
+            episode: ep
+              ? { id: episodeId, title: ep.title, thumbnail: ep.thumbnail, seriesName: ep.seriesTitle }
+              : { id: episodeId },
+          };
+        }
+
+        // Admin-deducted coins
         return {
           ...base,
-          transactionType: "coin_spend" as const,
+          transactionType: "admin_debit" as const,
           coinsSpent: Math.abs(tx.amount),
-          episode: ep
-            ? { id: episodeId, title: ep.title, thumbnail: ep.thumbnail, seriesName: ep.seriesTitle }
-            : { id: episodeId },
         };
       });
 

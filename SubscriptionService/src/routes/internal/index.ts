@@ -203,6 +203,50 @@ export default async function internalRoutes(app: FastifyInstance) {
     return { unlockedIds: unlocks.map((u) => u.episodeId) };
   });
 
+  app.post("/coins/users/bulk-balance", {
+    schema: {
+      body: z.object({
+        userIds: z.array(z.string()).max(200),
+      }),
+    },
+  }, async (request, reply) => {
+    const { userIds } = request.body as { userIds: string[] };
+
+    if (!userIds.length) return {};
+
+    const [wallets, credits] = await Promise.all([
+      prisma.userWallet.findMany({
+        where: { userId: { in: userIds } },
+        select: { userId: true, status: true },
+      }),
+      prisma.coinTransaction.groupBy({
+        by: ["userId"],
+        where: {
+          userId: { in: userIds },
+          type: "CREDIT",
+          OR: [
+            { expiryAt: { gt: new Date() } },
+            { expiryAt: null },
+          ],
+        },
+        _sum: { remainingAmount: true },
+      }),
+    ]);
+
+    const walletMap = Object.fromEntries(wallets.map(w => [w.userId, w.status]));
+    const balanceMap = Object.fromEntries(credits.map(c => [c.userId, c._sum.remainingAmount ?? 0]));
+
+    const result: Record<string, { coinBalance: number; walletStatus: string }> = {};
+    for (const userId of userIds) {
+      result[userId] = {
+        coinBalance: balanceMap[userId] ?? 0,
+        walletStatus: walletMap[userId] ?? "ACTIVE",
+      };
+    }
+
+    return result;
+  });
+
   app.post("/coins/credit", {
     schema: {
       body: z.object({
