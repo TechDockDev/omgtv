@@ -554,14 +554,16 @@ export default async function adminRoutes(app: FastifyInstance) {
   );
 
   // GET /admin/all-transactions — unified ledger of all real-money transactions
+  const emptyToUndefined = z.string().transform(v => v === "" ? undefined : v);
+
   const allTxQuerySchema = z.object({
     page: z.coerce.number().min(1).default(1),
     limit: z.coerce.number().min(1).max(100).default(20),
-    type: z.enum(["subscription", "coin_purchase"]).optional(),
-    status: z.enum(["SUCCESS", "PENDING", "FAILED", "CREATED"]).optional(),
-    search: z.string().optional(),
-    startDate: z.string().optional(), // YYYY-MM-DD
-    endDate: z.string().optional(),   // YYYY-MM-DD
+    type: emptyToUndefined.pipe(z.enum(["subscription", "coin_purchase"]).optional()).optional(),
+    status: emptyToUndefined.pipe(z.enum(["SUCCESS", "PENDING", "FAILED", "CREATED"]).optional()).optional(),
+    search: emptyToUndefined.optional(),
+    startDate: emptyToUndefined.optional(),
+    endDate: emptyToUndefined.optional(),
   });
 
   app.get(
@@ -581,16 +583,16 @@ export default async function adminRoutes(app: FastifyInstance) {
       const subWhere: any = {};
       if (status && ["SUCCESS", "PENDING", "FAILED"].includes(status)) subWhere.status = status;
       if (search) subWhere.userId = { contains: search };
-      if (dateFilter) subWhere.createdAt = dateFilter;
+      if (dateFilter) subWhere.updatedAt = dateFilter;
 
       const coinWhere: any = {};
       if (status && ["SUCCESS", "CREATED", "FAILED"].includes(status)) coinWhere.status = status;
       if (search) coinWhere.userId = { contains: search };
-      if (dateFilter) coinWhere.createdAt = dateFilter;
+      if (dateFilter) coinWhere.updatedAt = dateFilter;
 
       // Stats only change by date range — search is a per-user lookup, not a global stat
       const statsBase = {
-        ...(dateFilter ? { createdAt: dateFilter } : {}),
+        ...(dateFilter ? { updatedAt: dateFilter } : {}),
       };
 
       // 2. Fetch page data, counts, and stats all in parallel
@@ -603,12 +605,12 @@ export default async function adminRoutes(app: FastifyInstance) {
             plan:      { select: { name: true, durationDays: true, currency: true } },
             trialPlan: { select: { durationDays: true, trialPricePaise: true } },
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: { updatedAt: "desc" },
           take: skip + limit,
         }),
         type === "subscription" ? Promise.resolve([]) : prisma.userCoinPurchase.findMany({
           where: coinWhere,
-          orderBy: { createdAt: "desc" },
+          orderBy: { updatedAt: "desc" },
           take: skip + limit,
         }),
         // Stats — group by status for subscription payments
@@ -639,7 +641,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         ...(subTxs as any[]).map((tx) => {
           const isTrial = !!tx.trialPlanId;
           return {
-            _createdAt: tx.createdAt,
+            _sortDate: tx.updatedAt,
             userId: tx.userId,
             id: tx.id,
             type: "subscription",
@@ -657,12 +659,13 @@ export default async function adminRoutes(app: FastifyInstance) {
             subscriptionId: tx.subscriptionId ?? null,
             failureReason: tx.failureReason ?? null,
             createdAt: tx.createdAt,
+            updatedAt: tx.updatedAt,
           };
         }),
         ...(coinTxs as any[]).map((tx) => {
           const bundle = bundleMap.get(tx.bundleId);
           return {
-            _createdAt: tx.createdAt,
+            _sortDate: tx.updatedAt,
             userId: tx.userId,
             id: tx.id,
             type: "coin_purchase",
@@ -674,17 +677,18 @@ export default async function adminRoutes(app: FastifyInstance) {
             paymentId: tx.paymentId ?? null,
             orderId: tx.orderId ?? null,
             createdAt: tx.createdAt,
+            updatedAt: tx.updatedAt,
           };
         }),
       ]
-        .sort((a, b) => b._createdAt.getTime() - a._createdAt.getTime())
+        .sort((a, b) => b._sortDate.getTime() - a._sortDate.getTime())
         .slice(skip, skip + limit);
 
       // 5. Enrich only the current page with user details
       const userIds = [...new Set(merged.map((tx) => tx.userId))];
       const userMap = await fetchUserDetails(userIds);
 
-      const data = merged.map(({ _createdAt, ...tx }) => ({
+      const data = merged.map(({ _sortDate, ...tx }) => ({
         ...tx,
         user: userMap.get(tx.userId)
           ? {

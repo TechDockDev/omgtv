@@ -7,6 +7,7 @@ export type ListUsersParams = {
     limit: number;
     search?: string;
     status: UserStatusFilter;
+    plan?: string;
 };
 
 export type UserListItem = {
@@ -164,18 +165,91 @@ export async function listUsers(
     prisma: PrismaClient,
     params: ListUsersParams
 ): Promise<ListUsersResult> {
-    const { page, limit, search } = params;
+    const { page, limit, search, status, plan } = params;
     const offset = (page - 1) * limit;
 
     // 1. Fetch CUSTOMER Identities from AuthDB (no guests)
     const conditions: Prisma.Sql[] = [Prisma.sql`s.type = 'CUSTOMER'`];
 
+    // Handle Plan Filter First (since it's a separate API call anyway)
+    let globalSubData: { activeUserIds: Set<string>; trialUserIds: Set<string> } | null = null;
+    
+    if (plan && plan !== "all") {
+        globalSubData = await fetchSubscriptionUserIds();
+        if (plan.toLowerCase() === "premium") {
+            const ids = Array.from(globalSubData.activeUserIds);
+            if (ids.length > 0) {
+                conditions.push(Prisma.sql`s.id IN (${Prisma.join(ids)})`);
+            } else {
+                conditions.push(Prisma.sql`1 = 0`);
+            }
+        } else if (plan.toLowerCase() === "trial") {
+            const ids = Array.from(globalSubData.trialUserIds);
+            if (ids.length > 0) {
+                conditions.push(Prisma.sql`s.id IN (${Prisma.join(ids)})`);
+            } else {
+                conditions.push(Prisma.sql`1 = 0`);
+            }
+        } else if (plan.toLowerCase() === "free") {
+            const activeIds = Array.from(globalSubData.activeUserIds);
+            const trialIds = Array.from(globalSubData.trialUserIds);
+            const allSubIds = [...activeIds, ...trialIds];
+            if (allSubIds.length > 0) {
+                conditions.push(Prisma.sql`s.id NOT IN (${Prisma.join(allSubIds)})`);
+            }
+        }
+    }
+
+    // Handle Status and Search from Profile DB
+    let profileSearchUids: string[] = [];
+    let statusProfileUids: string[] | null = null;
+
+    if (search) {
+        const profiles = await prisma.customerProfile.findMany({
+            where: {
+                OR: [
+                    { name: { contains: search, mode: "insensitive" } },
+                    { phoneNumber: { contains: search } },
+                    { email: { contains: search, mode: "insensitive" } }
+                ]
+            },
+            select: { firebaseUid: true }
+        });
+        profileSearchUids = profiles.map((p: any) => p.firebaseUid);
+    }
+
+    if (status && status !== "all") {
+        const profiles = await prisma.customerProfile.findMany({
+            where: { status },
+            select: { firebaseUid: true }
+        });
+        statusProfileUids = profiles.map((p: any) => p.firebaseUid);
+    }
+
+    // Combine conditions for search
     if (search) {
         const searchPattern = `%${search}%`;
-        conditions.push(Prisma.sql`(
-            c."firebaseUid" ILIKE ${searchPattern} OR 
-            c."customerId" ILIKE ${searchPattern}
-        )`);
+        if (profileSearchUids.length > 0) {
+            conditions.push(Prisma.sql`(
+                c."firebaseUid" ILIKE ${searchPattern} OR 
+                c."customerId" ILIKE ${searchPattern} OR
+                c."firebaseUid" IN (${Prisma.join(profileSearchUids)})
+            )`);
+        } else {
+            conditions.push(Prisma.sql`(
+                c."firebaseUid" ILIKE ${searchPattern} OR 
+                c."customerId" ILIKE ${searchPattern}
+            )`);
+        }
+    }
+
+    // Combine conditions for status
+    if (statusProfileUids !== null) {
+        if (statusProfileUids.length > 0) {
+            conditions.push(Prisma.sql`c."firebaseUid" IN (${Prisma.join(statusProfileUids)})`);
+        } else {
+            conditions.push(Prisma.sql`1 = 0`); // no matching status
+        }
     }
 
     const whereClause = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
@@ -222,7 +296,7 @@ export async function listUsers(
         const userIds = authUsers.map(u => u.id);
         const [analyticsMap, subscriptionData, coinMap] = await Promise.all([
             fetchBulkUserAnalytics(userIds),
-            fetchSubscriptionUserIds(),
+            globalSubData ? Promise.resolve(globalSubData) : fetchSubscriptionUserIds(),
             fetchBulkCoinBalances(userIds),
         ]);
 
