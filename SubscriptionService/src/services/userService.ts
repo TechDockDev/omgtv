@@ -1,6 +1,3 @@
-import { getAuthClient, getUserClient } from "../lib/grpc";
-import { promisify } from "util";
-
 export interface User {
     id: string;
     name: string;
@@ -12,91 +9,43 @@ export interface User {
 }
 
 /**
- * Fetches user details for a list of user IDs.
- * Uses AuthService to get customerId, then UserService to get profile.
+ * Fetches user details for a list of auth user IDs (= x-user-id / JWT sub = AuthSubject.id).
+ * Calls UserService's internal /profiles-by-auth-id endpoint which resolves
+ * AuthSubject.id → firebaseUid → CustomerProfile in a single batch.
  */
 export async function fetchUserDetails(userIds: string[]): Promise<Map<string, User>> {
     const userMap = new Map<string, User>();
-    const authClient = getAuthClient();
-    const userClient = getUserClient();
-    const { loadConfig } = require("../config");
-    const config = loadConfig();
-    const metadata = new (require("@grpc/grpc-js").Metadata)();
-    metadata.add("authorization", config.SERVICE_AUTH_TOKEN ? `Bearer ${config.SERVICE_AUTH_TOKEN}` : "");
+    if (userIds.length === 0) return userMap;
 
-    // 1. Fetch Auth Info (AuthService - still single calls for now as AuthService doesn't have batch)
-    // We get role and active status here.
-    const authInfos = await Promise.all(
-        userIds.map(async (id) => {
-            return new Promise<any>((resolve) => {
-                authClient.GetUserById({ user_id: id }, metadata, (err: any, response: any) => {
-                    if (err) {
-                        console.warn(`Failed to fetch auth user ${id}:`, err.message);
-                        resolve(null);
-                    } else {
-                        resolve(response);
-                    }
-                });
-            });
-        })
-    );
+    const userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
 
-    const customerIds = authInfos.map((info) => info?.customer_id).filter((id) => !!id);
-
-    // 2. Fetch Profiles in Batch (UserService)
-    const batchProfiles = await new Promise<Record<string, any>>((resolve) => {
-        if (customerIds.length === 0) {
-            resolve({});
-            return;
-        }
-        userClient.BatchGetCustomerProfile({ customer_ids: customerIds }, metadata, (err: any, response: any) => {
-            if (err) {
-                console.warn("BatchGetCustomerProfile failed:", err.message);
-                resolve({});
-            } else {
-                resolve(response.profiles || {});
-            }
+    try {
+        const response = await fetch(`${userServiceUrl}/internal/users/profiles-by-auth-id`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ authIds: userIds }),
         });
-    });
 
-    // Fall back to individual GetCustomerProfile for any IDs missing from the batch result
-    const missingCustomerIds = customerIds.filter((id) => !batchProfiles[id]);
-    const individualProfiles: Record<string, any> = {};
-    if (missingCustomerIds.length > 0) {
-        await Promise.all(
-            missingCustomerIds.map((id) =>
-                new Promise<void>((resolve) => {
-                    userClient.GetCustomerProfile({ customer_id: id }, metadata, (err: any, response: any) => {
-                        if (!err && response) {
-                            individualProfiles[id] = response;
-                        }
-                        resolve();
-                    });
-                })
-            )
-        );
-    }
+        if (!response.ok) {
+            console.warn(`fetchUserDetails: UserService returned ${response.status}`);
+            return userMap;
+        }
 
-    const profiles: Record<string, any> = { ...batchProfiles, ...individualProfiles };
+        const data = await response.json() as { profiles: Record<string, any> };
 
-    // 3. Merge Data
-    userIds.forEach((id, index) => {
-        const authUser = authInfos[index];
-        const customerId = authUser?.customer_id;
-        const profile = customerId ? profiles[customerId] : null;
-
-        if (authUser || profile) {
-            userMap.set(id, {
-                id,
-                name: profile?.name || "Unknown",
-                email: profile?.email || authUser?.email || "",
-                role: authUser?.role || "CUSTOMER",
-                isActive: authUser?.active ?? (profile?.status === "active"),
-                phoneNumber: profile?.phone_number || "",
-                avatar: profile?.avatar_url || "",
+        for (const [authId, profile] of Object.entries(data.profiles || {})) {
+            userMap.set(authId, {
+                id: authId,
+                name: profile.name || 'Unknown',
+                email: profile.email || '',
+                phoneNumber: profile.phoneNumber || profile.phone || '',
+                role: 'CUSTOMER',
+                isActive: true,
             });
         }
-    });
+    } catch (err) {
+        console.error('fetchUserDetails: failed to fetch from UserService:', err);
+    }
 
     return userMap;
 }

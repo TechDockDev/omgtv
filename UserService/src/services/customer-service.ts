@@ -116,4 +116,57 @@ export class CustomerService {
 
         return results;
     }
+
+    /**
+     * Batch lookup by AuthSubject IDs (= x-user-id values from JWT sub).
+     * Resolves AuthSubject.id → firebaseUid → CustomerProfile in one round trip each.
+     * Returns a map keyed by the original authId.
+     */
+    async getBatchProfilesByAuthIds(authIds: string[]): Promise<Record<string, CustomerDetailsFnResult & { phoneNumber: string | null }>> {
+        if (authIds.length === 0) return {};
+
+        // 1. AuthSubject.id → CustomerIdentity.customerId (= CustomerProfile.id in UserService)
+        const rows = await authPrisma.$queryRaw<{ auth_id: string; customerId: string | null }[]>(
+            Prisma.sql`
+                SELECT s.id AS auth_id, c."customerId"
+                FROM "AuthSubject" s
+                LEFT JOIN "CustomerIdentity" c ON s.id = c."subjectId"
+                WHERE s.id IN (${Prisma.join(authIds)})
+                  AND s.type != 'GUEST'
+            `
+        );
+
+        const authToCustomer = new Map<string, string>();
+        for (const row of rows) {
+            if (row.customerId) authToCustomer.set(row.auth_id, row.customerId);
+        }
+
+        const customerIds = [...authToCustomer.values()];
+        if (customerIds.length === 0) return {};
+
+        // 2. Batch fetch CustomerProfiles directly by id
+        const profiles = await this.prisma.customerProfile.findMany({
+            where: { id: { in: customerIds } },
+        });
+
+        const customerToProfile = new Map(profiles.map(p => [p.id, p]));
+
+        // 3. Build result keyed by original authId
+        const results: Record<string, CustomerDetailsFnResult & { phoneNumber: string | null }> = {};
+        for (const authId of authIds) {
+            const customerId = authToCustomer.get(authId);
+            const profile = customerId ? customerToProfile.get(customerId) : null;
+            if (profile) {
+                results[authId] = {
+                    name: profile.name ?? null,
+                    email: profile.email ?? null,
+                    phone: profile.phoneNumber ?? null,
+                    phoneNumber: profile.phoneNumber ?? null,
+                    isProfileComplete: Boolean(profile.name && profile.email && profile.phoneNumber),
+                };
+            }
+        }
+
+        return results;
+    }
 }

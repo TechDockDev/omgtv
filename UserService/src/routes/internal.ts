@@ -201,4 +201,22 @@ export default async function internalRoutes(app: FastifyInstance) {
         const profiles = await customerService.getBatchProfiles(userIds);
         return { profiles };
     });
+
+    /**
+     * POST /internal/users/profiles-by-auth-id
+     * Return profiles keyed by AuthSubject ID (= x-user-id / JWT sub).
+     * Used by SubscriptionService admin routes to enrich transaction records.
+     */
+    app.post("/users/profiles-by-auth-id", {
+        schema: {
+            body: z.object({
+                authIds: z.array(z.string()).min(1).max(1000),
+            }),
+        },
+    }, async (request) => {
+        const { authIds } = request.body as { authIds: string[] };
+        const customerService = new CustomerService(app.prisma);
+        const profiles = await customerService.getBatchProfilesByAuthIds(authIds);
+        return { profiles };
+    });
 }
