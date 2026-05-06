@@ -192,6 +192,7 @@ enum TransactionSource {
   UNLOCK
   ADMIN
   AD
+  EXPIRY
 }
 
 model CoinBundle {
@@ -235,6 +236,19 @@ enum PurchaseStatus {
   CREATED
   SUCCESS
   FAILED
+}
+
+model AdCoinConfig {
+  id               Int      @id @default(1)
+  isEnabled        Boolean  @default(true)
+  coinsPerAd       Int      @default(5)
+  dailyLimit       Int      @default(3)
+  expiryHours      Int?
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([id])
 }
 
 model UserEpisodeUnlock {

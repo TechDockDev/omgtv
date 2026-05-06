@@ -105,10 +105,10 @@ export class NotificationManager {
 
                 await this.emailProvider.send(emailPayload);
             } else if (type === 'PUSH') {
-                let tokens: string[] = [];
-                if (payload?.token) tokens.push(payload.token);
+                let deviceTokens: { fcmToken: string }[] = [];
+                if (payload?.token) deviceTokens.push({ fcmToken: payload.token });
 
-                if (tokens.length === 0) {
+                if (deviceTokens.length === 0) {
                     try {
                         const userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
                         const response = await fetch(`${userServiceUrl}/internal/users/fcm-tokens`, {
@@ -120,33 +120,78 @@ export class NotificationManager {
                         if (response.ok) {
                             const data = await response.json() as any;
                             if (data.tokens && data.tokens.length > 0) {
-                                tokens = data.tokens.map((t: any) => t.fcmToken);
-                                console.log(`Resolved ${tokens.length} FCM token(s) for user ${userId} from UserService`);
+                                // De-duplicate by fcmToken string
+                                const seen = new Set<string>();
+                                for (const t of data.tokens) {
+                                    if (t.fcmToken && !seen.has(t.fcmToken)) {
+                                        seen.add(t.fcmToken);
+                                        deviceTokens.push({ fcmToken: t.fcmToken });
+                                    }
+                                }
+                                console.log(`Resolved ${deviceTokens.length} unique FCM token(s) for user ${userId}`);
                             }
                         } else {
-                            console.warn(`Failed to fetch FCM token from UserService: ${response.status}`);
+                            console.warn(`Failed to fetch FCM tokens from UserService: ${response.status}`);
                         }
                     } catch (err) {
-                        console.error('Error fetching FCM token from UserService:', err);
+                        console.error('Error fetching FCM tokens from UserService:', err);
                     }
                 }
 
-                if (tokens.length > 0) {
-                    // De-duplicate tokens to ensure one push per unique token
-                    const uniqueTokens = [...new Set(tokens)];
-
-                    // Send to all registered tokens
-                    await Promise.all(uniqueTokens.map(token =>
-                        this.pushProvider.send({
-                            token,
-                            title,
-                            body,
-                            data: payload as any
-                        })
-                    ));
-                } else {
+                if (deviceTokens.length === 0) {
                     console.warn(`No FCM token found for user ${userId} — skipping push notification`);
                     await NotificationRepository.updateStatus(notification.id, NotificationStatus.FAILED, 'No FCM token found');
+                    return notification;
+                }
+
+                // Send to each token independently — don't let one failure block the others
+                const results = await Promise.allSettled(
+                    deviceTokens.map(async ({ fcmToken }) => {
+                        try {
+                            return await this.pushProvider.send({ token: fcmToken, title, body, data: payload as any });
+                        } catch (err: any) {
+                            // Attach token to the error so we can identify it after allSettled
+                            err.fcmToken = fcmToken;
+                            throw err;
+                        }
+                    })
+                );
+
+                // Collect tokens FCM rejected as unregistered and remove them from UserService
+                const staleTokens: string[] = [];
+                for (const result of results) {
+                    if (result.status === 'rejected') {
+                        const errCode: string = result.reason?.errorInfo?.code || result.reason?.code || '';
+                        const failedToken: string | undefined = result.reason?.fcmToken;
+                        if (
+                            failedToken && (
+                                errCode.includes('registration-token-not-registered') ||
+                                errCode.includes('invalid-registration-token')
+                            )
+                        ) {
+                            staleTokens.push(failedToken);
+                        }
+                        console.warn(`FCM send failed for user ${userId} [${errCode}]:`, result.reason?.message);
+                    }
+                }
+
+                if (staleTokens.length > 0) {
+                    try {
+                        const userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
+                        await fetch(`${userServiceUrl}/internal/users/fcm-tokens`, {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ tokens: staleTokens }),
+                        });
+                        console.log(`Removed ${staleTokens.length} stale FCM token(s) for user ${userId}`);
+                    } catch (err) {
+                        console.error('Failed to remove stale FCM tokens:', err);
+                    }
+                }
+
+                const anySuccess = results.some((r) => r.status === 'fulfilled');
+                if (!anySuccess) {
+                    await NotificationRepository.updateStatus(notification.id, NotificationStatus.FAILED, 'All FCM sends failed');
                     return notification;
                 }
             }

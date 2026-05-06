@@ -2,6 +2,11 @@ import { getPrisma } from "../lib/prisma";
 import { getRedis } from "../lib/redis";
 import { CoinTransactionType, TransactionSource, WalletStatus } from "@prisma/client";
 
+interface JobLogger {
+    info(obj: object | string, msg?: string): void;
+    error(obj: object | string, msg?: string): void;
+}
+
 export class CoinService {
     private prisma = getPrisma();
 
@@ -250,5 +255,65 @@ export class CoinService {
             take: limit,
             skip: offset
         });
+    }
+
+    /**
+     * Returns the AdCoinConfig singleton, creating defaults if not yet set.
+     */
+    async getAdCoinConfig() {
+        return await this.prisma.adCoinConfig.upsert({
+            where: { id: 1 },
+            create: {},
+            update: {},
+        });
+    }
+
+    /**
+     * Expires all overdue ad-earned coins:
+     * - Finds CREDIT+AD transactions where expiryAt <= now and remainingAmount > 0
+     * - Creates a DEBIT+EXPIRY transaction for each
+     * - Zeroes out remainingAmount
+     * - Invalidates balance cache
+     *
+     * Returns the number of transactions expired.
+     */
+    async expireAdCoins(log?: JobLogger): Promise<number> {
+        const now = new Date();
+
+        const expiredCredits = await this.prisma.coinTransaction.findMany({
+            where: {
+                type: CoinTransactionType.CREDIT,
+                source: TransactionSource.AD,
+                expiryAt: { lte: now },
+                remainingAmount: { gt: 0 },
+            },
+            select: { id: true, userId: true, remainingAmount: true },
+        });
+
+        if (expiredCredits.length === 0) return 0;
+
+        for (const credit of expiredCredits) {
+            const amount = credit.remainingAmount!;
+            await this.prisma.$transaction([
+                this.prisma.coinTransaction.update({
+                    where: { id: credit.id },
+                    data: { remainingAmount: 0 },
+                }),
+                this.prisma.coinTransaction.create({
+                    data: {
+                        userId: credit.userId,
+                        type: CoinTransactionType.DEBIT,
+                        source: TransactionSource.EXPIRY,
+                        amount: -amount,
+                        referenceId: `expiry:${credit.id}`,
+                        metadata: { expiredCreditId: credit.id, expiredAmount: amount },
+                    },
+                }),
+            ]);
+            await this.invalidateBalanceCache(credit.userId);
+        }
+
+        log?.info({ count: expiredCredits.length }, "Ad coins expired");
+        return expiredCredits.length;
     }
 }

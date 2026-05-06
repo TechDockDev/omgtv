@@ -164,6 +164,28 @@ export default async function internalRoutes(app: FastifyInstance) {
     });
 
     /**
+     * DELETE /internal/users/fcm-tokens
+     * Nullify stale FCM tokens on DeviceIdentity records.
+     * Called by NotificationService after FCM rejects a token as unregistered.
+     */
+    app.delete("/users/fcm-tokens", {
+        schema: {
+            body: z.object({
+                tokens: z.array(z.string()).min(1).max(500),
+            }),
+        },
+    }, async (request) => {
+        const { tokens } = request.body as { tokens: string[] };
+
+        const result = await app.prisma.deviceIdentity.updateMany({
+            where: { fcmToken: { in: tokens } },
+            data: { fcmToken: null },
+        });
+
+        return { removed: result.count };
+    });
+
+    /**
      * POST /internal/users/profiles
      * Return detailed profiles for a list of customer profile IDs.
      */

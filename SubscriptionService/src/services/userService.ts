@@ -41,11 +41,17 @@ export async function fetchUserDetails(userIds: string[]): Promise<Map<string, U
         })
     );
 
-    // 2. Fetch Profiles in Batch (UserService - new batch RPC)
-    const profiles = await new Promise<Record<string, any>>((resolve) => {
-        userClient.BatchGetCustomerProfile({ customer_ids: userIds }, metadata, (err: any, response: any) => {
+    const customerIds = authInfos.map((info) => info?.customer_id).filter((id) => !!id);
+
+    // 2. Fetch Profiles in Batch (UserService)
+    const batchProfiles = await new Promise<Record<string, any>>((resolve) => {
+        if (customerIds.length === 0) {
+            resolve({});
+            return;
+        }
+        userClient.BatchGetCustomerProfile({ customer_ids: customerIds }, metadata, (err: any, response: any) => {
             if (err) {
-                console.warn("Failed to fetch user profiles in batch:", err.message);
+                console.warn("BatchGetCustomerProfile failed:", err.message);
                 resolve({});
             } else {
                 resolve(response.profiles || {});
@@ -53,10 +59,31 @@ export async function fetchUserDetails(userIds: string[]): Promise<Map<string, U
         });
     });
 
+    // Fall back to individual GetCustomerProfile for any IDs missing from the batch result
+    const missingCustomerIds = customerIds.filter((id) => !batchProfiles[id]);
+    const individualProfiles: Record<string, any> = {};
+    if (missingCustomerIds.length > 0) {
+        await Promise.all(
+            missingCustomerIds.map((id) =>
+                new Promise<void>((resolve) => {
+                    userClient.GetCustomerProfile({ customer_id: id }, metadata, (err: any, response: any) => {
+                        if (!err && response) {
+                            individualProfiles[id] = response;
+                        }
+                        resolve();
+                    });
+                })
+            )
+        );
+    }
+
+    const profiles: Record<string, any> = { ...batchProfiles, ...individualProfiles };
+
     // 3. Merge Data
     userIds.forEach((id, index) => {
         const authUser = authInfos[index];
-        const profile = profiles[id];
+        const customerId = authUser?.customer_id;
+        const profile = customerId ? profiles[customerId] : null;
 
         if (authUser || profile) {
             userMap.set(id, {

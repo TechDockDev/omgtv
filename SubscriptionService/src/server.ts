@@ -5,6 +5,7 @@ import { shutdownObservability, startObservability } from "./observability";
 import { shutdownRedis } from "./lib/redis";
 import packageJson from "../package.json";
 import { startGrpcServer } from "./grpc/server";
+import { startExpiryCron, stopExpiryCron } from "./jobs/expireCoins";
 
 async function main() {
   const config = loadConfig();
@@ -17,6 +18,8 @@ async function main() {
     await app.listen({ host: config.HTTP_HOST, port: config.HTTP_PORT });
 
     await startGrpcServer();
+
+    startExpiryCron(app.log);
 
     app.log.info(
       { version: packageJson.version, http: `${config.HTTP_HOST}:${config.HTTP_PORT}` },
@@ -33,6 +36,7 @@ async function main() {
   const shutdown = async (signal: NodeJS.Signals) => {
     app.log.info({ signal }, "Shutting down SubscriptionService");
     try {
+      stopExpiryCron();
       await disconnectPrisma();
       await shutdownRedis();
       await shutdownObservability();

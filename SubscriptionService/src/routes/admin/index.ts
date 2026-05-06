@@ -1260,4 +1260,115 @@ export default async function adminRoutes(app: FastifyInstance) {
       };
     }
   );
+
+  // ── Ad Coin Config ─────────────────────────────────────────────────────────
+
+  // GET /admin/coins/ad-config
+  app.get("/coins/ad-config", async () => {
+    const config = await coinService.getAdCoinConfig();
+    return { success: true, data: config };
+  });
+
+  // PATCH /admin/coins/ad-config
+  app.patch(
+    "/coins/ad-config",
+    {
+      schema: {
+        body: z.object({
+          isEnabled:   z.boolean().optional(),
+          coinsPerAd:  z.number().int().positive().optional(),
+          dailyLimit:  z.number().int().positive().optional(),
+          expiryHours: z.number().int().positive().nullable().optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const adminId = request.headers["x-admin-id"] as string | undefined;
+      const body = request.body as {
+        isEnabled?:   boolean;
+        coinsPerAd?:  number;
+        dailyLimit?:  number;
+        expiryHours?: number | null;
+      };
+
+      const config = await prisma.adCoinConfig.upsert({
+        where: { id: 1 },
+        create: {
+          ...body,
+          updatedByAdminId: adminId,
+        },
+        update: {
+          ...body,
+          updatedByAdminId: adminId,
+        },
+      });
+
+      return { success: true, data: config };
+    }
+  );
+
+  // GET /admin/coins/ad-earnings — which users watched ads and how much they earned
+  app.get(
+    "/coins/ad-earnings",
+    {
+      schema: {
+        querystring: z.object({
+          userId: z.string().optional(),
+          page:   z.coerce.number().int().positive().default(1),
+          limit:  z.coerce.number().int().positive().max(100).default(20),
+        }),
+      },
+    },
+    async (request) => {
+      const { userId, page, limit } = request.query as {
+        userId?: string;
+        page: number;
+        limit: number;
+      };
+      const skip = (page - 1) * limit;
+
+      const where = {
+        type:   CoinTransactionType.CREDIT,
+        source: TransactionSource.AD,
+        ...(userId ? { userId } : {}),
+      };
+
+      // Group by userId to get per-user stats
+      const groups = await prisma.coinTransaction.groupBy({
+        by: ["userId"],
+        where,
+        _count: { id: true },
+        _sum:   { amount: true },
+        orderBy: { _sum: { amount: "desc" } },
+        skip,
+        take: limit,
+      });
+
+      const total = await prisma.coinTransaction.groupBy({
+        by: ["userId"],
+        where,
+      }).then((r) => r.length);
+
+      const userIds = groups.map((g) => g.userId);
+      const userMap = userIds.length ? await fetchUserDetails(userIds) : new Map();
+
+      const data = groups.map((g) => {
+        const user = userMap.get(g.userId);
+        return {
+          userId:       g.userId,
+          user: user
+            ? { name: user.name, email: user.email, phoneNumber: user.phoneNumber }
+            : null,
+          adsWatched:   g._count.id,
+          coinsEarned:  g._sum.amount ?? 0,
+        };
+      });
+
+      return {
+        success: true,
+        data,
+        pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      };
+    }
+  );
 }

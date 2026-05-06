@@ -560,6 +560,46 @@ export default async function customerRoutes(app: FastifyInstance) {
 
   // --- Coin Routes ---
 
+  // GET Ad-coin config for mobile (controls whether to show Watch Ad tab)
+  app.get("/coins/ad-config", async (request, reply) => {
+    const userId = request.headers['x-user-id'] as string;
+    if (!userId) {
+      return reply.code(401).send({ error: "User not authenticated" });
+    }
+
+    const adConfig = await coinService.getAdCoinConfig();
+
+    if (!adConfig.isEnabled) {
+      return {
+        isEnabled: false,
+        coinsPerAd: adConfig.coinsPerAd,
+        dailyLimit: adConfig.dailyLimit,
+        watchedToday: 0,
+        remainingToday: 0,
+        expiryHours: adConfig.expiryHours,
+      };
+    }
+
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const watchedToday = await prisma.coinTransaction.count({
+      where: {
+        userId,
+        type: CoinTransactionType.CREDIT,
+        source: TransactionSource.AD,
+        createdAt: { gte: since },
+      },
+    });
+
+    return {
+      isEnabled: true,
+      coinsPerAd: adConfig.coinsPerAd,
+      dailyLimit: adConfig.dailyLimit,
+      watchedToday,
+      remainingToday: Math.max(0, adConfig.dailyLimit - watchedToday),
+      expiryHours: adConfig.expiryHours,
+    };
+  });
+
   // POST Earn coins by watching an ad
   app.post("/coins/earn", {
     schema: {
@@ -573,10 +613,38 @@ export default async function customerRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: "User not authenticated" });
     }
 
+    const adConfig = await coinService.getAdCoinConfig();
+
+    if (!adConfig.isEnabled) {
+      return reply.code(403).send({ error: "Ad coin rewards are currently disabled" });
+    }
+
+    // Daily frequency check
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const watchedToday = await prisma.coinTransaction.count({
+      where: {
+        userId,
+        type: CoinTransactionType.CREDIT,
+        source: TransactionSource.AD,
+        createdAt: { gte: since },
+      },
+    });
+
+    if (watchedToday >= adConfig.dailyLimit) {
+      const balance = await coinService.getBalance(userId);
+      return {
+        success: true,
+        limitReached: true,
+        coinsEarned: 0,
+        remainingToday: 0,
+        balance,
+      };
+    }
+
     const { adId } = request.body as { adId: string };
     const referenceId = `ad_reward:${adId}`;
 
-    // Idempotency — same adId can only earn once
+    // Idempotency — same adId can only be claimed once
     const existing = await prisma.coinTransaction.findUnique({
       where: { referenceId },
     });
@@ -587,22 +655,28 @@ export default async function customerRoutes(app: FastifyInstance) {
         success: true,
         alreadyClaimed: true,
         coinsEarned: 0,
+        remainingToday: Math.max(0, adConfig.dailyLimit - watchedToday),
         balance,
       };
     }
 
     await coinService.creditCoins({
       userId,
-      amount: config.AD_REWARD_COINS,
+      amount: adConfig.coinsPerAd,
       source: TransactionSource.AD,
       referenceId,
+      expiryDays: adConfig.expiryHours != null
+        ? adConfig.expiryHours / 24
+        : undefined,
     });
 
     const balance = await coinService.getBalance(userId);
     return {
       success: true,
+      limitReached: false,
       alreadyClaimed: false,
-      coinsEarned: config.AD_REWARD_COINS,
+      coinsEarned: adConfig.coinsPerAd,
+      remainingToday: Math.max(0, adConfig.dailyLimit - watchedToday - 1),
       balance,
     };
   });
