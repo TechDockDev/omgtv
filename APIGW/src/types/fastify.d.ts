@@ -8,6 +8,9 @@ declare module "fastify" {
     authorize(
       roles: readonly GatewayUser["roles"][number][]
     ): (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    requirePermission(
+      permission: string
+    ): (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     redis: import("ioredis").Redis;
     publishAuditEvent(event: AuditEvent): Promise<void>;
   }

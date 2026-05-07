@@ -115,36 +115,34 @@ async function issueSessionTokens(params: {
   };
 }
 
-async function gatherAdminRoles(params: {
+async function gatherAdminContext(params: {
   userService: UserServiceIntegration;
   subjectId: string;
   logger: FastifyBaseLogger;
-}): Promise<string[]> {
+}): Promise<{ roles: string[]; permissions: string[] }> {
   const { userService, subjectId, logger } = params;
   if (!userService.isEnabled) {
     logger.warn(
       { subjectId },
       "UserService integration disabled; issuing admin token without roles"
     );
-    return [];
+    return { roles: [], permissions: [] };
   }
 
   try {
     const context = await userService.getUserContext(subjectId);
-    const assignments = context.assignments.filter(
-      (assignment) => assignment.active
-    );
-    const roles = new Set<string>();
-    for (const assignment of assignments) {
-      roles.add(assignment.role.name);
-    }
-    return [...roles];
+    const activeAssignments = context.assignments.filter((a) => a.active);
+    const roles = [...new Set(activeAssignments.map((a) => a.role.name))];
+    const permissions = [
+      ...new Set(context.permissions.map((p) => `${p.resource}:${p.action}`)),
+    ];
+    return { roles, permissions };
   } catch (error) {
     logger.error(
       { err: error, subjectId },
-      "Failed to fetch admin roles from UserService"
+      "Failed to fetch admin context from UserService"
     );
-    throw new Error("Unable to resolve admin roles");
+    throw new Error("Unable to resolve admin context");
   }
 }
 
@@ -299,7 +297,7 @@ async function buildAccessPayload(params: {
       if (!subject.admin.isActive) {
         throw new AuthError("Admin account disabled", "ACCOUNT_DISABLED");
       }
-      const roles = await gatherAdminRoles({
+      const ctx = await gatherAdminContext({
         userService,
         subjectId: subject.id,
         logger,
@@ -308,7 +306,8 @@ async function buildAccessPayload(params: {
         sub: subject.id,
         userType: "ADMIN",
         adminId: subject.id,
-        roles,
+        roles: ctx.roles,
+        permissions: ctx.permissions,
       };
     }
     case AuthSubjectType.CUSTOMER: {
@@ -386,7 +385,7 @@ export async function loginAdmin(params: {
     throw new AuthError("Invalid credentials", "INVALID_CREDENTIALS");
   }
 
-  const roles = await gatherAdminRoles({
+  const ctx = await gatherAdminContext({
     userService,
     subjectId: credential.subjectId,
     logger,
@@ -396,7 +395,8 @@ export async function loginAdmin(params: {
     sub: credential.subjectId,
     userType: "ADMIN",
     adminId: credential.subjectId,
-    roles,
+    roles: ctx.roles,
+    permissions: ctx.permissions,
   };
 
   return issueSessionTokens({
@@ -451,7 +451,7 @@ export async function registerAdmin(params: {
     throw new Error("Failed to create admin credential");
   }
 
-  const roles = await gatherAdminRoles({
+  const ctx = await gatherAdminContext({
     userService,
     subjectId: subject.id,
     logger,
@@ -461,7 +461,8 @@ export async function registerAdmin(params: {
     sub: subject.id,
     userType: "ADMIN",
     adminId: subject.id,
-    roles,
+    roles: ctx.roles,
+    permissions: ctx.permissions,
   };
 
   return issueSessionTokens({

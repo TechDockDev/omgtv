@@ -17,7 +17,7 @@ import {
   serializeUserContext,
 } from "../utils/serialize";
 import { isAdminVerificationError } from "../types/auth-service";
-import { listUsers, getUserDetails, updateUser, blockUser, deleteUser } from "../services/user-management";
+import { listUsers, listTrialConvertedUsers, getUserDetails, updateUser, blockUser, deleteUser } from "../services/user-management";
 import { z } from "zod";
 import { loadConfig } from "../config";
 
@@ -29,6 +29,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
     search: z.string().optional(),
     status: z.enum(["active", "inactive", "blocked", "all"]).default("all"),
     plan: z.string().optional().default("all"),
+    tab: z.string().optional().default("all"),
   });
 
   fastify.get("/app-users", {
@@ -83,6 +84,61 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
           totalTrial: subscriptionStats.active_trials,
           totalNotSubscribed: Math.max(0, result.total - (subscriptionStats.active_subscribers + subscriptionStats.active_trials))
         }
+      };
+    },
+  });
+
+  const trialConvertedQuerySchema = z.object({
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(20),
+    search: z.string().optional(),
+    status: z.enum(["active", "inactive", "blocked", "all"]).default("all"),
+  });
+
+  fastify.get("/app-users/trial-converted", {
+    schema: { querystring: trialConvertedQuerySchema },
+    handler: async (request, reply) => {
+      const { page, limit, search, status } = trialConvertedQuerySchema.parse(request.query);
+      const subServiceUrl = config.SUBSCRIPTION_SERVICE_URL;
+      const serviceToken = config.SERVICE_AUTH_TOKEN || "";
+
+      // 1. Get trial-converted user IDs from SubscriptionService
+      let convertedUserIds: string[] = [];
+      try {
+        const res = await fetch(`${subServiceUrl}/internal/subscriptions/trial-converted-users?limit=10000`, {
+          headers: { "x-service-token": serviceToken },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          convertedUserIds = data.userIds ?? [];
+        } else {
+          console.error(`[trial-converted] SubscriptionService error: ${await res.text()}`);
+        }
+      } catch (err) {
+        console.error("[trial-converted] Failed to fetch converted user IDs:", err);
+      }
+
+      if (convertedUserIds.length === 0) {
+        return {
+          success: true,
+          data: { items: [], total: 0, page, totalPages: 0 },
+          stats: { totalTrialConverted: 0 },
+        };
+      }
+
+      // 2. Fetch enriched user data for the converted IDs
+      const result = await listTrialConvertedUsers(request.server.prisma, {
+        page,
+        limit,
+        search,
+        status,
+        userIds: convertedUserIds,
+      });
+
+      return {
+        success: true,
+        data: result,
+        stats: { totalTrialConverted: convertedUserIds.length },
       };
     },
   });

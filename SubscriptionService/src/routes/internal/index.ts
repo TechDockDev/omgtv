@@ -181,6 +181,48 @@ export default async function internalRoutes(app: FastifyInstance) {
     return { userIds: subscriptions.map(s => s.userId) };
   });
 
+  // Users who previously had a trial and have since converted to a paid subscription
+  app.get("/subscriptions/trial-converted-users", {
+    schema: {
+      querystring: z.object({
+        limit: z.coerce.number().optional().default(10000),
+        offset: z.coerce.number().optional().default(0),
+      }),
+    },
+  }, async (request) => {
+    const { limit, offset } = request.query as { limit: number; offset: number };
+
+    // Step 1: users currently on an active paid plan
+    const activePaidSubs = await prisma.userSubscription.findMany({
+      where: {
+        status: { in: ["ACTIVE", "CANCELED"] },
+        endsAt: { gt: new Date() },
+        trialPlanId: null,
+        planId: { not: null },
+      },
+      select: { userId: true },
+      distinct: ["userId"],
+      take: limit,
+      skip: offset,
+    });
+
+    if (activePaidSubs.length === 0) return { userIds: [] };
+
+    const activePaidUserIds = activePaidSubs.map(s => s.userId);
+
+    // Step 2: among those, find who also had a trial at some point
+    const convertedSubs = await prisma.userSubscription.findMany({
+      where: {
+        userId: { in: activePaidUserIds },
+        trialPlanId: { not: null },
+      },
+      select: { userId: true },
+      distinct: ["userId"],
+    });
+
+    return { userIds: convertedSubs.map(s => s.userId) };
+  });
+
   app.post("/episodes/unlock-status", {
     schema: {
       body: z.object({

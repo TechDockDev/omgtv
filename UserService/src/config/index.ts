@@ -26,6 +26,7 @@ const envSchema = z.object({
   AUTH_SERVICE_TOKEN: z.string().optional(),
   ENGAGEMENT_SERVICE_URL: z.string().optional().default("http://engagement-service:4700"),
   SUBSCRIPTION_SERVICE_URL: z.string().optional().default("http://subscription-service:5100"),
+  AUTH_SERVICE_URL: z.string().optional().default("http://auth-service:4000"),
 });
 
 type Env = z.infer<typeof envSchema>;

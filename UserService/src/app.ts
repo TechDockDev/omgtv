@@ -12,6 +12,7 @@ import prismaPlugin from "./plugins/prisma";
 import authServicePlugin from "./plugins/auth-service";
 import adminUserRoutes from "./routes/admin-users";
 import adminProfileRoutes from "./routes/admin-profile";
+import adminPermissionsRoutes from "./routes/admin-permissions";
 import customerRoutes from "./routes/customer";
 import { ensureSystemRoles } from "./services/bootstrap";
 
@@ -53,6 +54,9 @@ export async function buildApp() {
   });
   await fastify.register(adminProfileRoutes, {
     prefix: `${externalBase}/admin/profile`,
+  });
+  await fastify.register(adminPermissionsRoutes, {
+    prefix: `${externalBase}/admin`,
   });
   await fastify.register(customerRoutes, {
     prefix: externalBase,

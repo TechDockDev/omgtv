@@ -62,6 +62,10 @@ spec:
               name: http
             - containerPort: 50072
               name: grpc
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 50m

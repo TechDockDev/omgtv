@@ -7,6 +7,7 @@ export interface GatewayUser {
   subject: string;
   userType: GatewayUserType;
   roles: GatewayRole[];
+  permissions: string[];
   scopes: string[];
   deviceId?: string;
   userId?: string;

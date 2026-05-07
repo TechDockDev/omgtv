@@ -1,3 +1,5 @@
+import { loadConfig } from "../config";
+
 export interface User {
     id: string;
     name: string;
@@ -17,12 +19,17 @@ export async function fetchUserDetails(userIds: string[]): Promise<Map<string, U
     const userMap = new Map<string, User>();
     if (userIds.length === 0) return userMap;
 
-    const userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
+    const config = loadConfig();
+    const userServiceUrl = config.USER_SERVICE_URL;
+    const serviceToken = config.SERVICE_AUTH_TOKEN ?? "";
 
     try {
         const response = await fetch(`${userServiceUrl}/internal/users/profiles-by-auth-id`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-service-token': serviceToken,
+            },
             body: JSON.stringify({ authIds: userIds }),
         });
 

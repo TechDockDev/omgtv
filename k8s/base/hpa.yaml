@@ -17,7 +17,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: apigw
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 6
   metrics:
     - type: Resource
@@ -37,7 +37,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: auth-service
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 4
   metrics:
     - type: Resource
@@ -78,7 +78,7 @@ spec:
     kind: Deployment
     name: content-service
   minReplicas: 1
-  maxReplicas: 5
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource:

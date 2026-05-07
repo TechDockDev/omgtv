@@ -73,11 +73,17 @@ function toGatewayUser(payload: JWTPayload): GatewayUser {
       ? (payload["roles"] as unknown[]).map((role) => String(role))
       : [];
 
+  const permissions: string[] =
+    userType === "ADMIN" && Array.isArray(payload["permissions"])
+      ? (payload["permissions"] as unknown[]).map((p) => String(p))
+      : [];
+
   return {
     id: subject,
     subject,
     userType,
     roles,
+    permissions,
     scopes: Array.isArray(payload["scopes"])
       ? (payload["scopes"] as unknown[]).map((scope) => String(scope))
       : [],
@@ -211,8 +217,30 @@ export default fp(
       };
     }
 
+    function requirePermission(permission: string) {
+      return async function (request: FastifyRequest, reply: FastifyReply) {
+        if (!request.user) {
+          reply.code(401);
+          throw new Error("Authentication required");
+        }
+        if (request.user.userType !== "ADMIN") {
+          reply.code(403);
+          throw new Error("Admin access required");
+        }
+        // SUPER_ADMIN bypasses all permission checks
+        if (request.user.roles.includes("SUPER_ADMIN")) {
+          return;
+        }
+        if (!request.user.permissions.includes(permission)) {
+          reply.code(403);
+          throw new Error(`Forbidden: missing permission '${permission}'`);
+        }
+      };
+    }
+
     fastify.decorate("verifyAuth", verifyAuth);
     fastify.decorate("authorize", authorize);
+    fastify.decorate("requirePermission", requirePermission);
 
     fastify.addHook("preHandler", async (request, reply) => {
       await verifyAuth(request, reply);

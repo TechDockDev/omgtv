@@ -896,7 +896,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { page, limit } = request.query as z.infer<typeof paginationSchema>;
     const skip = (page - 1) * limit;
 
-    const [total, data] = await Promise.all([
+    const [total, purchases] = await Promise.all([
       prisma.userCoinPurchase.count(),
       prisma.userCoinPurchase.findMany({
         orderBy: { createdAt: "desc" },
@@ -904,6 +904,14 @@ export default async function adminRoutes(app: FastifyInstance) {
         take: limit,
       }),
     ]);
+
+    const userIds = [...new Set(purchases.map(p => p.userId))];
+    const userMap = await fetchUserDetails(userIds);
+
+    const data = purchases.map(p => ({
+      ...p,
+      user: userMap.get(p.userId) ?? null,
+    }));
 
     return {
       success: true,

@@ -173,7 +173,7 @@ export async function listUsers(
 
     // Handle Plan Filter First (since it's a separate API call anyway)
     let globalSubData: { activeUserIds: Set<string>; trialUserIds: Set<string> } | null = null;
-    
+
     if (plan && plan !== "all") {
         globalSubData = await fetchSubscriptionUserIds();
         if (plan.toLowerCase() === "premium") {
@@ -350,6 +350,154 @@ export async function listUsers(
 
     } catch (error) {
         console.error("Failed to list users:", error);
+        return { items: [], total: 0, page, totalPages: 0 };
+    }
+}
+
+export type ListTrialConvertedParams = {
+    page: number;
+    limit: number;
+    search?: string;
+    status: UserStatusFilter;
+    userIds: string[];
+};
+
+export async function listTrialConvertedUsers(
+    prisma: PrismaClient,
+    params: ListTrialConvertedParams
+): Promise<ListUsersResult> {
+    const { page, limit, search, status, userIds } = params;
+    const offset = (page - 1) * limit;
+
+    const conditions: Prisma.Sql[] = [
+        Prisma.sql`s.type = 'CUSTOMER'`,
+        Prisma.sql`s.id IN (${Prisma.join(userIds)})`,
+    ];
+
+    let profileSearchUids: string[] = [];
+    let statusProfileUids: string[] | null = null;
+
+    if (search) {
+        const profiles = await prisma.customerProfile.findMany({
+            where: {
+                OR: [
+                    { name: { contains: search, mode: "insensitive" } },
+                    { phoneNumber: { contains: search } },
+                    { email: { contains: search, mode: "insensitive" } },
+                ],
+            },
+            select: { firebaseUid: true },
+        });
+        profileSearchUids = profiles.map((p: any) => p.firebaseUid);
+    }
+
+    if (status && status !== "all") {
+        const profiles = await prisma.customerProfile.findMany({
+            where: { status },
+            select: { firebaseUid: true },
+        });
+        statusProfileUids = profiles.map((p: any) => p.firebaseUid);
+    }
+
+    if (search) {
+        const searchPattern = `%${search}%`;
+        if (profileSearchUids.length > 0) {
+            conditions.push(Prisma.sql`(
+                c."firebaseUid" ILIKE ${searchPattern} OR
+                c."customerId" ILIKE ${searchPattern} OR
+                c."firebaseUid" IN (${Prisma.join(profileSearchUids)})
+            )`);
+        } else {
+            conditions.push(Prisma.sql`(
+                c."firebaseUid" ILIKE ${searchPattern} OR
+                c."customerId" ILIKE ${searchPattern}
+            )`);
+        }
+    }
+
+    if (statusProfileUids !== null) {
+        if (statusProfileUids.length > 0) {
+            conditions.push(Prisma.sql`c."firebaseUid" IN (${Prisma.join(statusProfileUids)})`);
+        } else {
+            conditions.push(Prisma.sql`1 = 0`);
+        }
+    }
+
+    const whereClause = Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`;
+
+    const countQuery = Prisma.sql`
+        SELECT COUNT(*)::int as count
+        FROM "AuthSubject" s
+        JOIN "CustomerIdentity" c ON s.id = c."subjectId"
+        ${whereClause}
+    `;
+    const dataQuery = Prisma.sql`
+        SELECT s.id, s.type, s."createdAt", s."updatedAt",
+               c."firebaseUid", c."customerId", c."lastLoginAt"
+        FROM "AuthSubject" s
+        JOIN "CustomerIdentity" c ON s.id = c."subjectId"
+        ${whereClause}
+        ORDER BY s."createdAt" DESC
+        LIMIT ${limit} OFFSET ${offset}
+    `;
+
+    try {
+        const [totalResult, authUsers] = await Promise.all([
+            authPrisma.$queryRaw<[{ count: number }]>(countQuery),
+            authPrisma.$queryRaw<any[]>(dataQuery),
+        ]);
+
+        const total = Number(totalResult[0]?.count || 0);
+        const firebaseUids = authUsers.filter(u => u.firebaseUid).map(u => u.firebaseUid);
+
+        let profiles: any[] = [];
+        if (firebaseUids.length > 0) {
+            profiles = await prisma.customerProfile.findMany({
+                where: { firebaseUid: { in: firebaseUids } },
+            });
+        }
+
+        const authUserIds = authUsers.map(u => u.id);
+        const [analyticsMap, coinMap] = await Promise.all([
+            fetchBulkUserAnalytics(authUserIds),
+            fetchBulkCoinBalances(authUserIds),
+        ]);
+
+        const items: UserListItem[] = authUsers.map((u) => {
+            const profile = profiles.find(p => p.firebaseUid === u.firebaseUid);
+            // @ts-ignore
+            const name = profile?.name || u.firebaseUid || "Customer";
+            // @ts-ignore
+            const email = profile?.email || null;
+            const phone = profile?.phoneNumber || null;
+            // @ts-ignore
+            const userStatus = profile?.status || "active";
+            const analytics = analyticsMap[u.id] || { totalWatchTimeSeconds: 0, contentViewed: 0 };
+            const coins = coinMap[u.id] || { coinBalance: 0, walletStatus: "ACTIVE" };
+            const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name.replace(/\s/g, ""))}`;
+
+            return {
+                id: u.id,
+                name,
+                email,
+                phone,
+                status: userStatus,
+                plan: "Premium",
+                planType: "Premium" as const,
+                userType: "registered",
+                signupDate: new Date(u.createdAt).toISOString(),
+                lastActive: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : new Date(u.createdAt).toISOString(),
+                avatar,
+                watchTime: analytics.totalWatchTimeSeconds,
+                contentViewed: analytics.contentViewed,
+                coinBalance: coins.coinBalance,
+                walletStatus: coins.walletStatus,
+            };
+        });
+
+        return { items, total, page, totalPages: Math.ceil(total / limit) };
+    } catch (error) {
+        console.error("Failed to list trial-converted users:", error);
         return { items: [], total: 0, page, totalPages: 0 };
     }
 }

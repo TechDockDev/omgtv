@@ -9,6 +9,7 @@ export type AdminAccessTokenPayload = {
   userType: "ADMIN";
   adminId: string;
   roles: string[];
+  permissions: string[];
   sessionId?: string;
 };
 

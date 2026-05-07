@@ -1,0 +1,95 @@
+# PodDisruptionBudgets — ensures at least 1 pod remains available during
+# node drains (GKE auto-upgrades, manual maintenance). Works in tandem with
+# the HPA: when scaled to >=2 replicas, evictions are serialized; at 1 replica
+# GKE will still proceed after the PDB eviction timeout to avoid blocking
+# node upgrades indefinitely.
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: apigw-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: apigw
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: auth-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: auth-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: user-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: user-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: content-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: content-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: engagement-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: engagement-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: search-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: search-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: upload-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: upload-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: subscription-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: subscription-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notification-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: notification-service

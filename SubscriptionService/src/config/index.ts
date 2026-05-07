@@ -20,6 +20,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value && value.trim().length > 0 ? value : undefined)),
+  USER_SERVICE_URL: z.string().url().default("http://localhost:4500"),
   CONTENT_SERVICE_URL: z.string().url().default("http://localhost:4200"),
   NOTIFICATION_SERVICE_URL: z.string().url().default("http://localhost:5200"),
   RAZORPAY_KEY_ID: z.string().min(1, "RAZORPAY_KEY_ID is required"),

@@ -36,6 +36,11 @@ kind: Deployment
 metadata:
   name: apigw
 spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: apigw
@@ -52,6 +57,10 @@ spec:
           ports:
             - containerPort: 3000
               name: http
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 50m
@@ -159,6 +168,10 @@ spec:
               name: http
             - containerPort: 50051
               name: grpc
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 50m
@@ -276,6 +289,10 @@ spec:
               name: http
             - containerPort: 50052
               name: grpc
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 50m
@@ -397,12 +414,16 @@ spec:
           ports:
             - containerPort: 4600
               name: http
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 200m
               memory: 256Mi
             limits:
-              cpu: 1000m
+              cpu: 500m
               memory: 1024Mi
           envFrom:
             - configMapRef:
@@ -503,6 +524,10 @@ spec:
           ports:
             - containerPort: 4700
               name: http
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 50m
@@ -656,6 +681,11 @@ kind: Deployment
 metadata:
   name: search-service
 spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: search-service
@@ -672,6 +702,10 @@ spec:
           ports:
             - containerPort: 4800
               name: http
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 25m
@@ -781,13 +815,17 @@ spec:
           ports:
             - containerPort: 5000
               name: http
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 1024Mi
+              cpu: 300m
+              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: upload-service-config
@@ -837,6 +875,7 @@ data:
   RAZORPAY_KEY_ID: ""
   RAZORPAY_KEY_SECRET: ""
   RAZORPAY_WEBHOOK_SECRET: ""
+  USER_SERVICE_URL: http://user-service:4500
 ---
 
 ---
@@ -891,6 +930,10 @@ spec:
               name: http
             - containerPort: 50071
               name: grpc
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
           resources:
             requests:
               cpu: 50m

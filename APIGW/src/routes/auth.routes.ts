@@ -127,7 +127,9 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
     },
     config: {
       auth: { public: true },
-      rateLimitPolicy: "anonymous",
+      // Tight limit: a legitimate user completes phone login once per session.
+      // 5 attempts per IP per minute stops replay loops without blocking real users.
+      gatewayRateLimit: { max: 5, timeWindowMs: 60_000 },
       security: { bodyLimit: 32 * 1024 },
     },
     async handler(request, reply) {
@@ -164,7 +166,9 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
     },
     config: {
       auth: { public: true },
-      rateLimitPolicy: "anonymous",
+      // A real device calls guest/init once on first install.
+      // 3 per IP per minute is generous for real users, tight for bots.
+      gatewayRateLimit: { max: 3, timeWindowMs: 60_000 },
       security: { bodyLimit: 16 * 1024 },
     },
     async handler(request, reply) {
