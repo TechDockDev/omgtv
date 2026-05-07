@@ -49,6 +49,8 @@ export const tokenResponseSchema = z.object({
   expiresIn: z.number().int().positive(),
   refreshExpiresIn: z.number().int().positive(),
   tokenType: z.literal("Bearer").default("Bearer"),
+  roles: z.array(z.string()).optional(),
+  permissions: z.array(z.string()).optional(),
 });
 
 export const guestInitResponseSchema = z.object({

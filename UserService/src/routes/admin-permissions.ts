@@ -165,23 +165,6 @@ export default async function adminPermissionsRoutes(fastify: FastifyInstance) {
     // ─── Role CRUD ────────────────────────────────────────────────────────────
 
     /**
-     * GET /admin/roles
-     * List all roles with their permissions.
-     */
-    fastify.get("/roles", async () => {
-        const roles = await fastify.prisma.role.findMany({
-            include: { permissions: { include: { permission: true } } },
-            orderBy: { name: "asc" },
-        });
-        return {
-            roles: roles.map((r) => ({
-                ...r,
-                permissions: r.permissions.map((rp) => rp.permission),
-            })),
-        };
-    });
-
-    /**
      * GET /admin/roles/:roleId
      * Get single role with full permission list.
      */

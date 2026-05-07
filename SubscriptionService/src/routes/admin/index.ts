@@ -1033,7 +1033,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       schema: {
         params: z.object({ userId: z.string() }),
         querystring: z.object({
-          type: z.enum(["credit", "earned", "debit", "admin_credit", "admin_debit"]).optional(),
+          type: z.string().optional().transform(v => v === '' ? undefined : v).pipe(z.enum(["credit", "earned", "debit", "admin_credit", "admin_debit"]).optional()),
           page: z.coerce.number().int().positive().default(1),
           limit: z.coerce.number().int().positive().max(100).default(20),
         }),

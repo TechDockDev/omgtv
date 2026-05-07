@@ -151,7 +151,7 @@ jobs:
         run: |
           set -euo pipefail
           ns="${ENVIRONMENT}"
-          kubectl -n "${ns}" rollout status deployment/apigw --timeout=10m
+          kubectl -n "${ns}" rollout status deployment/apigw --timeout=20m
           kubectl -n "${ns}" rollout status deployment/auth-service --timeout=10m
           kubectl -n "${ns}" rollout status deployment/user-service --timeout=10m
           kubectl -n "${ns}" rollout status deployment/content-service --timeout=10m

@@ -399,13 +399,15 @@ export async function loginAdmin(params: {
     permissions: ctx.permissions,
   };
 
-  return issueSessionTokens({
+  const tokens = await issueSessionTokens({
     prisma,
     redis,
     subjectId: credential.subjectId,
     payload,
     signAccessToken,
   });
+
+  return { ...tokens, roles: ctx.roles, permissions: ctx.permissions };
 }
 
 export async function registerAdmin(params: {
@@ -465,13 +467,15 @@ export async function registerAdmin(params: {
     permissions: ctx.permissions,
   };
 
-  return issueSessionTokens({
+  const tokens = await issueSessionTokens({
     prisma,
     redis,
     subjectId: subject.id,
     payload,
     signAccessToken,
   });
+
+  return { ...tokens, roles: ctx.roles, permissions: ctx.permissions };
 }
 
 export async function authenticateCustomer(params: {
@@ -695,7 +699,7 @@ export async function rotateRefreshToken(params: {
     });
   }
 
-  return issueSessionTokens({
+  const tokens = await issueSessionTokens({
     prisma,
     redis,
     subjectId: session.subjectId,
@@ -703,6 +707,12 @@ export async function rotateRefreshToken(params: {
     signAccessToken,
     deviceId: session.deviceId ?? deviceId,
   });
+
+  if (payload.userType === "ADMIN") {
+    return { ...tokens, roles: payload.roles, permissions: payload.permissions };
+  }
+
+  return tokens;
 }
 
 export async function revokeSessions(params: {

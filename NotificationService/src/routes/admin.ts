@@ -149,14 +149,18 @@ export default async function adminRoutes(server: FastifyInstance) {
     server.get('/payment-notifications', {
         schema: {
             querystring: z.object({
-                type: z.enum([
-                    'SUBSCRIPTION_ACTIVATED',
-                    'SUBSCRIPTION_RENEWED',
-                    'SUBSCRIPTION_PAYMENT_FAILED',
-                    'COIN_PURCHASE_SUCCESS',
-                    'COIN_PURCHASE_FAILED',
-                ]).optional(),
-                status: z.enum(['SENT', 'FAILED', 'READ']).optional(),
+                type: z.string().optional().transform(v => v === '' ? undefined : v).pipe(
+                    z.enum([
+                        'SUBSCRIPTION_ACTIVATED',
+                        'SUBSCRIPTION_RENEWED',
+                        'SUBSCRIPTION_PAYMENT_FAILED',
+                        'COIN_PURCHASE_SUCCESS',
+                        'COIN_PURCHASE_FAILED',
+                    ]).optional()
+                ),
+                status: z.string().optional().transform(v => v === '' ? undefined : v).pipe(
+                    z.enum(['SENT', 'FAILED', 'READ']).optional()
+                ),
                 limit: z.coerce.number().int().min(1).max(100).default(20),
                 offset: z.coerce.number().int().min(0).default(0),
             }),
