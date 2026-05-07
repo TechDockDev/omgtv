@@ -5,11 +5,13 @@ import { getPrisma } from "../../lib/prisma";
 import { invalidateEntitlementCache, getRedis } from "../../lib/redis";
 import { CoinService } from "../../services/coinService";
 import { ContentClient } from "../../clients/content-client";
+import { NotificationClient } from "../../clients/notification-client";
 import { TransactionSource, CoinTransactionType } from "@prisma/client";
 import { loadConfig } from "../../config";
 import { getRazorpay } from "../../lib/razorpay";
 const coinService = new CoinService();
 const contentClient = new ContentClient();
+const notificationClient = new NotificationClient();
 const config = loadConfig();
 
 const purchaseIntentSchema = z.object({
@@ -549,6 +551,24 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     await invalidateEntitlementCache(transaction.userId);
 
+    const isTrial = !!trialPlanId;
+    if (isTrial) {
+      const trialDays = Math.round((endsAt.getTime() - startsAt.getTime()) / (1000 * 86400));
+      await notificationClient.sendPush(
+        transaction.userId,
+        "Free Trial Activated!",
+        `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`,
+        { type: "SUBSCRIPTION_ACTIVATED" }
+      );
+    } else {
+      await notificationClient.sendPush(
+        transaction.userId,
+        "Subscription Activated",
+        "Your subscription is now active. Enjoy unlimited content!",
+        { type: "SUBSCRIPTION_ACTIVATED" }
+      );
+    }
+
     return reply.send({
       success: true,
       statusCode: 200,
@@ -1046,6 +1066,13 @@ export default async function customerRoutes(app: FastifyInstance) {
             referenceId: orderId,
         }, tx);
       });
+
+      await notificationClient.sendPush(
+        userId,
+        "Coins Added!",
+        `${purchase.coins} coins added! Use coins to unlock episodes.`,
+        { type: "COIN_PURCHASE_SUCCESS", coins: String(purchase.coins) }
+      );
 
       return { success: true, balance: await coinService.getBalance(userId) };
     }

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { NotificationRepository } from '../repositories/notification';
 import { NotificationManager } from '../services/notification-manager';
 import { pushNotificationService } from '../services/PushNotificationService';
+import { userProvider } from '../providers/UserProvider';
 import prisma from '../prisma';
 
 const sendNotificationSchema = z.object({
@@ -96,5 +97,123 @@ export default async function adminRoutes(server: FastifyInstance) {
             failed,
             read
         };
+    });
+
+    /**
+     * GET /admin/payment-notifications/stats
+     * Breakdown of payment push notifications by trigger type
+     */
+    server.get('/payment-notifications/stats', async () => {
+        const triggerTypes = [
+            'SUBSCRIPTION_ACTIVATED',
+            'SUBSCRIPTION_RENEWED',
+            'SUBSCRIPTION_PAYMENT_FAILED',
+            'COIN_PURCHASE_SUCCESS',
+            'COIN_PURCHASE_FAILED',
+        ] as const;
+
+        const stats = await Promise.all(
+            triggerTypes.map(async (type) => {
+                const [sent, failed, read] = await Promise.all([
+                    prisma.notification.count({
+                        where: { status: 'SENT', data: { path: ['type'], equals: type } },
+                    }),
+                    prisma.notification.count({
+                        where: { status: 'FAILED', data: { path: ['type'], equals: type } },
+                    }),
+                    prisma.notification.count({
+                        where: { status: 'READ', data: { path: ['type'], equals: type } },
+                    }),
+                ]);
+                return { type, sent, failed, read, total: sent + failed + read };
+            })
+        );
+
+        const overall = stats.reduce(
+            (acc, s) => ({
+                sent: acc.sent + s.sent,
+                failed: acc.failed + s.failed,
+                read: acc.read + s.read,
+                total: acc.total + s.total,
+            }),
+            { sent: 0, failed: 0, read: 0, total: 0 }
+        );
+
+        return { overall, breakdown: stats };
+    });
+
+    /**
+     * GET /admin/payment-notifications?type=&status=&limit=&offset=
+     * List recent payment push notifications with optional filters
+     */
+    server.get('/payment-notifications', {
+        schema: {
+            querystring: z.object({
+                type: z.enum([
+                    'SUBSCRIPTION_ACTIVATED',
+                    'SUBSCRIPTION_RENEWED',
+                    'SUBSCRIPTION_PAYMENT_FAILED',
+                    'COIN_PURCHASE_SUCCESS',
+                    'COIN_PURCHASE_FAILED',
+                ]).optional(),
+                status: z.enum(['SENT', 'FAILED', 'READ']).optional(),
+                limit: z.coerce.number().int().min(1).max(100).default(20),
+                offset: z.coerce.number().int().min(0).default(0),
+            }),
+        },
+    }, async (request) => {
+        const { type, status, limit, offset } = request.query as {
+            type?: string;
+            status?: string;
+            limit: number;
+            offset: number;
+        };
+
+        const paymentTypes = [
+            'SUBSCRIPTION_ACTIVATED',
+            'SUBSCRIPTION_RENEWED',
+            'SUBSCRIPTION_PAYMENT_FAILED',
+            'COIN_PURCHASE_SUCCESS',
+            'COIN_PURCHASE_FAILED',
+        ];
+
+        // Prisma JSON path filter doesn't support `in` — use OR instead
+        const typeFilter = type
+            ? { data: { path: ['type'], equals: type } }
+            : { OR: paymentTypes.map(t => ({ data: { path: ['type'], equals: t } })) };
+
+        const where: any = { ...typeFilter };
+        if (status) where.status = status;
+
+        const [notifications, total] = await Promise.all([
+            prisma.notification.findMany({
+                where,
+                orderBy: { createdAt: 'desc' },
+                take: limit,
+                skip: offset,
+                select: {
+                    id: true,
+                    userId: true,
+                    title: true,
+                    body: true,
+                    data: true,
+                    status: true,
+                    fcmError: true,
+                    createdAt: true,
+                },
+            }),
+            prisma.notification.count({ where }),
+        ]);
+
+        // Enrich with user profiles (name, email, phone)
+        const userIds = [...new Set(notifications.map(n => n.userId))];
+        const profiles = await userProvider.getUserProfiles(userIds);
+
+        const enriched = notifications.map(n => ({
+            ...n,
+            user: profiles[n.userId] ?? { name: null, email: null, phone: null },
+        }));
+
+        return { total, limit, offset, notifications: enriched };
     });
 }

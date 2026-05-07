@@ -7,8 +7,10 @@ import { getRazorpay } from "../lib/razorpay";
 import { SubscriptionStatus, TransactionSource } from "@prisma/client";
 import { invalidateEntitlementCache } from "../lib/redis";
 import { CoinService } from "../services/coinService";
+import { NotificationClient } from "../clients/notification-client";
 
 const coinService = new CoinService();
+const notificationClient = new NotificationClient();
 
 const webhookRoutes: FastifyPluginAsync = async (app) => {
     const config = loadConfig();
@@ -137,6 +139,17 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
                         request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
                         await invalidateEntitlementCache(transaction.userId);
+                        const trialDays = isTrial
+                            ? Math.round((subscriptionEntity.current_end - subscriptionEntity.current_start) / 86400)
+                            : 0;
+                        await notificationClient.sendPush(
+                            transaction.userId,
+                            isTrial ? "Free Trial Activated!" : "Subscription Activated",
+                            isTrial
+                                ? `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`
+                                : "Your subscription is now active. Enjoy unlimited content!",
+                            { type: "SUBSCRIPTION_ACTIVATED" }
+                        );
                     }
                 } else {
                     // 2. Might be a renewal or trial transition
@@ -196,8 +209,20 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 planId: existingSub.planId,
                                 newEndsAt: new Date(subscriptionEntity.current_end * 1000)
                             });
+                            await notificationClient.sendPush(
+                                existingSub.userId,
+                                "Subscription Activated",
+                                "Your trial has ended and your paid subscription is now active.",
+                                { type: "SUBSCRIPTION_ACTIVATED" }
+                            );
                         } else {
                             request.log.info({ msg: "Subscription renewed", subId: existingSub.id });
+                            await notificationClient.sendPush(
+                                existingSub.userId,
+                                "Subscription Renewed",
+                                "Your subscription has been renewed successfully. Keep enjoying premium content!",
+                                { type: "SUBSCRIPTION_RENEWED" }
+                            );
                         }
                     }
                 }
@@ -268,16 +293,19 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }
                         }
 
+                        const startsAt = new Date(subscriptionEntity.current_start * 1000);
+                        const endsAt = new Date(subscriptionEntity.current_end * 1000);
+
                         await prisma.userSubscription.create({
                             data: {
                                 userId: tx.userId,
                                 planId: tx.planId,
                                 trialPlanId: tx.trialPlanId,
-                                status: tx.trialPlanId ? "TRIAL" : "ACTIVE",
+                                status: isTrial ? "TRIAL" : "ACTIVE",
                                 razorpayOrderId: subscriptionId,
                                 transactionId: tx.id,
-                                startsAt: new Date(subscriptionEntity.current_start * 1000),
-                                endsAt: new Date(subscriptionEntity.current_end * 1000)
+                                startsAt,
+                                endsAt
                             }
                         });
                         await invalidateEntitlementCache(tx.userId);
@@ -287,6 +315,17 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                data: { status: "SUCCESS" }
                            });
                         }
+                        const trialDays = isTrial
+                            ? Math.round((subscriptionEntity.current_end - subscriptionEntity.current_start) / 86400)
+                            : 0;
+                        await notificationClient.sendPush(
+                            tx.userId,
+                            isTrial ? "Free Trial Activated!" : "Subscription Activated",
+                            isTrial
+                                ? `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`
+                                : "Your subscription is now active. Enjoy unlimited content!",
+                            { type: "SUBSCRIPTION_ACTIVATED" }
+                        );
                     }
                 }
             } else if (
@@ -310,6 +349,15 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     });
                     await invalidateEntitlementCache(existingSub.userId);
                     request.log.info({ msg: `Subscription ${event}`, subscriptionId, status });
+
+                    if (event === "subscription.halted") {
+                        await notificationClient.sendPush(
+                            existingSub.userId,
+                            "Payment Failed",
+                            "We couldn't process your subscription payment. Please update your payment method to continue.",
+                            { type: "SUBSCRIPTION_PAYMENT_FAILED" }
+                        );
+                    }
                 }
             } else if (event === "payment.captured" || event === "order.paid") {
                 const isOrder = event === "order.paid";
@@ -342,6 +390,12 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }, tx);
                         });
                         request.log.info({ msg: "Coin purchase fulfilled via webhook", orderId, userId });
+                        await notificationClient.sendPush(
+                            purchase.userId,
+                            "Coins Added!",
+                            `${purchase.coins} coins added! Use coins to unlock episodes.`,
+                            { type: "COIN_PURCHASE_SUCCESS", coins: String(purchase.coins) }
+                        );
                     }
                 }
             } else if (event === "payment.failed") {
@@ -357,6 +411,12 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             data: { status: "FAILED" }
                         });
                         request.log.info({ msg: "Coin purchase marked FAILED via webhook", orderId });
+                        await notificationClient.sendPush(
+                            purchase.userId,
+                            "Payment Failed",
+                            "Your coin purchase could not be processed. Please try again.",
+                            { type: "COIN_PURCHASE_FAILED" }
+                        );
                     }
                 }
             }
