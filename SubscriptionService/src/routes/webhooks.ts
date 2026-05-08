@@ -173,14 +173,14 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
                     if (existingSub) {
                         // If the user cancelled auto-renew, the subscription is already CANCELED in our DB.
-                        // Razorpay may still fire subscription.charged for the paid period that follows the
-                        // trial (it charges before it processes the cancellation), but we must NOT reactivate
-                        // a subscription the user deliberately cancelled.
-                        if (existingSub.status === "CANCELED") {
-                            request.log.info({ msg: "Skipping renewal for user-cancelled subscription — refund may be needed", subscriptionId, userId: existingSub.userId });
+                        // EXPIRED means we deliberately ended it (e.g., trial→paid upgrade superseded the old sub).
+                        // Razorpay may still fire subscription.charged for stale subscriptions, but we must NOT
+                        // reactivate one the user (or our own upgrade flow) already terminated.
+                        if (existingSub.status === "CANCELED" || existingSub.status === "EXPIRED") {
+                            request.log.info({ msg: "Skipping renewal for terminated subscription", subscriptionId, userId: existingSub.userId, status: existingSub.status });
                             // Cancel on Razorpay side immediately to stop further charges
                             try {
-                                await razorpay.subscriptions.cancel(subscriptionId, { cancel_at_cycle_end: 0 } as any);
+                                await razorpay.subscriptions.cancel(subscriptionId, false);
                             } catch (cancelErr) {
                                 request.log.warn(cancelErr, "Failed to cancel Razorpay subscription after skipping reactivation");
                             }
@@ -264,6 +264,18 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 });
 
                 if (existingSub) {
+                    // User cancelled (CANCELED) or we superseded the sub (EXPIRED, e.g., trial→paid upgrade).
+                    // Either way, do not activate. Force-cancel Razorpay to stop future charges.
+                    if (existingSub.status === "CANCELED" || existingSub.status === "EXPIRED") {
+                        request.log.info({ msg: "Skipping subscription.activated for terminated subscription", subscriptionId, userId: existingSub.userId, status: existingSub.status });
+                        try {
+                            await razorpay.subscriptions.cancel(subscriptionId, false);
+                        } catch (cancelErr) {
+                            request.log.warn(cancelErr, "Force-cancel on activated-but-terminated subscription failed");
+                        }
+                        return reply.send({ status: "ok" });
+                    }
+
                     // If this was a trial subscription, transition to ACTIVE (trial is ending)
                     const wasTrialSub = !!existingSub.trialPlanId || existingSub.status === "TRIAL";
 
@@ -394,7 +406,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     // that follows the trial is never charged.
                     if (isCancelledTrial) {
                         try {
-                            await razorpay.subscriptions.cancel(subscriptionId, { cancel_at_cycle_end: 0 } as any);
+                            await razorpay.subscriptions.cancel(subscriptionId, false);
                             request.log.info({ msg: "Force-cancelled Razorpay trial subscription to block paid-period charge", subscriptionId });
                         } catch (cancelErr) {
                             request.log.warn(cancelErr, "Force-cancel failed — may already be fully cancelled");
