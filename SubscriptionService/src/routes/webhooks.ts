@@ -276,6 +276,18 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         return reply.send({ status: "ok" });
                     }
 
+                    // Razorpay fires subscription.activated at mandate authentication time
+                    // (immediately after user pays), not only when the billing period starts.
+                    // For trial subs, this fires BEFORE the trial ends with current_start/current_end
+                    // pointing at the future billing period (30 days out). Activating here would:
+                    //   1. Overwrite the correct trial endsAt with the billing period end (30 days)
+                    //   2. Clear trialPlanId, breaking the isCancelledTrial check in subscription.cancelled
+                    // Skip — subscription.charged handles TRIAL→ACTIVE when the charge actually succeeds.
+                    if (existingSub.status === "TRIAL" && existingSub.trialPlanId) {
+                        request.log.info({ msg: "Skipping subscription.activated during active trial — subscription.charged will handle transition", subscriptionId });
+                        return reply.send({ status: "ok" });
+                    }
+
                     // If this was a trial subscription, transition to ACTIVE (trial is ending)
                     const wasTrialSub = !!existingSub.trialPlanId || existingSub.status === "TRIAL";
 
