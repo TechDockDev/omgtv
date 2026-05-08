@@ -299,6 +299,8 @@ function normalizeTokenPayload(payload: unknown): TokenResponse {
           0
         ),
     tokenType: "Bearer",
+    roles: Array.isArray(source.roles) ? source.roles.map(String) : undefined,
+    permissions: Array.isArray(source.permissions) ? source.permissions.map(String) : undefined,
   };
 }
 

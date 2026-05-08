@@ -67,7 +67,7 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
         "Admin login routed to auth service"
       );
 
-      return reply.status(200).send({ tokens });
+      return reply.status(200).send({ tokens, roles: tokens.roles, permissions: tokens.permissions });
     },
   });
 
@@ -105,7 +105,7 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
         "Admin registration routed to auth service"
       );
 
-      return reply.status(201).send({ tokens });
+      return reply.status(201).send({ tokens, roles: tokens.roles, permissions: tokens.permissions });
     },
   });
 
@@ -221,7 +221,7 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
         "Token refresh routed to auth service"
       );
 
-      return reply.status(200).send({ tokens });
+      return reply.status(200).send({ tokens, roles: tokens.roles, permissions: tokens.permissions });
     },
   });
 
