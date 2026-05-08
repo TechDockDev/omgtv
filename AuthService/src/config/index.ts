@@ -39,12 +39,12 @@ const envSchema = z.object({
     }),
   AUTH_JWT_KEY_ID: z.string().default("auth-service"),
   DEFAULT_LANGUAGE_ID: z.string().default("hi"),
-  ACCESS_TOKEN_TTL: z.coerce.number().int().positive().default(86400), // 1 day for development
+  ACCESS_TOKEN_TTL: z.coerce.number().int().positive().default(60 * 60 * 24 * 7), // 7 days
   REFRESH_TOKEN_TTL: z.coerce
     .number()
     .int()
     .positive()
-    .default(60 * 60 * 24 * 7),
+    .default(60 * 60 * 24 * 365), // 1 year — effectively forever with rotation
   REFRESH_TOKEN_ROTATION: z
     .string()
     .optional()
