@@ -184,7 +184,7 @@ export default async function adminPermissionsRoutes(fastify: FastifyInstance) {
      */
     fastify.post("/roles", async (request, reply) => {
         const body = z.object({
-            name: z.string().min(1).toUpperCase(),
+            name: z.string().min(1).transform(v => v.toUpperCase()),
             description: z.string().optional(),
         }).parse(request.body);
 
@@ -204,7 +204,7 @@ export default async function adminPermissionsRoutes(fastify: FastifyInstance) {
     fastify.patch("/roles/:roleId", async (request, reply) => {
         const { roleId } = roleIdParamsSchema.parse(request.params);
         const body = z.object({
-            name: z.string().min(1).optional(),
+            name: z.string().min(1).transform(v => v.toUpperCase()).optional(),
             description: z.string().optional(),
         }).parse(request.body);
 
@@ -234,7 +234,11 @@ export default async function adminPermissionsRoutes(fastify: FastifyInstance) {
             return reply.code(409).send({ error: "Role has active assignments. Revoke them first." });
         }
 
-        await fastify.prisma.role.delete({ where: { id: roleId } });
+        await fastify.prisma.$transaction(async (tx) => {
+            await tx.rolePermission.deleteMany({ where: { roleId } });
+            await tx.userRoleAssignment.deleteMany({ where: { roleId } });
+            await tx.role.delete({ where: { id: roleId } });
+        });
         return { deleted: true };
     });
 
@@ -327,7 +331,11 @@ export default async function adminPermissionsRoutes(fastify: FastifyInstance) {
                     include: { role: true },
                 });
                 return {
-                    ...profile,
+                    id: profile.subjectId,
+                    subjectId: profile.subjectId,
+                    name: profile.name,
+                    createdAt: profile.createdAt,
+                    updatedAt: profile.updatedAt,
                     roles: assignments.map((a) => a.role),
                 };
             })
@@ -377,7 +385,7 @@ export default async function adminPermissionsRoutes(fastify: FastifyInstance) {
             }
         }
 
-        return reply.code(201).send({ admin: { ...profile, subjectId } });
+        return reply.code(201).send({ admin: { id: subjectId, subjectId, name: profile.name, bio: null, phoneNumber: null, createdAt: profile.createdAt, updatedAt: profile.updatedAt } });
     });
 
     /**
