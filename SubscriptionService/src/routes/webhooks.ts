@@ -123,6 +123,21 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }
                         }
 
+                        // For trial purchases, Razorpay's current_start/current_end reflect the
+                        // first billing period (after trial ends), not the trial window itself.
+                        // Always use the admin-configured trialPlan.durationDays for the trial period.
+                        let subStartsAt = new Date(subscriptionEntity.current_start * 1000);
+                        let subEndsAt = new Date(subscriptionEntity.current_end * 1000);
+                        let trialDays = 0;
+                        if (isTrial && transaction.trialPlanId) {
+                            const trialPlanRecord = await prisma.trialPlan.findUnique({ where: { id: transaction.trialPlanId } });
+                            if (trialPlanRecord) {
+                                subStartsAt = new Date();
+                                subEndsAt = new Date(Date.now() + trialPlanRecord.durationDays * 24 * 60 * 60 * 1000);
+                                trialDays = trialPlanRecord.durationDays;
+                            }
+                        }
+
                         // Activate user subscription - use TRIAL status if this is a trial purchase
                         const userSubscription = await prisma.userSubscription.create({
                             data: {
@@ -132,16 +147,13 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 status: isTrial ? "TRIAL" : "ACTIVE",
                                 razorpayOrderId: subscriptionId,
                                 transactionId: transaction.id,
-                                startsAt: new Date(subscriptionEntity.current_start * 1000),
-                                endsAt: new Date(subscriptionEntity.current_end * 1000)
+                                startsAt: subStartsAt,
+                                endsAt: subEndsAt,
                             }
                         });
 
                         request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
                         await invalidateEntitlementCache(transaction.userId);
-                        const trialDays = isTrial
-                            ? Math.round((subscriptionEntity.current_end - subscriptionEntity.current_start) / 86400)
-                            : 0;
                         await notificationClient.sendPush(
                             transaction.userId,
                             isTrial ? "Free Trial Activated!" : "Subscription Activated",
@@ -160,6 +172,21 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                     });
 
                     if (existingSub) {
+                        // If the user cancelled auto-renew, the subscription is already CANCELED in our DB.
+                        // Razorpay may still fire subscription.charged for the paid period that follows the
+                        // trial (it charges before it processes the cancellation), but we must NOT reactivate
+                        // a subscription the user deliberately cancelled.
+                        if (existingSub.status === "CANCELED") {
+                            request.log.info({ msg: "Skipping renewal for user-cancelled subscription — refund may be needed", subscriptionId, userId: existingSub.userId });
+                            // Cancel on Razorpay side immediately to stop further charges
+                            try {
+                                await razorpay.subscriptions.cancel(subscriptionId, { cancel_at_cycle_end: 0 } as any);
+                            } catch (cancelErr) {
+                                request.log.warn(cancelErr, "Failed to cancel Razorpay subscription after skipping reactivation");
+                            }
+                            return reply.send({ status: "ok" });
+                        }
+
                         // Check if we already processed this exact payment
                         let existingTx = null;
                         if (paymentId) {
@@ -293,8 +320,17 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }
                         }
 
-                        const startsAt = new Date(subscriptionEntity.current_start * 1000);
-                        const endsAt = new Date(subscriptionEntity.current_end * 1000);
+                        let startsAt = new Date(subscriptionEntity.current_start * 1000);
+                        let endsAt = new Date(subscriptionEntity.current_end * 1000);
+                        let trialDays = 0;
+                        if (isTrial && tx.trialPlanId) {
+                            const trialPlanRecord = await prisma.trialPlan.findUnique({ where: { id: tx.trialPlanId } });
+                            if (trialPlanRecord) {
+                                startsAt = new Date();
+                                endsAt = new Date(Date.now() + trialPlanRecord.durationDays * 24 * 60 * 60 * 1000);
+                                trialDays = trialPlanRecord.durationDays;
+                            }
+                        }
 
                         await prisma.userSubscription.create({
                             data: {
@@ -305,7 +341,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 razorpayOrderId: subscriptionId,
                                 transactionId: tx.id,
                                 startsAt,
-                                endsAt
+                                endsAt,
                             }
                         });
                         await invalidateEntitlementCache(tx.userId);
@@ -315,9 +351,6 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                data: { status: "SUCCESS" }
                            });
                         }
-                        const trialDays = isTrial
-                            ? Math.round((subscriptionEntity.current_end - subscriptionEntity.current_start) / 86400)
-                            : 0;
                         await notificationClient.sendPush(
                             tx.userId,
                             isTrial ? "Free Trial Activated!" : "Subscription Activated",
@@ -343,12 +376,30 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 });
 
                 if (existingSub) {
+                    const isCancelledTrial = event === "subscription.cancelled" && !!existingSub.trialPlanId;
+
                     await prisma.userSubscription.update({
                         where: { id: existingSub.id },
-                        data: { status }
+                        data: {
+                            status,
+                            // Trial cancel → lose access immediately (endsAt = now).
+                            // Paid plan cancel → keep access till current period end (endsAt unchanged).
+                            ...(isCancelledTrial ? { endsAt: new Date() } : {}),
+                        }
                     });
                     await invalidateEntitlementCache(existingSub.userId);
-                    request.log.info({ msg: `Subscription ${event}`, subscriptionId, status });
+                    request.log.info({ msg: `Subscription ${event}`, subscriptionId, status, isCancelledTrial });
+
+                    // Force immediate cancellation on Razorpay for trials so the paid period
+                    // that follows the trial is never charged.
+                    if (isCancelledTrial) {
+                        try {
+                            await razorpay.subscriptions.cancel(subscriptionId, { cancel_at_cycle_end: 0 } as any);
+                            request.log.info({ msg: "Force-cancelled Razorpay trial subscription to block paid-period charge", subscriptionId });
+                        } catch (cancelErr) {
+                            request.log.warn(cancelErr, "Force-cancel failed — may already be fully cancelled");
+                        }
+                    }
 
                     if (event === "subscription.halted") {
                         await notificationClient.sendPush(

@@ -1379,4 +1379,120 @@ export default async function adminRoutes(app: FastifyInstance) {
       };
     }
   );
+
+  // GET /admin/subscriptions/trial-leaked
+  // Identify users with a free ACTIVE subscription: was originally a trial but got
+  // auto-activated to ACTIVE by the renewal webhook without a real payment going through.
+  //
+  // How we know they didn't pay:
+  //   - Renewal webhook creates a Transaction with amountPaise = payload.payment.entity.amount || 0
+  //   - If no real payment was captured, amountPaise = 0
+  //   - Legitimate trial→paid transitions have a renewal Transaction with amountPaise > 0
+  //   - Group B (no real payment) have NO renewal transaction with amountPaise > 0
+  app.get("/subscriptions/trial-leaked", async (request, reply) => {
+    // Step 1: all ACTIVE subs that were originally trials
+    const candidates = await prisma.userSubscription.findMany({
+      where: {
+        status: "ACTIVE",
+        transaction: { trialPlanId: { not: null } },
+      },
+      include: {
+        transaction: { select: { id: true, amountPaise: true } },
+        plan: { select: { name: true, pricePaise: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Step 2: keep only those with no successful paid renewal transaction
+    const leaked = [];
+    for (const sub of candidates) {
+      if (!sub.razorpayOrderId) continue;
+      const paidRenewal = await prisma.transaction.findFirst({
+        where: {
+          subscriptionId: sub.razorpayOrderId,
+          trialPlanId: null,
+          amountPaise: { gt: 0 },
+          status: "SUCCESS",
+        },
+        select: { id: true },
+      });
+      if (!paidRenewal) {
+        leaked.push(sub);
+      }
+    }
+
+    return {
+      success: true,
+      count: leaked.length,
+      data: leaked.map((s) => ({
+        subscriptionId: s.id,
+        userId: s.userId,
+        planName: s.plan?.name,
+        planPricePaise: s.plan?.pricePaise,
+        endsAt: s.endsAt,
+        createdAt: s.createdAt,
+        originalTrialTransactionId: s.transaction?.id,
+      })),
+    };
+  });
+
+  // POST /admin/subscriptions/trial-leaked/revoke
+  // Revoke confirmed trial-leaked subscriptions (set EXPIRED, endsAt = now).
+  // Always run with { dryRun: true } first to review, then { dryRun: false } to execute.
+  app.post(
+    "/subscriptions/trial-leaked/revoke",
+    { schema: { body: z.object({ dryRun: z.boolean().default(true) }) } },
+    async (request, reply) => {
+      const { dryRun } = request.body as { dryRun: boolean };
+      const { invalidateEntitlementCache } = await import("../../lib/redis");
+
+      const candidates = await prisma.userSubscription.findMany({
+        where: {
+          status: "ACTIVE",
+          transaction: { trialPlanId: { not: null } },
+        },
+        select: { id: true, userId: true, razorpayOrderId: true },
+      });
+
+      // Only revoke those with no real paid renewal
+      const leaked: { id: string; userId: string }[] = [];
+      for (const sub of candidates) {
+        if (!sub.razorpayOrderId) continue;
+        const paidRenewal = await prisma.transaction.findFirst({
+          where: {
+            subscriptionId: sub.razorpayOrderId,
+            trialPlanId: null,
+            amountPaise: { gt: 0 },
+            status: "SUCCESS",
+          },
+          select: { id: true },
+        });
+        if (!paidRenewal) leaked.push(sub);
+      }
+
+      if (dryRun) {
+        return {
+          success: true,
+          dryRun: true,
+          wouldRevoke: leaked.length,
+          userIds: leaked.map((s) => s.userId),
+        };
+      }
+
+      const now = new Date();
+      await prisma.userSubscription.updateMany({
+        where: { id: { in: leaked.map((s) => s.id) } },
+        data: { status: "EXPIRED", endsAt: now },
+      });
+
+      await Promise.allSettled(leaked.map((s) => invalidateEntitlementCache(s.userId)));
+
+      return {
+        success: true,
+        dryRun: false,
+        revoked: leaked.length,
+        userIds: leaked.map((s) => s.userId),
+      };
+    }
+  );
 }

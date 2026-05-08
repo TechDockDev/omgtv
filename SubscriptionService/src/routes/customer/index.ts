@@ -172,6 +172,39 @@ export default async function customerRoutes(app: FastifyInstance) {
     }
 
 
+    // Heal existing trial subscriptions created before the endsAt bug was fixed.
+    // Bug: Razorpay's current_end (first billing period end, e.g. 30 days) was stored
+    // instead of createdAt + trialPlan.durationDays (e.g. 7 days).
+    // Bug was also in startsAt: stored as Razorpay's current_start (future billing start date)
+    // instead of the actual trial start (createdAt).
+    if (
+      subscription &&
+      (subscription.status === "TRIAL" || subscription.status === "CANCELED") &&
+      subscription.trialPlanId &&
+      subscription.trialPlan
+    ) {
+      // Use createdAt as the true trial start — it's always set to now() at insert time.
+      const correctEndsAt = new Date(subscription.createdAt.getTime() + subscription.trialPlan.durationDays * 24 * 60 * 60 * 1000);
+      const oneHour = 60 * 60 * 1000;
+      if (subscription.endsAt.getTime() > correctEndsAt.getTime() + oneHour) {
+        request.log.warn({
+          msg: "Healing incorrect trial endsAt for existing subscription",
+          subId: subscription.id,
+          userId,
+          wrongEndsAt: subscription.endsAt,
+          correctEndsAt,
+        });
+        subscription = await prisma.userSubscription.update({
+          where: { id: subscription.id },
+          data: {
+            startsAt: subscription.createdAt,  // was set to future billing start
+            endsAt: correctEndsAt,
+          },
+          include: { plan: true, trialPlan: true },
+        });
+      }
+    }
+
     // If user has a trial, return trial details instead of main plan
     const isTrial = subscription?.status === "TRIAL" || !!subscription?.trialPlanId;
     const data = subscription ? {
@@ -464,46 +497,39 @@ export default async function customerRoutes(app: FastifyInstance) {
     let startsAt = new Date();
     let endsAt = new Date();
 
-    try {
-      const sub = await razorpay.subscriptions.fetch(subscriptionId);
-      if (sub.current_start && sub.current_end) {
-        startsAt = new Date(sub.current_start * 1000);
-        endsAt = new Date(sub.current_end * 1000);
-      } else {
-        // Fallback for trial or pending sub
-        // If it's a trial, we should calculate endsAt based on trial duration
-        const metadata = transaction.metadata as Record<string, any> | null;
-        if (metadata?.trialPlanId) {
-          const trialPlan = await prisma.trialPlan.findUnique({ where: { id: metadata.trialPlanId } });
-          if (trialPlan) {
-            endsAt = new Date(Date.now() + trialPlan.durationDays * 24 * 60 * 60 * 1000);
-          }
+    // Extract trialPlanId from metadata or transaction
+    const metadata = transaction.metadata as Record<string, any> | null;
+    const trialPlanId = transaction.trialPlanId || metadata?.trialPlanId;
+
+    if (trialPlanId) {
+      // Razorpay's current_start/current_end reflect the first BILLING period (after the trial
+      // ends), not the trial window. Derive the trial end date from the admin-configured
+      // trialPlan.durationDays so the subscription expires at the correct time.
+      const trialPlan = await prisma.trialPlan.findUnique({ where: { id: trialPlanId } });
+      if (trialPlan) {
+        startsAt = new Date();
+        endsAt = new Date(Date.now() + trialPlan.durationDays * 24 * 60 * 60 * 1000);
+      }
+    } else {
+      try {
+        const sub = await razorpay.subscriptions.fetch(subscriptionId);
+        if (sub.current_start && sub.current_end) {
+          startsAt = new Date(sub.current_start * 1000);
+          endsAt = new Date(sub.current_end * 1000);
         } else {
           const plan = await prisma.subscriptionPlan.findUnique({ where: { id: transaction.planId! } });
           if (plan) {
             endsAt = new Date(Date.now() + plan.durationDays * 24 * 60 * 60 * 1000);
           }
         }
-      }
-    } catch (e) {
-      request.log.error(e, "Failed to fetch subscription details");
-      const metadata = transaction.metadata as Record<string, any> | null;
-      if (metadata?.trialPlanId) {
-        const trialPlan = await prisma.trialPlan.findUnique({ where: { id: metadata.trialPlanId } });
-        if (trialPlan) {
-          endsAt = new Date(Date.now() + trialPlan.durationDays * 24 * 60 * 60 * 1000);
-        }
-      } else {
+      } catch (e) {
+        request.log.error(e, "Failed to fetch subscription details");
         const plan = await prisma.subscriptionPlan.findUnique({ where: { id: transaction.planId! } });
         if (plan) {
           endsAt = new Date(Date.now() + plan.durationDays * 24 * 60 * 60 * 1000);
         }
       }
     }
-
-    // Extract trialPlanId from metadata or transaction
-    const metadata = transaction.metadata as Record<string, any> | null;
-    const trialPlanId = transaction.trialPlanId || metadata?.trialPlanId;
 
     // If user is upgrading from trial, expire the old trial subscription
     const existingTrialSub = await prisma.userSubscription.findFirst({
