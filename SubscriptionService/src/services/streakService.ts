@@ -502,6 +502,7 @@ export class StreakService {
             breakDistributionRaw,
             coinsFromStreak,
             coinsFromBonus,
+            completedCycleCount,
         ] = await Promise.all([
             this.prisma.userStreak.count({ where: this.activeWhere() }),
             this.prisma.userStreak.count({ where: this.brokenWhere() }),
@@ -526,6 +527,9 @@ export class StreakService {
                 where: { source: TransactionSource.STREAK_BONUS },
                 _sum: { amount: true },
             }),
+            this.prisma.userStreak.count({
+                where: { ...this.activeWhere(), currentDay: 1, lastClaimedAt: { not: null } }
+            }),
         ]);
 
         // Milestone funnel: how many unique users have a StreakClaimLog at each milestone day
@@ -545,8 +549,18 @@ export class StreakService {
 
         const currentDayDistribution = Array.from({ length: TOTAL_DAYS }, (_, i) => {
             const day = i + 1;
-            const found = dayDistributionRaw.find((d) => d.currentDay === day);
-            return { day, userCount: found?._count.userId ?? 0 };
+            let userCount = 0;
+
+            if (day === TOTAL_DAYS) {
+                // Users who just finished Day 30 have currentDay reset to 1
+                userCount = completedCycleCount;
+            } else {
+                // A user who has completed 'X' days is now at currentDay 'X + 1'
+                const found = dayDistributionRaw.find((d) => d.currentDay === day + 1);
+                userCount = found?._count.userId ?? 0;
+            }
+
+            return { day, userCount };
         });
 
         const breakDayDistribution = breakDistributionRaw
