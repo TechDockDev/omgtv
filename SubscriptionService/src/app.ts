@@ -51,7 +51,7 @@ export async function buildApp() {
       // Handle empty body (e.g. POST /streak/claim with no payload)
       const str = (body as Buffer).toString();
       if (!str || str.trim().length === 0) {
-        done(null, null);
+        done(null, {});
         return;
       }
       const json = JSON.parse(str);

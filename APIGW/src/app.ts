@@ -56,6 +56,20 @@ export async function createApp(): Promise<FastifyInstance> {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
+  // Allow empty JSON bodies to pass through to downstream services
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+    if (typeof body === 'string' && body.trim() === '') {
+      done(null, {});
+      return;
+    }
+    try {
+      const json = JSON.parse(body as string);
+      done(null, json);
+    } catch (err: any) {
+      err.statusCode = 400;
+      done(err, undefined);
+    }
+  });
   // Register global envelope + error handling early so it applies to all routes.
   app.addHook("preSerialization", async (request, reply, payload) => {
     const contextConfig = request.context.config as
