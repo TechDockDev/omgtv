@@ -146,11 +146,12 @@ export async function getUserContentStats(params: {
     const seriesMap = new Map<string, { completedEpisodes: Set<string>; allWatchedEpisodes: Set<string> }>();
     watchHistory.forEach(h => {
         const meta = episodeMeta.find((m: any) => m.id === h.episodeId);
-        if (meta && meta.seriesId) {
-            if (!seriesMap.has(meta.seriesId)) {
-                seriesMap.set(meta.seriesId, { completedEpisodes: new Set(), allWatchedEpisodes: new Set() });
+        const seriesId = meta?.seriesId ?? meta?.series?.id;
+        if (meta && seriesId) {
+            if (!seriesMap.has(seriesId)) {
+                seriesMap.set(seriesId, { completedEpisodes: new Set(), allWatchedEpisodes: new Set() });
             }
-            const data = seriesMap.get(meta.seriesId)!;
+            const data = seriesMap.get(seriesId)!;
             data.allWatchedEpisodes.add(h.episodeId);
             if (h.completedAt) data.completedEpisodes.add(h.episodeId);
         }

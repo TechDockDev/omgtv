@@ -422,6 +422,7 @@ export class CatalogRepository {
       include: {
         category: true,
         mediaAssets: true,
+        _count: { select: { episodes: true } },
       },
     });
   }

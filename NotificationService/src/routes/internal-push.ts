@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { pushNotificationService } from '../services/PushNotificationService';
 import prisma from '../prisma';
+import { loadConfig } from '../config';
 
 const sendPushSchema = z.object({
     userId: z.string().uuid(),
@@ -14,13 +15,35 @@ export default async function internalPushRoutes(fastify: FastifyInstance) {
     fastify.post('/send', async (request, reply) => {
         const { userId, title, body, data } = sendPushSchema.parse(request.body);
 
-        const fcmTokens = await prisma.fcmToken.findMany({ where: { userId } });
+        // Fetch tokens from UserService via the new AuthSubject ID endpoint
+        const config = loadConfig();
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+        if (config.SERVICE_AUTH_TOKEN) {
+            headers['x-service-token'] = config.SERVICE_AUTH_TOKEN;
+        }
+
+        const userSvcUrl = config.USER_SERVICE_URL;
+        const resp = await fetch(`${userSvcUrl}/internal/users/fcm-tokens-by-auth-id`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ authIds: [userId] }),
+        });
+
+        if (!resp.ok) {
+            console.error(`[internal-push] Failed to fetch FCM tokens from UserService for userId: ${userId}, status: ${resp.status}`);
+            return reply.send({ success: false, reason: 'user_service_error' });
+        }
+
+        const json = await resp.json() as { tokens: { userId: string, fcmToken: string, deviceId: string }[] };
+        const fcmTokens = json.tokens || [];
 
         if (fcmTokens.length === 0) {
             return reply.send({ success: true, skipped: true, reason: 'no_tokens' });
         }
 
-        const tokens = fcmTokens.map((t: { token: string }) => t.token);
+        const tokens = fcmTokens.map(t => t.fcmToken);
         const result = await pushNotificationService.sendToMultipleDevices(tokens, { title, body, data });
 
         await prisma.notification.create({

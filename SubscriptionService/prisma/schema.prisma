@@ -176,11 +176,14 @@ model CoinTransaction {
 
   metadata        Json?
 
+  reminderSentAt  DateTime?
+
   createdAt       DateTime @default(now())
 
   @@index([userId])
   @@index([userId, expiryAt])
   @@index([userId, type, remainingAmount])
+  @@index([expiryAt, reminderSentAt])
 }
 
 enum CoinTransactionType {
@@ -308,13 +311,15 @@ model UserStreak {
   cycleStartedAt   DateTime     @default(now())
   configVersion    Int
   status           StreakStatus @default(ACTIVE)
-  lastBrokeAtDay   Int?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  lastBrokeAtDay       Int?
+  streakReminderSentAt DateTime?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
 
   @@index([status])
   @@index([configVersion])
   @@index([lastClaimedAt])
+  @@index([lastClaimedAt, streakReminderSentAt])
 }
 
 model StreakClaimLog {

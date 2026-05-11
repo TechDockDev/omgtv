@@ -219,4 +219,20 @@ export default async function internalRoutes(app: FastifyInstance) {
         const profiles = await customerService.getBatchProfilesByAuthIds(authIds);
         return { profiles };
     });
+    /**
+     * POST /internal/users/fcm-tokens-by-auth-id
+     * Return FCM tokens for a list of AuthSubject IDs.
+     */
+    app.post("/users/fcm-tokens-by-auth-id", {
+        schema: {
+            body: z.object({
+                authIds: z.array(z.string()).min(1).max(1000),
+            }),
+        },
+    }, async (request) => {
+        const { authIds } = request.body as { authIds: string[] };
+        const customerService = new CustomerService(app.prisma);
+        const tokens = await customerService.getFcmTokensByAuthIds(authIds);
+        return { tokens };
+    });
 }

@@ -48,7 +48,13 @@ export async function buildApp() {
         // Store raw body for signature verification
         (request as any).rawBody = body;
       }
-      const json = JSON.parse(body.toString());
+      // Handle empty body (e.g. POST /streak/claim with no payload)
+      const str = (body as Buffer).toString();
+      if (!str || str.trim().length === 0) {
+        done(null, null);
+        return;
+      }
+      const json = JSON.parse(str);
       done(null, json);
     } catch (err: any) {
       err.statusCode = 400;

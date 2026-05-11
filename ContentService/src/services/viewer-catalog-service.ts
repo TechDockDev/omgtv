@@ -764,6 +764,7 @@ export class ViewerCatalogService {
         synopsis: series.synopsis ?? null,
         heroImageUrl: ensureCdnUrl(series.heroImageUrl || series.mediaAssets?.[0]?.defaultThumbnailUrl || null),
         bannerImageUrl: ensureCdnUrl(series.bannerImageUrl ?? null),
+        totalEpisodes: (series as any)._count?.episodes ?? 0,
         category: series.category
           ? {
             id: series.category.id,

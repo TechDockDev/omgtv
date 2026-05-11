@@ -169,4 +169,51 @@ export class CustomerService {
 
         return results;
     }
+
+    /**
+     * Batch fetch FCM tokens by AuthSubject IDs (= x-user-id values from JWT sub).
+     */
+    async getFcmTokensByAuthIds(authIds: string[]): Promise<{ userId: string, fcmToken: string, deviceId: string }[]> {
+        if (authIds.length === 0) return [];
+
+        const rows = await authPrisma.$queryRaw<{ auth_id: string; customerId: string | null }[]>(
+            Prisma.sql`
+                SELECT s.id AS auth_id, c."customerId"
+                FROM "AuthSubject" s
+                LEFT JOIN "CustomerIdentity" c ON s.id = c."subjectId"
+                WHERE s.id IN (${Prisma.join(authIds)})
+                  AND s.type != 'GUEST'
+            `
+        );
+
+        const customerToAuthId = new Map<string, string>();
+        for (const row of rows) {
+            if (row.customerId) customerToAuthId.set(row.customerId, row.auth_id);
+        }
+
+        const customerIds = [...customerToAuthId.keys()];
+        if (customerIds.length === 0) return [];
+
+        const links = await this.prisma.customerDeviceLink.findMany({
+            where: { customerId: { in: customerIds } },
+            include: {
+                device: {
+                    select: {
+                        deviceId: true,
+                        fcmToken: true,
+                    },
+                },
+            },
+        });
+
+        const tokens = links
+            .filter(link => link.device.fcmToken)
+            .map(link => ({
+                userId: customerToAuthId.get(link.customerId)!,
+                fcmToken: link.device.fcmToken!,
+                deviceId: link.device.deviceId,
+            }));
+
+        return tokens;
+    }
 }

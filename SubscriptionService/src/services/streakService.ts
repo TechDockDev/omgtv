@@ -249,6 +249,7 @@ export class StreakService {
                     cycleStartedAt: newCycleStartedAt,
                     status: StreakStatus.ACTIVE,
                     lastBrokeAtDay: null,
+                    streakReminderSentAt: null, // reset so next cycle reminder fires again
                 },
             });
 

@@ -6,6 +6,7 @@ import { shutdownRedis } from "./lib/redis";
 import packageJson from "../package.json";
 import { startGrpcServer } from "./grpc/server";
 import { startExpiryCron, stopExpiryCron } from "./jobs/expireCoins";
+import { startReminderCron, stopReminderCron } from "./jobs/coinReminders";
 
 async function main() {
   const config = loadConfig();
@@ -20,6 +21,7 @@ async function main() {
     await startGrpcServer();
 
     startExpiryCron(app.log);
+    startReminderCron(app.log);
 
     app.log.info(
       { version: packageJson.version, http: `${config.HTTP_HOST}:${config.HTTP_PORT}` },
@@ -37,6 +39,7 @@ async function main() {
     app.log.info({ signal }, "Shutting down SubscriptionService");
     try {
       stopExpiryCron();
+      stopReminderCron();
       await disconnectPrisma();
       await shutdownRedis();
       await shutdownObservability();
