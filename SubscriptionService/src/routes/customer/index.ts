@@ -4,12 +4,14 @@ import crypto from "crypto";
 import { getPrisma } from "../../lib/prisma";
 import { invalidateEntitlementCache, getRedis } from "../../lib/redis";
 import { CoinService } from "../../services/coinService";
+import { StreakService } from "../../services/streakService";
 import { ContentClient } from "../../clients/content-client";
 import { NotificationClient } from "../../clients/notification-client";
 import { TransactionSource, CoinTransactionType } from "@prisma/client";
 import { loadConfig } from "../../config";
 import { getRazorpay } from "../../lib/razorpay";
 const coinService = new CoinService();
+const streakService = new StreakService();
 const contentClient = new ContentClient();
 const notificationClient = new NotificationClient();
 const config = loadConfig();
@@ -28,13 +30,22 @@ export default async function customerRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { userId } = request.query as { userId?: string };
 
-    const [globalTrialPlan, plans, appConfig] = await Promise.all([
+    const [globalTrialPlan, anyTrialPlan, plans, appConfig] = await Promise.all([
       prisma.trialPlan.findFirst({ where: { isActive: true } }),
+      prisma.trialPlan.findFirst({ orderBy: { createdAt: "desc" } }),
       prisma.subscriptionPlan.findMany({ where: { isActive: true, deletedAt: null }, orderBy: { pricePaise: "asc" } }),
       (prisma as any).subscriptionGlobalConfig.findFirst({ where: { id: 1 } }),
     ]);
 
-    const hasUsedTrial = false;
+    let hasUsedTrial = false;
+    if (appConfig?.restrictRepeatTrials && userId) {
+      const previousTrial = await prisma.userSubscription.findFirst({
+        where: { userId, trialPlanId: { not: null } },
+      });
+      hasUsedTrial = !!previousTrial;
+    }
+
+    const activeTrial = globalTrialPlan ?? anyTrialPlan;
 
     const formattedPlans = plans.map(plan => {
       const durationMonths = Math.round(plan.durationDays / 30);
@@ -58,12 +69,12 @@ export default async function customerRoutes(app: FastifyInstance) {
       userMessage: "Plans retrieved successfully",
       developerMessage: "Public plans retrieved",
       hasUsedTrial,
-      trialPlan: globalTrialPlan ? {
-        id: globalTrialPlan.id,
-        trialPricePaise: globalTrialPlan.trialPricePaise,
-        durationDays: globalTrialPlan.durationDays,
-        isAutoDebit: globalTrialPlan.isAutoDebit,
-        isEligible: !hasUsedTrial,
+      trialPlan: activeTrial ? {
+        id: activeTrial.id,
+        trialPricePaise: activeTrial.trialPricePaise,
+        durationDays: activeTrial.durationDays,
+        isAutoDebit: activeTrial.isAutoDebit,
+        isEligible: !hasUsedTrial && !!globalTrialPlan,
       } : null,
       promoVideoUrl: appConfig?.promoVideoUrl || null,
       data: formattedPlans,
@@ -733,8 +744,18 @@ export default async function customerRoutes(app: FastifyInstance) {
     if (!userId) {
       return reply.code(401).send({ error: "User not authenticated" });
     }
-    const balance = await coinService.getBalance(userId);
-    return { balance };
+    const [balance, adStats, streakStats] = await Promise.all([
+      coinService.getBalance(userId),
+      coinService.getAdCoinStats(userId),
+      coinService.getStreakCoinStats(userId),
+    ]);
+    return {
+      balance,
+      adCoinsBalance: adStats.adCoinsBalance,
+      adCoinsExpiryAt: adStats.nearestExpiryAt,
+      streakCoinsBalance: streakStats.streakCoinsBalance,
+      streakCoinsExpiryAt: streakStats.nearestExpiryAt,
+    };
   });
 
   // GET Unified Transaction History (coin_buy + coin_spend)
@@ -835,6 +856,26 @@ export default async function customerRoutes(app: FastifyInstance) {
           ...base,
           transactionType: "earned" as const,
           coins: tx.amount,
+        };
+      }
+
+      // streak daily coins
+      if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.STREAK) {
+        return {
+          ...base,
+          transactionType: "streak" as const,
+          coins: tx.amount,
+          expiresAt: tx.expiryAt ?? null,
+        };
+      }
+
+      // streak milestone bonus
+      if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.STREAK_BONUS) {
+        return {
+          ...base,
+          transactionType: "streak_bonus" as const,
+          coins: tx.amount,
+          expiresAt: tx.expiryAt ?? null,
         };
       }
 
@@ -1208,6 +1249,42 @@ export default async function customerRoutes(app: FastifyInstance) {
         data,
         pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
       };
+    }
+  );
+
+  // ── Streak routes ────────────────────────────────────────────────────────────
+
+  app.get("/streak/status", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "User not authenticated" });
+    const status = await streakService.getStatus(userId);
+    return { success: true, data: status };
+  });
+
+  app.post("/streak/claim", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "User not authenticated" });
+    try {
+      const result = await streakService.claim(userId);
+      return { success: true, data: result };
+    } catch (err: any) {
+      if (err.code === "STREAK_DISABLED")
+        return reply.code(403).send({ error: err.message });
+      if (err.code === "ALREADY_CLAIMED_TODAY")
+        return reply.code(409).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  app.get(
+    "/streak/history",
+    { schema: { querystring: z.object({ page: z.coerce.number().int().positive().default(1), limit: z.coerce.number().int().positive().max(100).default(20) }) } },
+    async (request, reply) => {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) return reply.code(401).send({ error: "User not authenticated" });
+      const { page, limit } = request.query as { page: number; limit: number };
+      const history = await streakService.getHistory(userId, page, limit);
+      return { success: true, data: history };
     }
   );
 }

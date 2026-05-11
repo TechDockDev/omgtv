@@ -5,11 +5,13 @@ import { getPrisma } from "../../lib/prisma";
 import { getRazorpay } from "../../lib/razorpay";
 import { fetchUserDetails } from "../../services/userService";
 import { CoinService } from "../../services/coinService";
+import { StreakService } from "../../services/streakService";
 import { ContentClient } from "../../clients/content-client";
-import { CoinTransactionType, TransactionSource, WalletStatus } from "@prisma/client";
+import { CoinTransactionType, TransactionSource, WalletStatus, StreakStatus } from "@prisma/client";
 import { getRedis } from "../../lib/redis";
 
 const coinService = new CoinService();
+const streakService = new StreakService();
 const contentClient = new ContentClient();
 const BUNDLES_CACHE_KEY = "coins:bundles:all";
 
@@ -50,6 +52,7 @@ type FreePlanBody = z.infer<typeof freePlanSchema>;
 
 const subscriptionSettingsSchema = z.object({
   promoVideoUrl: z.string().url().nullable().optional(),
+  restrictRepeatTrials: z.boolean().optional(),
 });
 
 export default async function adminRoutes(app: FastifyInstance) {
@@ -454,6 +457,40 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // PATCH /admin/custom-trials/:id/status — activate or deactivate without touching other fields
+  app.patch(
+    "/custom-trials/:id/status",
+    {
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: z.object({ isActive: z.boolean() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const { isActive } = request.body as { isActive: boolean };
+
+      const existing = await prisma.trialPlan.findUnique({ where: { id } });
+      if (!existing) return reply.code(404).send({ error: "Trial plan not found" });
+
+      if (isActive) {
+        const otherActive = await prisma.trialPlan.findFirst({
+          where: { isActive: true, id: { not: id } },
+        });
+        if (otherActive) {
+          return reply.badRequest("Another trial plan is already active. Deactivate it first.");
+        }
+      }
+
+      const updated = await prisma.trialPlan.update({
+        where: { id },
+        data: { isActive },
+      });
+
+      return { success: true, data: updated };
+    }
+  );
+
   app.get("/custom-trials", async () => {
     const data = await prisma.trialPlan.findMany({
       orderBy: { createdAt: "desc" },
@@ -778,11 +815,11 @@ export default async function adminRoutes(app: FastifyInstance) {
       schema: { body: subscriptionSettingsSchema }
     },
     async (request) => {
-      const { promoVideoUrl } = request.body;
+      const { promoVideoUrl, restrictRepeatTrials } = request.body;
       const config = await (prisma as any).subscriptionGlobalConfig.upsert({
         where: { id: 1 },
-        update: { promoVideoUrl },
-        create: { id: 1, promoVideoUrl }
+        update: { promoVideoUrl, ...(restrictRepeatTrials !== undefined && { restrictRepeatTrials }) },
+        create: { id: 1, promoVideoUrl, restrictRepeatTrials: restrictRepeatTrials ?? false }
       });
       return {
         success: true,
@@ -1167,6 +1204,28 @@ export default async function adminRoutes(app: FastifyInstance) {
           };
         }
 
+        // Streak daily coins
+        if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.STREAK) {
+          return {
+            ...base,
+            transactionType: "streak" as const,
+            coins: tx.amount,
+            remainingCoins: tx.remainingAmount ?? 0,
+            expiresAt: tx.expiryAt ?? null,
+          };
+        }
+
+        // Streak milestone bonus
+        if (tx.type === CoinTransactionType.CREDIT && tx.source === TransactionSource.STREAK_BONUS) {
+          return {
+            ...base,
+            transactionType: "streak_bonus" as const,
+            coins: tx.amount,
+            remainingCoins: tx.remainingAmount ?? 0,
+            expiresAt: tx.expiryAt ?? null,
+          };
+        }
+
         // Admin-deducted coins
         return {
           ...base,
@@ -1495,4 +1554,144 @@ export default async function adminRoutes(app: FastifyInstance) {
       };
     }
   );
+
+  // ── Streak Admin Routes ───────────────────────────────────────────────────────
+
+  // GET /admin/streak/config
+  app.get("/streak/config", async () => {
+    const config = await streakService.getOrCreateConfig();
+    const milestones = await streakService.getMilestonesForVersion(config.version);
+    return { success: true, data: { config, milestones } };
+  });
+
+  // GET /admin/streak/milestones
+  app.get("/streak/milestones", async () => {
+    const config = await streakService.getOrCreateConfig();
+    const milestones = await streakService.getMilestonesForVersion(config.version);
+    return { success: true, data: milestones };
+  });
+
+  // PATCH /admin/streak/config
+  app.patch(
+    "/streak/config",
+    {
+      schema: {
+        body: z.object({
+          isEnabled:       z.boolean().optional(),
+          coinsPerDay:     z.number().int().positive().optional(),
+          coinExpiryHours: z.number().int().positive().nullable().optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const adminId = request.headers["x-admin-id"] as string | undefined ?? "unknown";
+      const body = request.body as { isEnabled?: boolean; coinsPerDay?: number; coinExpiryHours?: number | null };
+      const config = await streakService.updateConfig(body, adminId);
+      return { success: true, data: config };
+    }
+  );
+
+  // POST /admin/streak/milestones
+  app.post(
+    "/streak/milestones",
+    {
+      schema: {
+        body: z.object({
+          dayNumber:        z.number().int().min(1).max(30),
+          bonusCoins:       z.number().int().positive(),
+          bonusExpiryHours: z.number().int().positive().nullable().optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const body = request.body as { dayNumber: number; bonusCoins: number; bonusExpiryHours?: number | null };
+      const milestone = await streakService.createMilestone(body);
+      return { success: true, data: milestone };
+    }
+  );
+
+  // PUT /admin/streak/milestones/:id
+  app.put(
+    "/streak/milestones/:id",
+    {
+      schema: {
+        body: z.object({
+          dayNumber:        z.number().int().min(1).max(30).optional(),
+          bonusCoins:       z.number().int().positive().optional(),
+          bonusExpiryHours: z.number().int().positive().nullable().optional(),
+          isEnabled:        z.boolean().optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { dayNumber?: number; bonusCoins?: number; bonusExpiryHours?: number | null; isEnabled?: boolean };
+      try {
+        const milestone = await streakService.updateMilestone(id, body);
+        return { success: true, data: milestone };
+      } catch (err: any) {
+        if (err.code === "NOT_FOUND") return reply.code(404).send({ error: err.message });
+        throw err;
+      }
+    }
+  );
+
+  // DELETE /admin/streak/milestones/:id
+  app.delete("/streak/milestones/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await streakService.deleteMilestone(id);
+      return { success: true };
+    } catch (err: any) {
+      if (err.code === "NOT_FOUND") return reply.code(404).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // POST /admin/streak/reset-all
+  app.post(
+    "/streak/reset-all",
+    { schema: { body: z.object({ confirm: z.literal(true) }) } },
+    async () => {
+      const count = await streakService.resetAllStreaks();
+      return { success: true, data: { resetCount: count } };
+    }
+  );
+
+  // GET /admin/streak/analytics
+  app.get("/streak/analytics", async () => {
+    const analytics = await streakService.getAnalytics();
+    return { success: true, data: analytics };
+  });
+
+  // GET /admin/streak/users
+  app.get(
+    "/streak/users",
+    {
+      schema: {
+        querystring: z.object({
+          page:            z.coerce.number().int().positive().default(1),
+          limit:           z.coerce.number().int().positive().max(100).default(20),
+          status:          z.enum(["ACTIVE", "BROKEN"]).optional(),
+          currentDay:      z.coerce.number().int().min(1).max(30).optional(),
+          cyclesCompleted: z.coerce.number().int().min(0).optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const { page, limit, status, currentDay, cyclesCompleted } = request.query as {
+        page: number; limit: number; status?: StreakStatus; currentDay?: number; cyclesCompleted?: number;
+      };
+      const result = await streakService.getUserStreaks(page, limit, { status, currentDay, cyclesCompleted });
+      return { success: true, data: result };
+    }
+  );
+
+  // GET /admin/streak/users/:userId
+  app.get("/streak/users/:userId", async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    const detail = await streakService.getUserStreakDetail(userId);
+    if (!detail.streak) return reply.code(404).send({ error: "No streak found for this user" });
+    return { success: true, data: detail };
+  });
 }

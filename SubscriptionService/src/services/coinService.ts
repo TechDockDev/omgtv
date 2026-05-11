@@ -71,6 +71,53 @@ export class CoinService {
         return balance;
     }
 
+    async getAdCoinStats(userId: string) {
+        const now = new Date();
+        const adCredits = await this.prisma.coinTransaction.findMany({
+            where: {
+                userId,
+                type: CoinTransactionType.CREDIT,
+                source: TransactionSource.AD,
+                remainingAmount: { gt: 0 },
+                OR: [
+                    { expiryAt: { gt: now } },
+                    { expiryAt: null }
+                ]
+            },
+            select: { remainingAmount: true, expiryAt: true },
+            orderBy: { expiryAt: 'asc' }
+        });
+
+        const adCoinsBalance = adCredits.reduce((sum, t) => sum + (t.remainingAmount ?? 0), 0);
+        // earliest non-null expiry among active ad coins, or null if none have expiry
+        const nearestExpiryAt = adCredits.find(t => t.expiryAt !== null)?.expiryAt ?? null;
+
+        return { adCoinsBalance, nearestExpiryAt };
+    }
+
+    async getStreakCoinStats(userId: string) {
+        const now = new Date();
+        const streakCredits = await this.prisma.coinTransaction.findMany({
+            where: {
+                userId,
+                type: CoinTransactionType.CREDIT,
+                source: { in: [TransactionSource.STREAK, TransactionSource.STREAK_BONUS] },
+                remainingAmount: { gt: 0 },
+                OR: [
+                    { expiryAt: { gt: now } },
+                    { expiryAt: null }
+                ]
+            },
+            select: { remainingAmount: true, expiryAt: true },
+            orderBy: { expiryAt: 'asc' }
+        });
+
+        const streakCoinsBalance = streakCredits.reduce((sum, t) => sum + (t.remainingAmount ?? 0), 0);
+        const nearestExpiryAt = streakCredits.find(t => t.expiryAt !== null)?.expiryAt ?? null;
+
+        return { streakCoinsBalance, nearestExpiryAt };
+    }
+
     async invalidateBalanceCache(userId: string) {
         const redis = getRedis();
         await redis.del(`coins:balance:${userId}`).catch(() => {});

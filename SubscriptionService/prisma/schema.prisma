@@ -134,11 +134,12 @@ model Transaction {
 }
 
 model SubscriptionGlobalConfig {
-  id               Int      @id @default(1)
-  promoVideoUrl    String?  // Global m3u8 link for subscription page
-  updatedByAdminId String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                   Int      @id @default(1)
+  promoVideoUrl        String?
+  restrictRepeatTrials Boolean  @default(false)
+  updatedByAdminId     String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   @@unique([id])
 }
@@ -193,6 +194,13 @@ enum TransactionSource {
   ADMIN
   AD
   EXPIRY
+  STREAK
+  STREAK_BONUS
+}
+
+enum StreakStatus {
+  ACTIVE
+  BROKEN
 }
 
 model CoinBundle {
@@ -260,4 +268,68 @@ model UserEpisodeUnlock {
   createdAt  DateTime @default(now())
 
   @@unique([userId, episodeId])
+}
+
+// ── Streak System ─────────────────────────────────────────────────────────────
+
+model StreakConfig {
+  id               Int      @id @default(1)
+  isEnabled        Boolean  @default(true)
+  coinsPerDay      Int      @default(10)
+  coinExpiryHours  Int?
+  version          Int      @default(1)
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([id])
+}
+
+model StreakMilestone {
+  id               String   @id @default(uuid())
+  configVersion    Int
+  dayNumber        Int
+  bonusCoins       Int
+  bonusExpiryHours Int?
+  isEnabled        Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([configVersion, dayNumber])
+  @@index([configVersion, isEnabled])
+}
+
+model UserStreak {
+  id               String       @id @default(uuid())
+  userId           String       @unique
+  currentDay       Int          @default(1)
+  lastClaimedAt    DateTime?
+  cyclesCompleted  Int          @default(0)
+  cycleStartedAt   DateTime     @default(now())
+  configVersion    Int
+  status           StreakStatus @default(ACTIVE)
+  lastBrokeAtDay   Int?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([status])
+  @@index([configVersion])
+  @@index([lastClaimedAt])
+}
+
+model StreakClaimLog {
+  id            String   @id @default(uuid())
+  userId        String
+  dayNumber     Int
+  coinsEarned   Int
+  bonusEarned   Int      @default(0)
+  milestoneId   String?
+  cycleNumber   Int
+  configVersion Int
+  claimedAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, claimedAt])
+  @@index([dayNumber])
+  @@index([milestoneId])
 }
