@@ -328,7 +328,17 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get(
     "/stats",
     async (_request, reply) => {
-      const [revenueAgg, trialUsers, totalSubscribers] = await Promise.all([
+      const now = new Date();
+
+      const [
+        revenueAgg,
+        trialUsers,
+        totalSubscribers,
+        activeTrials,
+        activeSubscribers,
+        canceledTrials,
+        canceledSubscriptions,
+      ] = await Promise.all([
         // 1. Total Revenue
         prisma.transaction.aggregate({
           _sum: { amountPaise: true },
@@ -345,7 +355,37 @@ export default async function adminRoutes(app: FastifyInstance) {
           where: {
             status: { in: ["ACTIVE", "CANCELED"] },
             trialPlanId: null,
-            endsAt: { gt: new Date() }
+            endsAt: { gt: now }
+          },
+        }),
+        // 4. Active Trials — currently on trial and not expired
+        prisma.userSubscription.count({
+          where: {
+            status: "TRIAL",
+            trialPlanId: { not: null },
+            endsAt: { gt: now },
+          },
+        }),
+        // 5. Active Paid Subscribers (ACTIVE only, no canceled)
+        prisma.userSubscription.count({
+          where: {
+            status: "ACTIVE",
+            trialPlanId: null,
+            endsAt: { gt: now },
+          },
+        }),
+        // 6. Canceled Trials (user canceled their trial)
+        prisma.userSubscription.count({
+          where: {
+            status: "CANCELED",
+            trialPlanId: { not: null },
+          },
+        }),
+        // 7. Canceled Subscriptions (user canceled their paid plan)
+        prisma.userSubscription.count({
+          where: {
+            status: "CANCELED",
+            trialPlanId: null,
           },
         }),
       ]);
@@ -384,6 +424,10 @@ export default async function adminRoutes(app: FastifyInstance) {
           trialUsersCount: trialUserIds.length,
           convertedUsersCount: convertedCount,
           totalSubscribers,
+          activeTrials,
+          activeSubscribers,
+          canceledTrials,
+          canceledSubscriptions,
         },
       };
     }
@@ -446,6 +490,129 @@ export default async function adminRoutes(app: FastifyInstance) {
               endsAt: sub.endsAt,
             };
           }),
+          pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+          },
+        },
+      };
+    }
+  );
+
+  // GET /admin/canceled-users — list users who canceled their trial or subscription
+  const canceledUsersQuerySchema = z.object({
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10),
+    type: z.enum(["trial", "subscription", "all"]).default("all"),
+  });
+
+  app.get(
+    "/canceled-users",
+    {
+      schema: { querystring: canceledUsersQuerySchema },
+    },
+    async (request) => {
+      const { page, limit, type } = request.query as z.infer<typeof canceledUsersQuerySchema>;
+      const skip = (page - 1) * limit;
+
+      // Build filter based on type
+      const whereClause: any = {
+        status: "CANCELED",
+      };
+
+      if (type === "trial") {
+        whereClause.trialPlanId = { not: null };
+      } else if (type === "subscription") {
+        whereClause.trialPlanId = null;
+      }
+      // type === "all" → no additional filter, shows both
+
+      const [total, data] = await Promise.all([
+        prisma.userSubscription.count({ where: whereClause }),
+        prisma.userSubscription.findMany({
+          where: whereClause,
+          include: {
+            plan: true,
+            trialPlan: true,
+            transaction: {
+              select: {
+                id: true,
+                amountPaise: true,
+                currency: true,
+                status: true,
+                razorpayPaymentId: true,
+                subscriptionId: true,
+                createdAt: true,
+              },
+            },
+          },
+          orderBy: { updatedAt: "desc" },
+          skip,
+          take: limit,
+        }),
+      ]);
+
+      // Fetch user details from UserService
+      const userIds = [...new Set(data.map((sub) => sub.userId))];
+      const userMap = await fetchUserDetails(userIds);
+
+      const items = data.map((sub) => {
+        const user = userMap.get(sub.userId);
+        const isTrial = !!sub.trialPlanId;
+
+        return {
+          id: sub.id,
+          userId: sub.userId,
+          user: user
+            ? { id: sub.userId, name: user.name, email: user.email, phone: user.phoneNumber }
+            : { id: sub.userId, name: "Unknown", email: "", phone: "" },
+          cancelType: isTrial ? "trial" : "subscription",
+          plan: sub.plan
+            ? {
+                id: sub.plan.id,
+                name: sub.plan.name,
+                pricePaise: sub.plan.pricePaise,
+                durationDays: sub.plan.durationDays,
+                currency: sub.plan.currency,
+              }
+            : null,
+          trialPlan: sub.trialPlan
+            ? {
+                id: sub.trialPlan.id,
+                trialPricePaise: sub.trialPlan.trialPricePaise,
+                durationDays: sub.trialPlan.durationDays,
+                isAutoDebit: sub.trialPlan.isAutoDebit,
+              }
+            : null,
+          razorpaySubscriptionId: sub.razorpayOrderId,
+          status: sub.status,
+          startsAt: sub.startsAt,
+          endsAt: sub.endsAt,
+          createdAt: sub.createdAt,
+          canceledAt: sub.updatedAt, // updatedAt reflects when status changed to CANCELED
+          transaction: sub.transaction
+            ? {
+                id: sub.transaction.id,
+                amountPaise: sub.transaction.amountPaise,
+                currency: sub.transaction.currency,
+                status: sub.transaction.status,
+                paymentId: sub.transaction.razorpayPaymentId,
+                subscriptionId: sub.transaction.subscriptionId,
+                createdAt: sub.transaction.createdAt,
+              }
+            : null,
+        };
+      });
+
+      return {
+        success: true,
+        statusCode: 200,
+        userMessage: "Canceled users retrieved successfully",
+        developerMessage: "Paginated list of users who canceled their trial or subscription",
+        data: {
+          items,
           pagination: {
             total,
             page,
@@ -613,7 +780,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       // Date range — start of startDate day to end of endDate day
       const dateFilter = (startDate || endDate) ? {
         gte: startDate ? new Date(`${startDate}T00:00:00.000Z`) : undefined,
-        lte: endDate  ? new Date(`${endDate}T23:59:59.999Z`)   : undefined,
+        lte: endDate ? new Date(`${endDate}T23:59:59.999Z`) : undefined,
       } : undefined;
 
       // 1. Build DB-level filters for each table
@@ -635,11 +802,11 @@ export default async function adminRoutes(app: FastifyInstance) {
       // 2. Fetch page data, counts, and stats all in parallel
       const [subCount, coinCount, subTxs, coinTxs, subStats, coinStats] = await Promise.all([
         type === "coin_purchase" ? Promise.resolve(0) : prisma.transaction.count({ where: subWhere }),
-        type === "subscription"  ? Promise.resolve(0) : prisma.userCoinPurchase.count({ where: coinWhere }),
+        type === "subscription" ? Promise.resolve(0) : prisma.userCoinPurchase.count({ where: coinWhere }),
         type === "coin_purchase" ? Promise.resolve([]) : prisma.transaction.findMany({
           where: subWhere,
           include: {
-            plan:      { select: { name: true, durationDays: true, currency: true } },
+            plan: { select: { name: true, durationDays: true, currency: true } },
             trialPlan: { select: { durationDays: true, trialPricePaise: true } },
           },
           orderBy: { updatedAt: "desc" },
@@ -729,11 +896,11 @@ export default async function adminRoutes(app: FastifyInstance) {
         ...tx,
         user: userMap.get(tx.userId)
           ? {
-              id: tx.userId,
-              name: userMap.get(tx.userId)!.name,
-              email: userMap.get(tx.userId)!.email,
-              phone: userMap.get(tx.userId)!.phoneNumber,
-            }
+            id: tx.userId,
+            name: userMap.get(tx.userId)!.name,
+            email: userMap.get(tx.userId)!.email,
+            phone: userMap.get(tx.userId)!.phoneNumber,
+          }
           : { id: tx.userId },
       }));
 
@@ -741,7 +908,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       const subByStatus = Object.fromEntries(subStats.map((s) => [s.status, { count: s._count.id, revenuePaise: s._sum.amountPaise ?? 0 }]));
       const coinByStatus = Object.fromEntries(coinStats.map((s) => [s.status, { count: s._count.id, revenuePaise: s._sum.amountPaid ?? 0 }]));
 
-      const subSuccessRevenue  = subByStatus["SUCCESS"]?.revenuePaise  ?? 0;
+      const subSuccessRevenue = subByStatus["SUCCESS"]?.revenuePaise ?? 0;
       const coinSuccessRevenue = coinByStatus["SUCCESS"]?.revenuePaise ?? 0;
 
       const stats = {
@@ -753,10 +920,10 @@ export default async function adminRoutes(app: FastifyInstance) {
           coin_purchase: coinStats.reduce((sum, s) => sum + s._count.id, 0),
         },
         byStatus: {
-          SUCCESS:  (subByStatus["SUCCESS"]?.count  ?? 0) + (coinByStatus["SUCCESS"]?.count  ?? 0),
-          PENDING:  (subByStatus["PENDING"]?.count  ?? 0) + (coinByStatus["PENDING"]?.count  ?? 0),
-          FAILED:   (subByStatus["FAILED"]?.count   ?? 0) + (coinByStatus["FAILED"]?.count   ?? 0),
-          CREATED:  coinByStatus["CREATED"]?.count  ?? 0,
+          SUCCESS: (subByStatus["SUCCESS"]?.count ?? 0) + (coinByStatus["SUCCESS"]?.count ?? 0),
+          PENDING: (subByStatus["PENDING"]?.count ?? 0) + (coinByStatus["PENDING"]?.count ?? 0),
+          FAILED: (subByStatus["FAILED"]?.count ?? 0) + (coinByStatus["FAILED"]?.count ?? 0),
+          CREATED: coinByStatus["CREATED"]?.count ?? 0,
         },
       };
 
@@ -1089,14 +1256,14 @@ export default async function adminRoutes(app: FastifyInstance) {
         type === "credit"
           ? { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE }
           : type === "earned"
-          ? { type: CoinTransactionType.CREDIT, source: TransactionSource.AD }
-          : type === "debit"
-          ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
-          : type === "admin_credit"
-          ? { type: CoinTransactionType.CREDIT, source: TransactionSource.ADMIN }
-          : type === "admin_debit"
-          ? { type: CoinTransactionType.DEBIT, source: TransactionSource.ADMIN }
-          : {}; // no filter → all transactions
+            ? { type: CoinTransactionType.CREDIT, source: TransactionSource.AD }
+            : type === "debit"
+              ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
+              : type === "admin_credit"
+                ? { type: CoinTransactionType.CREDIT, source: TransactionSource.ADMIN }
+                : type === "admin_debit"
+                  ? { type: CoinTransactionType.DEBIT, source: TransactionSource.ADMIN }
+                  : {}; // no filter → all transactions
 
       const where = { userId, ...typeWhere };
 
@@ -1155,12 +1322,12 @@ export default async function adminRoutes(app: FastifyInstance) {
             coins: tx.amount,
             payment: purchase
               ? {
-                  orderId: purchase.orderId,
-                  paymentId: purchase.paymentId,
-                  amountPaid: purchase.amountPaid,
-                  currency: bundle?.currency ?? "INR",
-                  status: purchase.status,
-                }
+                orderId: purchase.orderId,
+                paymentId: purchase.paymentId,
+                amountPaid: purchase.amountPaid,
+                currency: bundle?.currency ?? "INR",
+                status: purchase.status,
+              }
               : null,
             bundle: bundle
               ? { title: bundle.title, coins: bundle.coins, price: bundle.price, currency: bundle.currency }
@@ -1342,9 +1509,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     {
       schema: {
         body: z.object({
-          isEnabled:   z.boolean().optional(),
-          coinsPerAd:  z.number().int().positive().optional(),
-          dailyLimit:  z.number().int().positive().optional(),
+          isEnabled: z.boolean().optional(),
+          coinsPerAd: z.number().int().positive().optional(),
+          dailyLimit: z.number().int().positive().optional(),
           expiryHours: z.number().int().positive().nullable().optional(),
         }),
       },
@@ -1352,9 +1519,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (request) => {
       const adminId = request.headers["x-admin-id"] as string | undefined;
       const body = request.body as {
-        isEnabled?:   boolean;
-        coinsPerAd?:  number;
-        dailyLimit?:  number;
+        isEnabled?: boolean;
+        coinsPerAd?: number;
+        dailyLimit?: number;
         expiryHours?: number | null;
       };
 
@@ -1381,8 +1548,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       schema: {
         querystring: z.object({
           userId: z.string().optional(),
-          page:   z.coerce.number().int().positive().default(1),
-          limit:  z.coerce.number().int().positive().max(100).default(20),
+          page: z.coerce.number().int().positive().default(1),
+          limit: z.coerce.number().int().positive().max(100).default(20),
         }),
       },
     },
@@ -1395,7 +1562,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       const skip = (page - 1) * limit;
 
       const where = {
-        type:   CoinTransactionType.CREDIT,
+        type: CoinTransactionType.CREDIT,
         source: TransactionSource.AD,
         ...(userId ? { userId } : {}),
       };
@@ -1405,7 +1572,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         by: ["userId"],
         where,
         _count: { id: true },
-        _sum:   { amount: true },
+        _sum: { amount: true },
         orderBy: { _sum: { amount: "desc" } },
         skip,
         take: limit,
@@ -1422,12 +1589,12 @@ export default async function adminRoutes(app: FastifyInstance) {
       const data = groups.map((g) => {
         const user = userMap.get(g.userId);
         return {
-          userId:       g.userId,
+          userId: g.userId,
           user: user
             ? { name: user.name, email: user.email, phoneNumber: user.phoneNumber }
             : null,
-          adsWatched:   g._count.id,
-          coinsEarned:  g._sum.amount ?? 0,
+          adsWatched: g._count.id,
+          coinsEarned: g._sum.amount ?? 0,
         };
       });
 
@@ -1577,8 +1744,8 @@ export default async function adminRoutes(app: FastifyInstance) {
     {
       schema: {
         body: z.object({
-          isEnabled:       z.boolean().optional(),
-          coinsPerDay:     z.number().int().positive().optional(),
+          isEnabled: z.boolean().optional(),
+          coinsPerDay: z.number().int().positive().optional(),
           coinExpiryHours: z.number().int().positive().nullable().optional(),
         }),
       },
@@ -1597,8 +1764,8 @@ export default async function adminRoutes(app: FastifyInstance) {
     {
       schema: {
         body: z.object({
-          dayNumber:        z.number().int().min(1).max(30),
-          bonusCoins:       z.number().int().positive(),
+          dayNumber: z.number().int().min(1).max(30),
+          bonusCoins: z.number().int().positive(),
           bonusExpiryHours: z.number().int().positive().nullable().optional(),
         }),
       },
@@ -1616,10 +1783,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     {
       schema: {
         body: z.object({
-          dayNumber:        z.number().int().min(1).max(30).optional(),
-          bonusCoins:       z.number().int().positive().optional(),
+          dayNumber: z.number().int().min(1).max(30).optional(),
+          bonusCoins: z.number().int().positive().optional(),
           bonusExpiryHours: z.number().int().positive().nullable().optional(),
-          isEnabled:        z.boolean().optional(),
+          isEnabled: z.boolean().optional(),
         }),
       },
     },
@@ -1670,10 +1837,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     {
       schema: {
         querystring: z.object({
-          page:            z.coerce.number().int().positive().default(1),
-          limit:           z.coerce.number().int().positive().max(100).default(20),
-          status:          z.enum(["ACTIVE", "BROKEN"]).optional(),
-          currentDay:      z.coerce.number().int().min(1).max(30).optional(),
+          page: z.coerce.number().int().positive().default(1),
+          limit: z.coerce.number().int().positive().max(100).default(20),
+          status: z.enum(["ACTIVE", "BROKEN"]).optional(),
+          currentDay: z.coerce.number().int().min(1).max(30).optional(),
           cyclesCompleted: z.coerce.number().int().min(0).optional(),
         }),
       },

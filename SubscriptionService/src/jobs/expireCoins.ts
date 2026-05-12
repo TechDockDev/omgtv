@@ -12,12 +12,7 @@ const coinService = new CoinService();
 
 async function runExpiry(log: JobLogger) {
     try {
-        const config = await coinService.getAdCoinConfig();
-
-        // Skip if feature disabled or admin set no expiry
-        if (!config.isEnabled || config.expiryHours === null) return;
-
-        await coinService.expireAdCoins(log);
+        await coinService.expireAllCoins(log);
     } catch (err) {
         log.error({ err }, "expireCoins job failed");
     }

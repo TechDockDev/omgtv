@@ -256,7 +256,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
             } else if (event === "subscription.activated") {
                 const subscriptionEntity = payload.subscription?.entity;
                 if (!subscriptionEntity) return reply.send({ status: "skipped" });
-                
+
                 const subscriptionId = subscriptionEntity.id;
 
                 const existingSub = await prisma.userSubscription.findFirst({
@@ -370,10 +370,10 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         });
                         await invalidateEntitlementCache(tx.userId);
                         if (tx.status === "PENDING") {
-                           await prisma.transaction.update({
-                               where: { id: tx.id },
-                               data: { status: "SUCCESS" }
-                           });
+                            await prisma.transaction.update({
+                                where: { id: tx.id },
+                                data: { status: "SUCCESS" }
+                            });
                         }
                         await notificationClient.sendPush(
                             tx.userId,

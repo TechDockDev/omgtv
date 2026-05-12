@@ -762,7 +762,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   app.get("/coins/transactions", {
     schema: {
       querystring: z.object({
-        type: z.enum(["coin_buy", "coin_spend", "earned"]).optional(),
+        type: z.enum(["coin_buy", "coin_spend", "earned", "expired", "streak", "streak_bonus"]).optional(),
         page: z.coerce.number().int().positive().default(1),
         limit: z.coerce.number().int().positive().max(50).default(20),
       })
@@ -773,16 +773,22 @@ export default async function customerRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: "User not authenticated" });
     }
 
-    const { type, page, limit } = request.query as { type?: "coin_buy" | "coin_spend" | "earned"; page: number; limit: number };
+    const { type, page, limit } = request.query as { type?: "coin_buy" | "coin_spend" | "earned" | "expired" | "streak" | "streak_bonus"; page: number; limit: number };
     const skip = (page - 1) * limit;
 
     const typeWhere = type === "coin_buy"
       ? { type: CoinTransactionType.CREDIT, source: TransactionSource.PURCHASE }
       : type === "coin_spend"
-      ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
-      : type === "earned"
-      ? { type: CoinTransactionType.CREDIT, source: TransactionSource.AD }
-      : {}; // no filter → all transactions
+        ? { type: CoinTransactionType.DEBIT, source: TransactionSource.UNLOCK }
+        : type === "earned"
+          ? { type: CoinTransactionType.CREDIT, source: TransactionSource.AD }
+          : type === "expired"
+            ? { type: CoinTransactionType.DEBIT, source: TransactionSource.EXPIRY }
+            : type === "streak"
+              ? { type: CoinTransactionType.CREDIT, source: TransactionSource.STREAK }
+              : type === "streak_bonus"
+                ? { type: CoinTransactionType.CREDIT, source: TransactionSource.STREAK_BONUS }
+                : {}; // no filter → all transactions
 
     const where = { userId, ...typeWhere };
 
@@ -879,16 +885,37 @@ export default async function customerRoutes(app: FastifyInstance) {
         };
       }
 
-      // coin_spend
-      const episodeId = tx.referenceId?.split(":")?.[2] ?? null;
-      const ep = episodeId ? episodeMap.get(episodeId) : null;
+      // expired coins (ad/streak coins that hit their expiryAt)
+      if (tx.type === CoinTransactionType.DEBIT && tx.source === TransactionSource.EXPIRY) {
+        const meta = tx.metadata as Record<string, any> | null;
+        return {
+          ...base,
+          transactionType: "expired" as const,
+          coinsExpired: Math.abs(tx.amount),
+          expiredCreditId: meta?.expiredCreditId ?? null,
+        };
+      }
+
+      // coin_spend (episode unlock)
+      if (tx.type === CoinTransactionType.DEBIT && tx.source === TransactionSource.UNLOCK) {
+        const episodeId = tx.referenceId?.split(":")?.[2] ?? null;
+        const ep = episodeId ? episodeMap.get(episodeId) : null;
+        return {
+          ...base,
+          transactionType: "coin_spend" as const,
+          coinsSpent: Math.abs(tx.amount),
+          episode: ep
+            ? { id: episodeId, title: ep.title, thumbnail: ep.thumbnail, seriesName: ep.seriesTitle }
+            : { id: episodeId },
+        };
+      }
+
+      // admin adjustments or any other DEBIT type
       return {
         ...base,
-        transactionType: "coin_spend" as const,
-        coinsSpent: Math.abs(tx.amount),
-        episode: ep
-          ? { id: episodeId, title: ep.title, thumbnail: ep.thumbnail, seriesName: ep.seriesTitle }
-          : { id: episodeId },
+        transactionType: "other" as const,
+        coins: tx.amount,
+        source: tx.source,
       };
     });
 
@@ -932,7 +959,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   app.get("/coins/bundles", async () => {
     const redis = getRedis();
     const cacheKey = "coins:bundles:all";
-    
+
     // Try to get from cache
     const cached = await redis.get(cacheKey).catch(() => null);
     if (cached) {
@@ -940,10 +967,10 @@ export default async function customerRoutes(app: FastifyInstance) {
     }
 
     const bundles = await prisma.coinBundle.findMany({ where: { active: true } });
-    
+
     // Cache for 10 minutes
-    await redis.setex(cacheKey, 600, JSON.stringify(bundles)).catch(() => {});
-    
+    await redis.setex(cacheKey, 600, JSON.stringify(bundles)).catch(() => { });
+
     return bundles;
   });
 
@@ -1127,10 +1154,10 @@ export default async function customerRoutes(app: FastifyInstance) {
 
         // Credit the coins — pass tx so both ops are in the same DB transaction
         await coinService.creditCoins({
-            userId,
-            amount: purchase.coins,
-            source: TransactionSource.PURCHASE,
-            referenceId: orderId,
+          userId,
+          amount: purchase.coins,
+          source: TransactionSource.PURCHASE,
+          referenceId: orderId,
         }, tx);
       });
 

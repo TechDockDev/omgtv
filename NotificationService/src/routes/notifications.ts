@@ -17,9 +17,9 @@ export default async function notificationRoutes(server: FastifyInstance) {
             }),
         }
     }, async (request) => {
-        const customerId = request.user!.customerId;
+        const userId = request.user!.id;
         const { limit, offset } = request.query as { limit: number; offset: number };
-        const notifications = await NotificationRepository.findByUser(customerId, limit, offset);
+        const notifications = await NotificationRepository.findByUser(userId, limit, offset);
 
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -54,7 +54,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
             }),
         }
     }, async (request, reply) => {
-        const customerId = request.user!.customerId;
+        const userId = request.user!.id;
         const { id } = request.params as { id: string };
         const notification = await NotificationRepository.findById(id);
 
@@ -62,7 +62,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
             return reply.status(404).send({ error: 'Notification not found' });
         }
 
-        if (notification.userId !== customerId) {
+        if (notification.userId !== userId) {
             return reply.status(403).send({ error: 'Forbidden' });
         }
 
@@ -73,16 +73,14 @@ export default async function notificationRoutes(server: FastifyInstance) {
     // GET /notifications/unread-count
     server.get('/unread-count', async (request) => {
         const userId = request.user!.id;
-        const customerId = request.user!.customerId;
-        const count = await NotificationRepository.countUnread(customerId);
+        const count = await NotificationRepository.countUnread(userId);
         return { count };
     });
 
     // PATCH /notifications/read-all
     server.patch('/read-all', async (request) => {
         const userId = request.user!.id;
-        const customerId = request.user!.customerId;
-        const result = await NotificationRepository.markAllAsRead(customerId);
+        const result = await NotificationRepository.markAllAsRead(userId);
         return { success: true, count: result.count };
     });
 
@@ -95,7 +93,6 @@ export default async function notificationRoutes(server: FastifyInstance) {
         }
     }, async (request, reply) => {
         const userId = request.user!.id;
-        const customerId = request.user!.customerId;
         const { id } = request.params as { id: string };
         const notification = await NotificationRepository.findById(id);
 
@@ -103,7 +100,7 @@ export default async function notificationRoutes(server: FastifyInstance) {
             return reply.status(404).send({ error: 'Notification not found' });
         }
 
-        if (notification.userId !== customerId) {
+        if (notification.userId !== userId) {
             return reply.status(403).send({ error: 'Forbidden' });
         }
 

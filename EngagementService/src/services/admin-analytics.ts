@@ -241,6 +241,7 @@ export interface GeneralDashboardStats {
         dau: MetricWithTrend;
         newUsers: MetricWithTrend;
         totalRevenue: MetricWithTrend;
+        totalRegistered: MetricWithTrend;
         totalSubscribers: MetricWithTrend;
         totalLogin: MetricWithTrend;
         totalLogout: MetricWithTrend;
@@ -258,11 +259,13 @@ export interface GeneralDashboardStats {
 async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, granularity: "daily" | "monthly" | "yearly") {
     const revUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/revenue/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
     const userUrl = `${config.USER_SERVICE_URL}/internal/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
+    const subStatsUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/stats/users`;
 
     const appEventModel = (prisma as any).appEvent;
-    const [revRes, userRes, dauData, loginCount, logoutCount, uninstallCount] = await Promise.all([
+    const [revRes, userRes, subStatsRes, dauData, loginCount, logoutCount, uninstallCount] = await Promise.all([
         fetch(revUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ totalRevenuePaise: 0, trend: [] })),
         fetch(userUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ newCustomers: 0, totalCustomers: 0, trend: [] })),
+        fetch(subStatsUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ active_subscribers: 0, active_trials: 0 })),
         prisma.$queryRaw<{ count: bigint }[]>`
             SELECT COUNT(DISTINCT COALESCE("userId", "guestId", "deviceId")) as count 
             FROM "AppEvent" 
@@ -274,11 +277,14 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
     ]);
 
     const dau = Number(dauData[0]?.count || 0);
+    // Use actual subscriber count from SubscriptionService, NOT totalCustomers (which is all registered users)
+    const actualSubscribers = ((subStatsRes as any).active_subscribers || 0) + ((subStatsRes as any).active_trials || 0);
 
     return {
         revenue: ((revRes as any).totalRevenuePaise || 0) / 100,
         newUsers: (userRes as any).newCustomers || 0,
-        totalSubscribers: (userRes as any).totalCustomers || 0,
+        totalRegistered: (userRes as any).totalCustomers || 0,
+        totalSubscribers: actualSubscribers,
         dau,
         login: loginCount,
         logout: logoutCount,
@@ -399,6 +405,7 @@ export async function getGeneralDashboardStats(params: {
             dau: { value: currentStats.dau, percentageChange: calculateChange(currentStats.dau, prevStats.dau) },
             newUsers: { value: currentStats.newUsers, percentageChange: calculateChange(currentStats.newUsers, prevStats.newUsers) },
             totalRevenue: { value: currentStats.revenue, percentageChange: calculateChange(currentStats.revenue, prevStats.revenue) },
+            totalRegistered: { value: currentStats.totalRegistered, percentageChange: calculateChange(currentStats.totalRegistered, prevStats.totalRegistered) },
             totalSubscribers: { value: currentStats.totalSubscribers, percentageChange: calculateChange(currentStats.totalSubscribers, prevStats.totalSubscribers) },
             totalLogin: { value: currentStats.login, percentageChange: calculateChange(currentStats.login, prevStats.login) },
             totalLogout: { value: currentStats.logout, percentageChange: calculateChange(currentStats.logout, prevStats.logout) },

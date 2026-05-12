@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { CustomerService } from "../services/customer-service";
+import { Prisma } from "@prisma/client";
+import { CustomerService, authPrisma } from "../services/customer-service";
 import { getUserDetails } from "../services/user-management";
 
 export default async function internalRoutes(app: FastifyInstance) {
@@ -116,14 +117,29 @@ export default async function internalRoutes(app: FastifyInstance) {
             if (filters.createdAtEnd) where.createdAt.lte = new Date(filters.createdAtEnd);
         }
 
-        const users = await app.prisma.customerProfile.findMany({
+        // 1. Fetch CustomerProfiles from UserDB
+        const profiles = await app.prisma.customerProfile.findMany({
             where,
-            select: { id: true },
+            select: { firebaseUid: true },
             take: limit,
             skip: offset,
         });
 
-        return { userIds: users.map(u => u.id) };
+        if (profiles.length === 0) return { userIds: [] };
+
+        const firebaseUids = profiles.map(p => p.firebaseUid);
+
+        // 2. Resolve AuthSubject IDs from AuthDB using firebaseUid
+        // We use a raw query because authPrisma is a separate client instance
+        const authSubjects = await authPrisma.$queryRaw<{ subjectId: string }[]>(
+            Prisma.sql`
+                SELECT "subjectId" 
+                FROM "CustomerIdentity" 
+                WHERE "firebaseUid" IN (${Prisma.join(firebaseUids)})
+            `
+        );
+
+        return { userIds: authSubjects.map(s => s.subjectId) };
     });
 
     /**

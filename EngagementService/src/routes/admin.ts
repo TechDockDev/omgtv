@@ -31,6 +31,7 @@ const dashboardResponseSchema = z.object({
         dau: metricWithTrendSchema,
         newUsers: metricWithTrendSchema,
         totalRevenue: metricWithTrendSchema,
+        totalRegistered: metricWithTrendSchema,
         totalSubscribers: metricWithTrendSchema,
         totalLogin: metricWithTrendSchema,
         totalLogout: metricWithTrendSchema,

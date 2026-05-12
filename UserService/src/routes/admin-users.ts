@@ -104,6 +104,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
 
       // 1. Get trial-converted user IDs from SubscriptionService
       let convertedUserIds: string[] = [];
+      let serverTotal = 0;
       try {
         const res = await fetch(`${subServiceUrl}/internal/subscriptions/trial-converted-users?limit=10000`, {
           headers: { "x-service-token": serviceToken },
@@ -111,6 +112,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
         if (res.ok) {
           const data = await res.json();
           convertedUserIds = data.userIds ?? [];
+          serverTotal = data.total ?? convertedUserIds.length;
         } else {
           console.error(`[trial-converted] SubscriptionService error: ${await res.text()}`);
         }
@@ -138,7 +140,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       return {
         success: true,
         data: result,
-        stats: { totalTrialConverted: convertedUserIds.length },
+        stats: { totalTrialConverted: serverTotal },
       };
     },
   });

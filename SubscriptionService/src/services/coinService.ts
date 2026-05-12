@@ -316,25 +316,25 @@ export class CoinService {
     }
 
     /**
-     * Expires all overdue ad-earned coins:
-     * - Finds CREDIT+AD transactions where expiryAt <= now and remainingAmount > 0
+     * Expires all overdue earned coins (AD, STREAK, STREAK_BONUS):
+     * - Finds CREDIT transactions where expiryAt <= now and remainingAmount > 0
      * - Creates a DEBIT+EXPIRY transaction for each
      * - Zeroes out remainingAmount
      * - Invalidates balance cache
      *
      * Returns the number of transactions expired.
      */
-    async expireAdCoins(log?: JobLogger): Promise<number> {
+    async expireAllCoins(log?: JobLogger): Promise<number> {
         const now = new Date();
 
         const expiredCredits = await this.prisma.coinTransaction.findMany({
             where: {
                 type: CoinTransactionType.CREDIT,
-                source: TransactionSource.AD,
+                source: { in: [TransactionSource.AD, TransactionSource.STREAK, TransactionSource.STREAK_BONUS] },
                 expiryAt: { lte: now },
                 remainingAmount: { gt: 0 },
             },
-            select: { id: true, userId: true, remainingAmount: true },
+            select: { id: true, userId: true, remainingAmount: true, source: true },
         });
 
         if (expiredCredits.length === 0) return 0;
@@ -360,7 +360,7 @@ export class CoinService {
             await this.invalidateBalanceCache(credit.userId);
         }
 
-        log?.info({ count: expiredCredits.length }, "Ad coins expired");
+        log?.info({ count: expiredCredits.length }, "Overdue coins expired");
         return expiredCredits.length;
     }
 }

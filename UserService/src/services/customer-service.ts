@@ -11,7 +11,7 @@ export type CustomerDetailsFnResult = {
 import { loadConfig } from "../config";
 
 // Singleton-ish client for Auth DB
-const authPrisma = new PrismaClient({
+export const authPrisma = new PrismaClient({
     datasources: {
         db: {
             url: loadConfig().AUTH_DATABASE_URL,

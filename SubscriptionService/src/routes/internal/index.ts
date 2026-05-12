@@ -185,28 +185,45 @@ export default async function internalRoutes(app: FastifyInstance) {
   app.get("/subscriptions/trial-converted-users", {
     schema: {
       querystring: z.object({
-        limit: z.coerce.number().optional().default(10000),
+        limit: z.coerce.number().optional().default(20),
         offset: z.coerce.number().optional().default(0),
       }),
     },
   }, async (request) => {
     const { limit, offset } = request.query as { limit: number; offset: number };
 
-    const convertedUsers = await prisma.$queryRaw<Array<{ userId: string }>>`
-      SELECT DISTINCT "userId"
-      FROM "UserSubscription"
-      WHERE "userId" IN (
+    // Find users who had a trial AND later got a paid subscription (trialPlanId IS NULL = paid row)
+    // No endsAt or status filter — we want ALL historical conversions
+    const convertedUsers = await prisma.$queryRaw<Array<{ userId: string; paidAt: Date }>>`
+      SELECT us."userId", MIN(us."startsAt") AS "paidAt"
+      FROM "UserSubscription" us
+      WHERE us."userId" IN (
         SELECT "userId" FROM "UserSubscription" WHERE "trialPlanId" IS NOT NULL
       )
-      AND "status" IN ('ACTIVE', 'CANCELED')
-      AND "endsAt" > ${new Date()}
-      AND "trialPlanId" IS NULL
-      AND "planId" IS NOT NULL
-      ORDER BY "userId"
+      AND us."trialPlanId" IS NULL
+      AND us."planId" IS NOT NULL
+      GROUP BY us."userId"
+      ORDER BY "paidAt" DESC
       LIMIT ${limit} OFFSET ${offset}
     `;
 
-    return { userIds: convertedUsers.map((u) => u.userId) };
+    const totalResult = await prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(DISTINCT us."userId") AS count
+      FROM "UserSubscription" us
+      WHERE us."userId" IN (
+        SELECT "userId" FROM "UserSubscription" WHERE "trialPlanId" IS NOT NULL
+      )
+      AND us."trialPlanId" IS NULL
+      AND us."planId" IS NOT NULL
+    `;
+    const total = Number(totalResult[0]?.count ?? 0);
+
+    return {
+      userIds: convertedUsers.map((u) => u.userId),
+      total,
+      limit,
+      offset,
+    };
   });
 
   app.post("/episodes/unlock-status", {
