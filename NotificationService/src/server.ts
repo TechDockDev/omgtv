@@ -38,6 +38,7 @@ server.register(import('./routes/push'), { prefix: '/api/v1/notifications/push' 
 server.register(import('./routes/admin'), { prefix: '/api/v1/notifications/admin' });
 server.register(import('./routes/campaigns'), { prefix: '/api/v1/notifications/admin/campaigns' });
 server.register(import('./routes/internal-push'), { prefix: '/internal/push' });
+server.register(import('./routes/internal-analytics'), { prefix: '/internal' });
 
 // Health check (unauthenticated)
 server.get('/health', async (_request, reply) => {

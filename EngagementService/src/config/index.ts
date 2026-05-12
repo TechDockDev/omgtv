@@ -35,6 +35,7 @@ const envSchema = z.object({
   SUBSCRIPTION_SERVICE_URL: z.string().default("http://subscription-service:5100"),
   AD_REWARD_COINS: z.coerce.number().int().positive().default(10),
   CONTENT_SERVICE_URL: z.string().default("http://content-service:4600"),
+  NOTIFICATION_SERVICE_URL: z.string().default("http://notification-service:5200"),
 });
 
 type Env = z.infer<typeof envSchema>;

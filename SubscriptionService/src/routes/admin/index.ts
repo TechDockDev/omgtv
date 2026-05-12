@@ -529,7 +529,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
       // type === "all" → no additional filter, shows both
 
-      const [total, data] = await Promise.all([
+      const [total, data, trialCount, subCount] = await Promise.all([
         prisma.userSubscription.count({ where: whereClause }),
         prisma.userSubscription.findMany({
           where: whereClause,
@@ -552,6 +552,8 @@ export default async function adminRoutes(app: FastifyInstance) {
           skip,
           take: limit,
         }),
+        prisma.userSubscription.count({ where: { status: "CANCELED", trialPlanId: { not: null } } }),
+        prisma.userSubscription.count({ where: { status: "CANCELED", trialPlanId: null } }),
       ]);
 
       // Fetch user details from UserService
@@ -613,6 +615,11 @@ export default async function adminRoutes(app: FastifyInstance) {
         developerMessage: "Paginated list of users who canceled their trial or subscription",
         data: {
           items,
+          stats: {
+            total: trialCount + subCount,
+            trial: trialCount,
+            subscription: subCount
+          },
           pagination: {
             total,
             page,

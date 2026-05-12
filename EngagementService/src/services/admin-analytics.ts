@@ -261,8 +261,9 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
     const userUrl = `${config.USER_SERVICE_URL}/internal/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
     const subStatsUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/stats/users`;
 
+    const uninstallUrl = `${config.NOTIFICATION_SERVICE_URL}/internal/analytics/uninstalls?startDate=${start.toISOString()}&endDate=${end.toISOString()}`;
     const appEventModel = (prisma as any).appEvent;
-    const [revRes, userRes, subStatsRes, dauData, loginCount, logoutCount, uninstallCount] = await Promise.all([
+    const [revRes, userRes, subStatsRes, dauData, loginCount, logoutCount, uninstallRes] = await Promise.all([
         fetch(revUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ totalRevenuePaise: 0, trend: [] })),
         fetch(userUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ newCustomers: 0, totalCustomers: 0, trend: [] })),
         fetch(subStatsUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ active_subscribers: 0, active_trials: 0 })),
@@ -273,12 +274,13 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
         `.catch(() => [{ count: BigInt(0) }]),
         appEventModel ? appEventModel.count({ where: { eventType: "login", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
         appEventModel ? appEventModel.count({ where: { eventType: "logout", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
-        appEventModel ? appEventModel.count({ where: { eventType: "uninstall", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
+        fetch(uninstallUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ uninstallCount: 0 })),
     ]);
 
     const dau = Number(dauData[0]?.count || 0);
     // Use actual subscriber count from SubscriptionService, NOT totalCustomers (which is all registered users)
     const actualSubscribers = ((subStatsRes as any).active_subscribers || 0) + ((subStatsRes as any).active_trials || 0);
+    const uninstallCount = (uninstallRes as any).uninstallCount || 0;
 
     return {
         revenue: ((revRes as any).totalRevenuePaise || 0) / 100,
