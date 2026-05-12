@@ -611,10 +611,20 @@ export async function getUserDetails(
         ]);
 
         let planType: "Free" | "Trial" | "Premium" = "Free";
-        if (subscriptionData.activeUserIds.has(u.id)) {
+        let subscriptionEndsAt = null;
+        let subscriptionPlanName = null;
+
+        const activeInfo = subscriptionData.activeUsers.get(u.id);
+        const trialInfo = subscriptionData.trialUsers.get(u.id);
+
+        if (activeInfo) {
             planType = "Premium";
-        } else if (subscriptionData.trialUserIds.has(u.id)) {
+            subscriptionEndsAt = activeInfo.endsAt;
+            subscriptionPlanName = activeInfo.planName;
+        } else if (trialInfo) {
             planType = "Trial";
+            subscriptionEndsAt = trialInfo.endsAt;
+            subscriptionPlanName = trialInfo.planName;
         }
         const plan = planType;
 
@@ -631,6 +641,8 @@ export async function getUserDetails(
             status,
             plan,
             planType,
+            subscriptionEndsAt: subscriptionEndsAt ? new Date(subscriptionEndsAt).toISOString() : null,
+            subscriptionPlanName,
             userType: "registered",
             signupDate: new Date(u.createdAt).toISOString(),
             lastActive: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : new Date(u.createdAt).toISOString(),

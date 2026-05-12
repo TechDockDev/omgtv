@@ -24,7 +24,7 @@ SELECT
     END as expiry_status,
     COUNT(*) as user_count
 FROM "UserSubscription" us
-LEFT JOIN "Plan" p ON us."planId" = p."id"
+LEFT JOIN "SubscriptionPlan" p ON us."planId" = p."id"
 LEFT JOIN "Transaction" t ON us."transactionId" = t."id"
 WHERE us."status" IN ('ACTIVE', 'CANCELED', 'TRIAL', 'EXPIRED')
 GROUP BY 1, 2;
@@ -56,7 +56,7 @@ ConvertedUsers AS (
         MIN(t."createdAt") as converted_at
     FROM TrialUsers tu
     JOIN "Transaction" t ON tu."userId" = t."userId"
-    JOIN "Plan" p ON t."amountPaise" = p."pricePaise" -- Paid exactly the plan price
+    JOIN "SubscriptionPlan" p ON t."amountPaise" = p."pricePaise" -- Paid exactly the plan price
     WHERE t."status" = 'SUCCESS'
     GROUP BY tu."userId"
 )
@@ -68,7 +68,7 @@ SELECT
 FROM ConvertedUsers cv
 JOIN "AuthSubject" c ON cv."userId" = c.id
 JOIN "UserSubscription" us ON cv."userId" = us."userId"
-JOIN "Plan" p ON us."planId" = p.id
+JOIN "SubscriptionPlan" p ON us."planId" = p.id
 ORDER BY cv.converted_at DESC;
 ```
 
@@ -87,7 +87,7 @@ SELECT
     END as type,
     COUNT(*) as canceled_count
 FROM "UserSubscription" us
-LEFT JOIN "Plan" p ON us."planId" = p."id"
+LEFT JOIN "SubscriptionPlan" p ON us."planId" = p."id"
 LEFT JOIN "Transaction" t ON us."transactionId" = t."id"
 WHERE us."status" = 'CANCELED' 
   AND us."endsAt" > NOW()

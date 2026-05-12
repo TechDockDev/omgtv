@@ -527,7 +527,10 @@ export default async function adminRoutes(app: FastifyInstance) {
             select: {
               id: true,
               amountPaise: true,
+              currency: true,
               status: true,
+              razorpayPaymentId: true,
+              subscriptionId: true,
               createdAt: true,
             },
           },
