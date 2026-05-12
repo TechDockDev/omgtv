@@ -102,7 +102,7 @@ export default async function internalRoutes(app: FastifyInstance) {
                     createdAtStart: z.string().datetime().optional(),
                     createdAtEnd: z.string().datetime().optional(),
                 }).optional(),
-                limit: z.number().default(100),
+                limit: z.number().max(10000).default(5000),
                 offset: z.number().default(0),
             }),
         },
@@ -200,6 +200,31 @@ export default async function internalRoutes(app: FastifyInstance) {
         const customerService = new CustomerService(app.prisma);
         const profiles = await customerService.getBatchProfiles(userIds);
         return { profiles };
+    });
+
+    /**
+     * GET /internal/device-stats
+     * Returns total unique device count and breakdown by OS.
+     */
+    app.get("/device-stats", async () => {
+        const [totalDevices, osCounts] = await Promise.all([
+            app.prisma.deviceIdentity.count(),
+            app.prisma.deviceIdentity.groupBy({
+                by: ["os"],
+                _count: { id: true },
+            }),
+        ]);
+
+        const byOS: Record<string, number> = {};
+        for (const entry of osCounts) {
+            const key = entry.os || "unknown";
+            byOS[key] = (byOS[key] || 0) + entry._count.id;
+        }
+
+        return {
+            totalDevices,
+            byOS,
+        };
     });
 
     /**

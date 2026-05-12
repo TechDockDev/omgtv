@@ -114,9 +114,6 @@ export class CampaignService {
                                 data: (campaign.data as any) || {}
                             });
 
-                            totalSent += result.successCount;
-                            totalFailed += result.failureCount;
-
                             // Create Notification Records for PUSH history
                             // Map back to users - note: multiple tokens might exist for one user
                             const notificationsData = fcmTokenEntries.map((t) => {
@@ -137,6 +134,12 @@ export class CampaignService {
                                     fcmError: resp?.error
                                 } as any;
                             });
+
+                            // Count based on per-user notification status (matches notification records)
+                            const batchSent = notificationsData.filter((n: any) => n.status === 'SENT').length;
+                            const batchFailed = notificationsData.filter((n: any) => n.status === 'FAILED').length;
+                            totalSent += batchSent;
+                            totalFailed += batchFailed;
 
                             await prisma.notification.createMany({ data: notificationsData });
                         }

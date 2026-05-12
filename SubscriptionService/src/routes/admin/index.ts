@@ -1683,7 +1683,23 @@ export default async function adminRoutes(app: FastifyInstance) {
         page: number; limit: number; status?: StreakStatus; currentDay?: number; cyclesCompleted?: number;
       };
       const result = await streakService.getUserStreaks(page, limit, { status, currentDay, cyclesCompleted });
-      return { success: true, data: result };
+
+      // Enrich with user details from UserService
+      const userIds = result.streaks.map((s) => s.userId);
+      const userMap = await fetchUserDetails(userIds);
+
+      const enrichedStreaks = result.streaks.map((s) => ({
+        ...s,
+        user: userMap.get(s.userId) || null,
+      }));
+
+      return {
+        success: true,
+        data: {
+          ...result,
+          streaks: enrichedStreaks,
+        },
+      };
     }
   );
 
@@ -1692,6 +1708,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const detail = await streakService.getUserStreakDetail(userId);
     if (!detail.streak) return reply.code(404).send({ error: "No streak found for this user" });
-    return { success: true, data: detail };
+
+    const userMap = await fetchUserDetails([userId]);
+    const user = userMap.get(userId) || null;
+
+    return { success: true, data: { ...detail, user } };
   });
 }

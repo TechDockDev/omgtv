@@ -176,22 +176,45 @@ export class CustomerService {
     async getFcmTokensByAuthIds(authIds: string[]): Promise<{ userId: string, fcmToken: string, deviceId: string }[]> {
         if (authIds.length === 0) return [];
 
-        const rows = await authPrisma.$queryRaw<{ auth_id: string; customerId: string | null }[]>(
+        const rows = await authPrisma.$queryRaw<{ auth_id: string; customerId: string | null; firebaseUid: string | null }[]>(
             Prisma.sql`
-                SELECT s.id AS auth_id, c."customerId"
+                SELECT s.id AS auth_id, c."customerId", c."firebaseUid"
                 FROM "AuthSubject" s
                 LEFT JOIN "CustomerIdentity" c ON s.id = c."subjectId"
                 WHERE s.id IN (${Prisma.join(authIds)})
-                  AND s.type != 'GUEST'
             `
         );
 
-        const customerToAuthId = new Map<string, string>();
+        const authToCustomer = new Map<string, string>();
+        const firebaseUids: string[] = [];
+        const authIdToFirebaseUid = new Map<string, string>();
+
         for (const row of rows) {
-            if (row.customerId) customerToAuthId.set(row.customerId, row.auth_id);
+            if (row.customerId) {
+                authToCustomer.set(row.auth_id, row.customerId);
+            } else if (row.firebaseUid) {
+                firebaseUids.push(row.firebaseUid);
+                authIdToFirebaseUid.set(row.auth_id, row.firebaseUid);
+            }
         }
 
-        const customerIds = [...customerToAuthId.keys()];
+        // If some customerIds are missing in AuthDB, resolve them via firebaseUid from UserDB
+        if (firebaseUids.length > 0) {
+            const profiles = await this.prisma.customerProfile.findMany({
+                where: { firebaseUid: { in: firebaseUids } },
+                select: { id: true, firebaseUid: true }
+            });
+            const fbToId = new Map(profiles.map(p => [p.firebaseUid, p.id]));
+            
+            for (const [authId, fbUid] of authIdToFirebaseUid.entries()) {
+                const cid = fbToId.get(fbUid);
+                if (cid) {
+                    authToCustomer.set(authId, cid);
+                }
+            }
+        }
+
+        const customerIds = [...authToCustomer.values()];
         if (customerIds.length === 0) return [];
 
         const links = await this.prisma.customerDeviceLink.findMany({
@@ -205,6 +228,11 @@ export class CustomerService {
                 },
             },
         });
+
+        const customerToAuthId = new Map<string, string>();
+        for (const [authId, custId] of authToCustomer.entries()) {
+            customerToAuthId.set(custId, authId);
+        }
 
         const tokens = links
             .filter(link => link.device.fcmToken)

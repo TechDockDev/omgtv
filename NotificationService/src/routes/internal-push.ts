@@ -43,7 +43,7 @@ export default async function internalPushRoutes(fastify: FastifyInstance) {
             return reply.send({ success: true, skipped: true, reason: 'no_tokens' });
         }
 
-        const tokens = fcmTokens.map(t => t.fcmToken);
+        const tokens = [...new Set(fcmTokens.map(t => t.fcmToken))]; // de-duplicate
         const result = await pushNotificationService.sendToMultipleDevices(tokens, { title, body, data });
 
         await prisma.notification.create({

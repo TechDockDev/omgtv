@@ -192,35 +192,21 @@ export default async function internalRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { limit, offset } = request.query as { limit: number; offset: number };
 
-    // Step 1: users currently on an active paid plan
-    const activePaidSubs = await prisma.userSubscription.findMany({
-      where: {
-        status: { in: ["ACTIVE", "CANCELED"] },
-        endsAt: { gt: new Date() },
-        trialPlanId: null,
-        planId: { not: null },
-      },
-      select: { userId: true },
-      distinct: ["userId"],
-      take: limit,
-      skip: offset,
-    });
+    const convertedUsers = await prisma.$queryRaw<Array<{ userId: string }>>`
+      SELECT DISTINCT "userId"
+      FROM "UserSubscription"
+      WHERE "userId" IN (
+        SELECT "userId" FROM "UserSubscription" WHERE "trialPlanId" IS NOT NULL
+      )
+      AND "status" IN ('ACTIVE', 'CANCELED')
+      AND "endsAt" > ${new Date()}
+      AND "trialPlanId" IS NULL
+      AND "planId" IS NOT NULL
+      ORDER BY "userId"
+      LIMIT ${limit} OFFSET ${offset}
+    `;
 
-    if (activePaidSubs.length === 0) return { userIds: [] };
-
-    const activePaidUserIds = activePaidSubs.map(s => s.userId);
-
-    // Step 2: among those, find who also had a trial at some point
-    const convertedSubs = await prisma.userSubscription.findMany({
-      where: {
-        userId: { in: activePaidUserIds },
-        trialPlanId: { not: null },
-      },
-      select: { userId: true },
-      distinct: ["userId"],
-    });
-
-    return { userIds: convertedSubs.map(s => s.userId) };
+    return { userIds: convertedUsers.map((u) => u.userId) };
   });
 
   app.post("/episodes/unlock-status", {

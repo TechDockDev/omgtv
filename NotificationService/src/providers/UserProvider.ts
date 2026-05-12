@@ -17,44 +17,71 @@ export class UserProvider {
     /**
      * Fetch users matching specific criteria from UserService
      */
-    async getUsersByCriteria(filters: UserSearchFilters, limit = 1000): Promise<string[]> {
-        try {
-            const response = await fetch(`${this.userServiceUrl}/internal/users/search`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filters, limit })
-            });
+    async getUsersByCriteria(filters: UserSearchFilters): Promise<string[]> {
+        const allUserIds: string[] = [];
+        const PAGE_SIZE = 5000;
+        let offset = 0;
 
-            if (!response.ok) {
-                throw new Error(`UserService returned ${response.status}`);
+        try {
+            while (true) {
+                const response = await fetch(`${this.userServiceUrl}/internal/users/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filters, limit: PAGE_SIZE, offset })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`UserService returned ${response.status}`);
+                }
+
+                const data = await response.json() as { userIds: string[] };
+                const batch = data.userIds || [];
+                allUserIds.push(...batch);
+
+                // If we got fewer than PAGE_SIZE, we've reached the end
+                if (batch.length < PAGE_SIZE) break;
+                offset += PAGE_SIZE;
             }
 
-            const data = await response.json() as { userIds: string[] };
-            return data.userIds;
+            console.log(`[UserProvider] getUsersByCriteria: fetched ${allUserIds.length} total users`);
+            return allUserIds;
         } catch (error) {
             console.error('Failed to fetch users by criteria:', error);
-            return [];
+            return allUserIds; // Return whatever we collected so far
         }
     }
 
     /**
      * Fetch all active subscribers from SubscriptionService
      */
-    async getActiveSubscribers(limit = 1000): Promise<string[]> {
-        try {
-            // TODO: Handle pagination properly for production (loop until done)
-            // For MVP, just fetching top N
-            const response = await fetch(`${this.subscriptionServiceUrl}/internal/subscriptions/active-users?limit=${limit}`);
+    async getActiveSubscribers(): Promise<string[]> {
+        const allUserIds: string[] = [];
+        const PAGE_SIZE = 5000;
+        let offset = 0;
 
-            if (!response.ok) {
-                throw new Error(`SubscriptionService returned ${response.status}`);
+        try {
+            while (true) {
+                const response = await fetch(
+                    `${this.subscriptionServiceUrl}/internal/subscriptions/active-users?limit=${PAGE_SIZE}&offset=${offset}`
+                );
+
+                if (!response.ok) {
+                    throw new Error(`SubscriptionService returned ${response.status}`);
+                }
+
+                const data = await response.json() as { userIds: string[] };
+                const batch = data.userIds || [];
+                allUserIds.push(...batch);
+
+                if (batch.length < PAGE_SIZE) break;
+                offset += PAGE_SIZE;
             }
 
-            const data = await response.json() as { userIds: string[] };
-            return data.userIds;
+            console.log(`[UserProvider] getActiveSubscribers: fetched ${allUserIds.length} total users`);
+            return allUserIds;
         } catch (error) {
             console.error('Failed to fetch active subscribers:', error);
-            return [];
+            return allUserIds;
         }
     }
 

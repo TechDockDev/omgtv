@@ -300,4 +300,23 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       };
     },
   });
+
+  // GET /admin/device-stats — unique device count + OS breakdown
+  fastify.get("/device-stats", async () => {
+    const [totalDevices, osCounts] = await Promise.all([
+      fastify.prisma.deviceIdentity.count(),
+      fastify.prisma.deviceIdentity.groupBy({
+        by: ["os"],
+        _count: { id: true },
+      }),
+    ]);
+
+    const byOS: Record<string, number> = {};
+    for (const entry of osCounts) {
+      const key = (entry.os || "unknown").toLowerCase();
+      byOS[key] = (byOS[key] || 0) + entry._count.id;
+    }
+
+    return { success: true, data: { totalDevices, byOS } };
+  });
 }
