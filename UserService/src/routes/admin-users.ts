@@ -80,9 +80,23 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
         data: result,
         stats: {
           totalRegistered: result.total,
-          totalSubscribed: subscriptionStats.active_subscribers,
-          totalTrial: subscriptionStats.active_trials,
-          totalNotSubscribed: Math.max(0, result.total - (subscriptionStats.active_subscribers + subscriptionStats.active_trials))
+          totalSubscribed: ((subscriptionStats as any).active_subscribers || 0) + ((subscriptionStats as any).canceled_subscribers || 0) + ((subscriptionStats as any).expired_subscribers || 0),
+          activeSubscribers: (subscriptionStats as any).active_subscribers || 0,
+          canceledSubscribers: (subscriptionStats as any).canceled_subscribers || 0,
+          expiredSubscribers: (subscriptionStats as any).expired_subscribers || 0,
+          totalTrial: ((subscriptionStats as any).active_trials || 0) + ((subscriptionStats as any).canceled_trials || 0) + ((subscriptionStats as any).expired_trials || 0),
+          activeTrials: (subscriptionStats as any).active_trials || 0,
+          canceledTrials: (subscriptionStats as any).canceled_trials || 0,
+          expiredTrials: (subscriptionStats as any).expired_trials || 0,
+          planBreakdown: (subscriptionStats as any).plan_breakdown || [],
+          totalNotSubscribed: Math.max(0, result.total - (
+            ((subscriptionStats as any).active_subscribers || 0) + 
+            ((subscriptionStats as any).canceled_subscribers || 0) + 
+            ((subscriptionStats as any).expired_subscribers || 0) + 
+            ((subscriptionStats as any).active_trials || 0) + 
+            ((subscriptionStats as any).canceled_trials || 0) + 
+            ((subscriptionStats as any).expired_trials || 0)
+          ))
         }
       };
     },
@@ -104,6 +118,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
 
       // 1. Get trial-converted user IDs from SubscriptionService
       let convertedUserIds: string[] = [];
+      let conversionData: any[] = [];
       let serverTotal = 0;
       try {
         const res = await fetch(`${subServiceUrl}/internal/subscriptions/trial-converted-users?limit=10000`, {
@@ -112,6 +127,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
         if (res.ok) {
           const data = await res.json();
           convertedUserIds = data.userIds ?? [];
+          conversionData = data.users ?? [];
           serverTotal = data.total ?? convertedUserIds.length;
         } else {
           console.error(`[trial-converted] SubscriptionService error: ${await res.text()}`);
@@ -135,6 +151,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
         search,
         status,
         userIds: convertedUserIds,
+        conversionData
       });
 
       return {

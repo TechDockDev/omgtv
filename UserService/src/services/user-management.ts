@@ -18,6 +18,8 @@ export type UserListItem = {
     status: string;
     plan: string;
     planType: "Free" | "Trial" | "Premium";
+    subscriptionEndsAt: string | null;
+    subscriptionPlanName: string | null;
     userType: string;
     signupDate: string;
     lastActive: string;
@@ -118,14 +120,42 @@ async function fetchBulkCoinBalances(userIds: string[]): Promise<Record<string, 
     return {};
 }
 
-// Fetch active subscriber and trial user IDs from Subscription Service
-async function fetchSubscriptionUserIds(): Promise<{ activeUserIds: Set<string>; trialUserIds: Set<string> }> {
-    const result = { activeUserIds: new Set<string>(), trialUserIds: new Set<string>() };
+async function fetchUserIdsByPlan(filter: { type?: string; pricePaise?: number; planId?: string }): Promise<any[]> {
+    try {
+        let url = `${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/by-plan?limit=10000`;
+        if (filter.planId) url += `&planId=${filter.planId}`;
+        if (filter.pricePaise) url += `&pricePaise=${filter.pricePaise}`;
+        
+        // If it's just "premium", "trial", or "free", we use the existing specialized endpoints
+        if (!filter.planId && !filter.pricePaise) {
+            if (filter.type === "premium") url = `${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/active-users?limit=10000`;
+            else if (filter.type === "trial") url = `${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/trial-users?limit=10000`;
+            else return [];
+        }
+
+        const res = await fetch(url, { headers: { "x-service-token": SERVICE_AUTH_TOKEN } });
+        if (res.ok) {
+            const data = await res.json();
+            return data.users || [];
+        }
+    } catch (error) {
+        console.error("[fetchUserIdsByPlan] Failed:", error);
+    }
+    return [];
+}
+
+// Fetch active subscriber and trial user details from Subscription Service
+async function fetchSubscriptionUserIds(): Promise<{ 
+    activeUsers: Map<string, { endsAt: string; planName: string }>; 
+    trialUsers: Map<string, { endsAt: string; planName: string }> 
+}> {
+    const result = { 
+        activeUsers: new Map<string, { endsAt: string; planName: string }>(), 
+        trialUsers: new Map<string, { endsAt: string; planName: string }>() 
+    };
     try {
         const activeUrl = `${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/active-users?limit=10000`;
         const trialUrl = `${SUBSCRIPTION_SERVICE_URL}/internal/subscriptions/trial-users?limit=10000`;
-        console.log(`[fetchSubscriptionUserIds] Active: ${activeUrl}`);
-        console.log(`[fetchSubscriptionUserIds] Trial: ${trialUrl}`);
 
         const [activeRes, trialRes] = await Promise.all([
             fetch(activeUrl, {
@@ -136,24 +166,14 @@ async function fetchSubscriptionUserIds(): Promise<{ activeUserIds: Set<string>;
             }),
         ]);
 
-        console.log(`[fetchSubscriptionUserIds] Active status: ${activeRes.status}, Trial status: ${trialRes.status}`);
-
         if (activeRes.ok) {
             const data = await activeRes.json();
-            (data.userIds || []).forEach((id: string) => result.activeUserIds.add(id));
-            console.log(`[fetchSubscriptionUserIds] Active users: ${result.activeUserIds.size}`);
-        } else {
-            const errorBody = await activeRes.text();
-            console.error(`[fetchSubscriptionUserIds] Active users error: ${errorBody}`);
+            (data.users || []).forEach((u: any) => result.activeUsers.set(u.userId, { endsAt: u.endsAt, planName: u.planName }));
         }
 
         if (trialRes.ok) {
             const data = await trialRes.json();
-            (data.userIds || []).forEach((id: string) => result.trialUserIds.add(id));
-            console.log(`[fetchSubscriptionUserIds] Trial users: ${result.trialUserIds.size}`);
-        } else {
-            const errorBody = await trialRes.text();
-            console.error(`[fetchSubscriptionUserIds] Trial users error: ${errorBody}`);
+            (data.users || []).forEach((u: any) => result.trialUsers.set(u.userId, { endsAt: u.endsAt, planName: u.planName }));
         }
     } catch (error) {
         console.error("[fetchSubscriptionUserIds] Failed to fetch:", error);
@@ -172,30 +192,41 @@ export async function listUsers(
     const conditions: Prisma.Sql[] = [Prisma.sql`s.type = 'CUSTOMER'`];
 
     // Handle Plan Filter First (since it's a separate API call anyway)
-    let globalSubData: { activeUserIds: Set<string>; trialUserIds: Set<string> } | null = null;
+    let globalSubData: { 
+        activeUsers: Map<string, { endsAt: string; planName: string }>; 
+        trialUsers: Map<string, { endsAt: string; planName: string }> 
+    } | null = null;
 
     if (plan && plan !== "all") {
-        globalSubData = await fetchSubscriptionUserIds();
-        if (plan.toLowerCase() === "premium") {
-            const ids = Array.from(globalSubData.activeUserIds);
-            if (ids.length > 0) {
-                conditions.push(Prisma.sql`s.id IN (${Prisma.join(ids)})`);
-            } else {
-                conditions.push(Prisma.sql`1 = 0`);
-            }
+        let filteredUsers: any[] = [];
+        const isNumeric = /^\d+$/.test(plan);
+        
+        if (isNumeric) {
+            // Filter by price (assuming plan string is INR)
+            filteredUsers = await fetchUserIdsByPlan({ pricePaise: parseInt(plan) * 100 });
+        } else if (plan.toLowerCase() === "premium") {
+            filteredUsers = await fetchUserIdsByPlan({ type: "premium" });
         } else if (plan.toLowerCase() === "trial") {
-            const ids = Array.from(globalSubData.trialUserIds);
-            if (ids.length > 0) {
-                conditions.push(Prisma.sql`s.id IN (${Prisma.join(ids)})`);
-            } else {
-                conditions.push(Prisma.sql`1 = 0`);
-            }
+            filteredUsers = await fetchUserIdsByPlan({ type: "trial" });
         } else if (plan.toLowerCase() === "free") {
-            const activeIds = Array.from(globalSubData.activeUserIds);
-            const trialIds = Array.from(globalSubData.trialUserIds);
+            globalSubData = await fetchSubscriptionUserIds();
+            const activeIds = Array.from(globalSubData.activeUsers.keys());
+            const trialIds = Array.from(globalSubData.trialUsers.keys());
             const allSubIds = [...activeIds, ...trialIds];
             if (allSubIds.length > 0) {
                 conditions.push(Prisma.sql`s.id NOT IN (${Prisma.join(allSubIds)})`);
+            }
+        } else {
+            // Assume plan is a planId
+            filteredUsers = await fetchUserIdsByPlan({ planId: plan });
+        }
+
+        if (!["free", "all"].includes(plan.toLowerCase())) {
+            const filteredIds = filteredUsers.map(u => u.userId);
+            if (filteredIds.length > 0) {
+                conditions.push(Prisma.sql`s.id IN (${Prisma.join(filteredIds)})`);
+            } else {
+                conditions.push(Prisma.sql`1 = 0`);
             }
         }
     }
@@ -301,6 +332,8 @@ export async function listUsers(
         ]);
 
         // 4. Merge Data
+        const { activeUsers, trialUsers } = subscriptionData;
+
         const items: UserListItem[] = authUsers.map((u) => {
             const profile = profiles.find(p => p.firebaseUid === u.firebaseUid);
             // @ts-ignore: Schema updated but client generation pending
@@ -312,12 +345,23 @@ export async function listUsers(
             const status = profile?.status || "active";
 
             // Real plan from subscription data
+            const activeInfo = activeUsers.get(u.id);
+            const trialInfo = trialUsers.get(u.id);
+
             let planType: "Free" | "Trial" | "Premium" = "Free";
-            if (subscriptionData.activeUserIds.has(u.id)) {
+            let subscriptionEndsAt = null;
+            let subscriptionPlanName = null;
+
+            if (activeInfo) {
                 planType = "Premium";
-            } else if (subscriptionData.trialUserIds.has(u.id)) {
+                subscriptionEndsAt = activeInfo.endsAt;
+                subscriptionPlanName = activeInfo.planName;
+            } else if (trialInfo) {
                 planType = "Trial";
+                subscriptionEndsAt = trialInfo.endsAt;
+                subscriptionPlanName = trialInfo.planName;
             }
+            
             const plan = planType;
 
             // Real analytics from Engagement Service
@@ -335,6 +379,8 @@ export async function listUsers(
                 status,
                 plan,
                 planType,
+                subscriptionEndsAt: subscriptionEndsAt ? new Date(subscriptionEndsAt).toISOString() : null,
+                subscriptionPlanName,
                 userType: "registered",
                 signupDate: new Date(u.createdAt).toISOString(),
                 lastActive: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : new Date(u.createdAt).toISOString(),
@@ -362,17 +408,31 @@ export type ListTrialConvertedParams = {
     userIds: string[];
 };
 
+export type TrialConversionData = {
+    userId: string;
+    convertedAt: string;
+    currentStatus: string;
+    expiryStatus: string;
+    planName: string;
+    amountPaid: number;
+    endsAt: string;
+};
+
 export async function listTrialConvertedUsers(
     prisma: PrismaClient,
-    params: ListTrialConvertedParams
+    params: ListTrialConvertedParams & { conversionData?: TrialConversionData[] }
 ): Promise<ListUsersResult> {
-    const { page, limit, search, status, userIds } = params;
+    const { page, limit, search, status, userIds, conversionData } = params;
     const offset = (page - 1) * limit;
+
+    const conversionMap = new Map(conversionData?.map(d => [d.userId, d]));
 
     const conditions: Prisma.Sql[] = [
         Prisma.sql`s.type = 'CUSTOMER'`,
         Prisma.sql`s.id IN (${Prisma.join(userIds)})`,
     ];
+
+    // ... (rest of search/status logic remains same)
 
     let profileSearchUids: string[] = [];
     let statusProfileUids: string[] | null = null;
@@ -465,6 +525,8 @@ export async function listTrialConvertedUsers(
 
         const items: UserListItem[] = authUsers.map((u) => {
             const profile = profiles.find(p => p.firebaseUid === u.firebaseUid);
+            const conversion = conversionMap.get(u.id);
+
             // @ts-ignore
             const name = profile?.name || u.firebaseUid || "Customer";
             // @ts-ignore
@@ -482,8 +544,10 @@ export async function listTrialConvertedUsers(
                 email,
                 phone,
                 status: userStatus,
-                plan: "Premium",
+                plan: conversion?.planName || "Premium",
                 planType: "Premium" as const,
+                subscriptionEndsAt: conversion?.endsAt || null,
+                subscriptionPlanName: conversion?.planName || "Premium",
                 userType: "registered",
                 signupDate: new Date(u.createdAt).toISOString(),
                 lastActive: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : new Date(u.createdAt).toISOString(),
