@@ -29,11 +29,15 @@ import {
   getReviewsQuerySchema,
   reviewsResponseSchema,
 } from "../schemas/review";
+import { userContentStatsResponseSchema } from "../schemas/admin-analytics";
 import { z } from "zod";
 import {
   applyEngagementEvent,
   getProgressEntries,
 } from "../services/engagement";
+import {
+  getUserContentStats,
+} from "../services/admin-analytics";
 import { getRedisOptional } from "../lib/redis";
 import { getPrismaOptional } from "../lib/prisma";
 import {
@@ -1177,6 +1181,79 @@ export default async function internalRoutes(fastify: FastifyInstance) {
 
       request.log.info({ userId, count: history.length }, "Found search history items");
       return { history };
+    },
+  });
+
+  // --- Internal Analytics (used by UserService) ---
+
+  const userIdParamsSchema = z.object({
+    userId: z.string().min(1),
+  });
+
+  const userContentQuerySchema = z.object({
+    limit: z.coerce.number().min(1).max(100).optional().default(50),
+    offset: z.coerce.number().min(0).optional().default(0),
+  });
+
+  fastify.get("/analytics/users/:userId/content", {
+    schema: {
+      params: userIdParamsSchema,
+      querystring: userContentQuerySchema,
+      response: { 200: userContentStatsResponseSchema },
+    },
+    handler: async (request) => {
+      if (!prisma) {
+        throw fastify.httpErrors.serviceUnavailable("Database not available");
+      }
+
+      const { userId } = userIdParamsSchema.parse(request.params);
+      const { limit, offset } = userContentQuerySchema.parse(request.query);
+
+      return await getUserContentStats({
+        prisma,
+        userId,
+        limit,
+        offset,
+      });
+    },
+  });
+
+  const bulkUserStatsSchema = z.object({
+    userIds: z.array(z.string().min(1)).min(1).max(100),
+  });
+
+  fastify.post("/analytics/users/bulk-stats", {
+    schema: {
+      body: bulkUserStatsSchema,
+    },
+    handler: async (request) => {
+      if (!prisma) {
+        throw fastify.httpErrors.serviceUnavailable("Database not available");
+      }
+
+      const { userIds } = bulkUserStatsSchema.parse(request.body);
+
+      const watchStats = await prisma.viewProgress.groupBy({
+        by: ["userId"],
+        where: { userId: { in: userIds } },
+        _sum: { progressSeconds: true },
+        _count: { episodeId: true },
+      });
+
+      const stats: Record<string, { totalWatchTimeSeconds: number; contentViewed: number }> = {};
+
+      for (const uid of userIds) {
+        stats[uid] = { totalWatchTimeSeconds: 0, contentViewed: 0 };
+      }
+
+      for (const row of watchStats) {
+        stats[row.userId] = {
+          totalWatchTimeSeconds: row._sum.progressSeconds || 0,
+          contentViewed: row._count.episodeId || 0,
+        };
+      }
+
+      return { stats };
     },
   });
 }

@@ -106,6 +106,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       let convertedUserIds: string[] = [];
       let conversionData: any[] = [];
       let serverTotal = 0;
+      let conversionSummary: any = null;
       try {
         const res = await fetch(`${subServiceUrl}/internal/subscriptions/trial-converted-users?limit=10000`, {
           headers: { "x-service-token": serviceToken },
@@ -115,6 +116,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
           convertedUserIds = data.userIds ?? [];
           conversionData = data.users ?? [];
           serverTotal = data.total ?? convertedUserIds.length;
+          conversionSummary = data.summary;
         } else {
           console.error(`[trial-converted] SubscriptionService error: ${await res.text()}`);
         }
@@ -126,7 +128,12 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
         return {
           success: true,
           data: { items: [], total: 0, page, totalPages: 0 },
-          stats: { totalTrialConverted: 0 },
+          stats: { 
+            totalTrialConverted: 0,
+            active_watching: 0,
+            autopay_off_access: 0,
+            expired: 0
+          },
         };
       }
 
@@ -143,7 +150,12 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       return {
         success: true,
         data: result,
-        stats: { totalTrialConverted: serverTotal },
+        stats: { 
+          totalTrialConverted: serverTotal,
+          active_watching: conversionSummary?.active_watching || 0,
+          autopay_off_access: conversionSummary?.autopay_off_access || 0,
+          expired: conversionSummary?.expired || 0
+        },
       };
     },
   });

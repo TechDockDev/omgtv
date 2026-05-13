@@ -52,7 +52,7 @@ export async function buildApp() {
   await app.register(internalRoutes, { prefix: "/internal" });
   await app.register(batchRoutes, { prefix: "/internal" });
   await app.register(clientRoutes, { prefix: "/client" });
-  await app.register(adminRoutes, { prefix: "/internal" });
+  await app.register(adminRoutes, { prefix: "/admin" });
 
   app.get("/health", async () => ({ status: "ok" }));
 

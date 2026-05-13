@@ -108,14 +108,31 @@ export default async function internalRoutes(app: FastifyInstance) {
     schema: {},
   }, async (request) => {
     const statsRows = await prisma.$queryRaw<any[]>`
-      WITH UserRevenue AS (
+      WITH UserPayments AS (
           SELECT 
-              "userId", 
-              SUM("amountPaise") as total_paid,
-              MIN("amountPaise") as first_paid_amount
-          FROM "Transaction" 
-          WHERE "status" = 'SUCCESS' 
+              "userId",
+              "amountPaise",
+              "createdAt",
+              SUM("amountPaise") OVER (PARTITION BY "userId" ORDER BY "createdAt") as cumulative_paid
+          FROM "Transaction"
+          WHERE "status" = 'SUCCESS'
+      ),
+      UserTotals AS (
+          SELECT "userId", SUM("amountPaise") as total_paid
+          FROM "Transaction"
+          WHERE "status" = 'SUCCESS'
           GROUP BY "userId"
+      ),
+      TrialThresholds AS (
+          SELECT DISTINCT "userId" FROM "UserSubscription" WHERE "trialPlanId" IS NOT NULL
+          UNION
+          SELECT DISTINCT "userId" FROM UserPayments WHERE cumulative_paid < 9900
+      ),
+      ConversionCheck AS (
+          SELECT DISTINCT "userId"
+          FROM UserPayments
+          WHERE cumulative_paid >= 9900
+            AND "userId" IN (SELECT "userId" FROM TrialThresholds)
       ),
       UserStatus AS (
           SELECT DISTINCT ON ("userId") 
@@ -123,15 +140,10 @@ export default async function internalRoutes(app: FastifyInstance) {
           FROM "UserSubscription" 
           ORDER BY "userId", "createdAt" DESC
       ),
-      ConversionCheck AS (
-          SELECT "userId" 
-          FROM UserRevenue 
-          WHERE first_paid_amount < 9900 AND total_paid >= 9900
-      ),
       DetailedData AS (
           SELECT 
-              r."userId",
-              CASE WHEN r.total_paid >= 9900 THEN 'SUBSCRIBER' ELSE 'TRIAL' END as category,
+              t."userId",
+              CASE WHEN t.total_paid >= 9900 THEN 'SUBSCRIBER' ELSE 'TRIAL' END as category,
               CASE 
                   WHEN s."status" = 'ACTIVE' AND s."endsAt" >= NOW() THEN 'ACTIVE_WATCHING'
                   WHEN s."status" = 'TRIAL' AND s."endsAt" >= NOW() THEN 'ACTIVE_WATCHING'
@@ -141,9 +153,9 @@ export default async function internalRoutes(app: FastifyInstance) {
                   ELSE 'EXPIRED_LEGACY'
               END as detailed_status,
               CASE WHEN c."userId" IS NOT NULL THEN 1 ELSE 0 END as is_conversion
-          FROM UserRevenue r
-          LEFT JOIN UserStatus s ON r."userId" = s."userId"
-          LEFT JOIN ConversionCheck c ON r."userId" = c."userId"
+          FROM UserTotals t
+          LEFT JOIN UserStatus s ON t."userId" = s."userId"
+          LEFT JOIN ConversionCheck c ON t."userId" = c."userId"
       )
       SELECT 
           category,
@@ -331,58 +343,95 @@ export default async function internalRoutes(app: FastifyInstance) {
     const { limit, offset, status } = request.query as { limit: number; offset: number; status: string };
 
     // Use the verified Master Truth logic for conversions
-    const convertedUsers = await prisma.$queryRaw<any[]>`
-      WITH UserRevenue AS (
-          SELECT 
-              "userId", 
-              SUM("amountPaise") as total_paid,
-              MIN("amountPaise") as first_paid_amount,
-              COUNT(*) as tx_count
-          FROM "Transaction" 
-          WHERE "status" = 'SUCCESS' 
-          GROUP BY "userId"
-      ),
-      ConversionEvents AS (
-          SELECT "userId", total_paid, tx_count
-          FROM UserRevenue 
-          WHERE first_paid_amount < 9900 AND total_paid >= 9900
-      ),
-      DetailedData AS (
-          SELECT 
-            ce."userId",
-            ce.total_paid,
-            ce.tx_count,
-            COALESCE(us."status"::text, 'ACTIVE (Orphan)') as "currentStatus",
-            COALESCE(us."endsAt", (SELECT MIN("createdAt") FROM "Transaction" WHERE "userId" = ce."userId" AND "amountPaise" >= 9900) + interval '30 days') as "endsAt",
-            COALESCE(p."name", 'Premium') as "planName",
-            (SELECT MIN("createdAt") FROM "Transaction" WHERE "userId" = ce."userId" AND "amountPaise" >= 9900) as converted_at
-          FROM ConversionEvents ce
-          LEFT JOIN "UserSubscription" us ON ce."userId" = us."userId"
-          LEFT JOIN "SubscriptionPlan" p ON us."planId" = p."id"
-          WHERE (us."id" IS NULL OR us."startsAt" = (SELECT MAX("startsAt") FROM "UserSubscription" WHERE "userId" = ce."userId"))
-      )
-      SELECT *, COUNT(*) OVER() as total_count
-      FROM DetailedData
-      WHERE 1=1
-      ${status === 'active' ? prisma.$queryRawUnsafe('AND "endsAt" > NOW()') : prisma.$queryRawUnsafe('')}
-      ${status === 'expired' ? prisma.$queryRawUnsafe('AND "endsAt" <= NOW()') : prisma.$queryRawUnsafe('')}
-      ORDER BY converted_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
+      const query = `
+        WITH UserPayments AS (
+            SELECT 
+                "userId",
+                "amountPaise",
+                "createdAt",
+                SUM("amountPaise") OVER (PARTITION BY "userId" ORDER BY "createdAt") as cumulative_paid
+            FROM "Transaction"
+            WHERE "status" = 'SUCCESS'
+        ),
+        TrialThresholds AS (
+            -- Users who either have a recorded trial subscription OR at some point had < ₹99 total payments
+            SELECT DISTINCT "userId" FROM "UserSubscription" WHERE "trialPlanId" IS NOT NULL
+            UNION
+            SELECT DISTINCT "userId" FROM UserPayments WHERE cumulative_paid < 9900
+        ),
+        ConversionEvents AS (
+            -- Find the exact timestamp when a user's cumulative payments first reached/exceeded ₹99
+            SELECT 
+                "userId",
+                MIN("createdAt") as converted_at
+            FROM UserPayments
+            WHERE cumulative_paid >= 9900
+              AND "userId" IN (SELECT "userId" FROM TrialThresholds)
+            GROUP BY "userId"
+        ),
+        DetailedData AS (
+            SELECT 
+                ce."userId" AS "userId",
+                'SUBSCRIBER (Converted)' AS "category",
+                COALESCE(ls."status"::text, 'ACTIVE (Orphan)') AS "currentStatus",
+                (SELECT SUM("amountPaise") FROM "Transaction" WHERE "userId" = ce."userId" AND "status" = 'SUCCESS') AS "totalPaidPaise",
+                ce.converted_at AS "converted_at",
+                COALESCE(ls."endsAt", ce.converted_at + interval '30 days') AS "endsAt",
+                COALESCE(p."name", 'Premium') AS "planName"
+            FROM ConversionEvents ce
+            LEFT JOIN (
+                SELECT DISTINCT ON ("userId") "userId", "status", "endsAt", "planId"
+                FROM "UserSubscription"
+                ORDER BY "userId", "createdAt" DESC
+            ) ls ON ce."userId" = ls."userId"
+            LEFT JOIN "SubscriptionPlan" p ON ls."planId" = p."id"
+        )
+        SELECT *, COUNT(*) OVER() as total_count
+        FROM DetailedData
+        WHERE 1=1
+        ${status === 'active' ? 'AND "endsAt" > NOW()' : ''}
+        ${status === 'expired' ? 'AND "endsAt" <= NOW()' : ''}
+        ORDER BY converted_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `;
 
-    const totalCount = convertedUsers.length > 0 ? Number(convertedUsers[0].total_count) : 0;
+      const convertedUsers = await prisma.$queryRawUnsafe<any[]>(query);
+      
+      const summary = {
+        total: 0,
+        active_watching: 0,
+        autopay_off_access: 0,
+        expired: 0
+      };
+
+      convertedUsers.forEach(u => {
+        const isExpired = new Date(u.endsAt) <= new Date();
+        const isCanceled = u.currentStatus === 'CANCELED';
+        
+        if (isExpired) {
+          summary.expired++;
+        } else if (isCanceled) {
+          summary.autopay_off_access++;
+        } else {
+          summary.active_watching++;
+        }
+      });
+
+      const totalCount = convertedUsers.length > 0 ? Number(convertedUsers[0].total_count) : 0;
+      summary.total = totalCount;
 
     return {
-      userIds: convertedUsers.map(u => u.userId),
+      userIds: convertedUsers.map(u => u.userId || u.User_ID || u.user_id),
       users: convertedUsers.map((u) => ({
-        userId: u.userId,
+        userId: u.userId || u.User_ID || u.user_id,
         convertedAt: u.converted_at,
         currentStatus: u.currentStatus,
         expiryStatus: new Date(u.endsAt) > new Date() ? 'ACTIVE' : 'EXPIRED',
         planName: u.planName,
-        amountPaid: Number(u.total_paid) / 100,
+        amountPaid: Number(u.totalPaidPaise || u.total_paid) / 100,
         endsAt: u.endsAt
       })),
+      summary,
       total: totalCount,
       limit,
       offset,

@@ -427,6 +427,7 @@ export async function listTrialConvertedUsers(
 
     const conversionMap = new Map(conversionData?.map(d => [d.userId, d]));
 
+    console.log(`[listTrialConvertedUsers] Received ${userIds.length} userIds from SubscriptionService`);
     const conditions: Prisma.Sql[] = [
         Prisma.sql`s.type = 'CUSTOMER'`,
         Prisma.sql`s.id IN (${Prisma.join(userIds)})`,
@@ -506,8 +507,9 @@ export async function listTrialConvertedUsers(
             authPrisma.$queryRaw<[{ count: number }]>(countQuery),
             authPrisma.$queryRaw<any[]>(dataQuery),
         ]);
-
+        
         const total = Number(totalResult[0]?.count || 0);
+        console.log(`[listTrialConvertedUsers] Found ${authUsers.length} matching users in AuthDB (Total: ${total})`);
         const firebaseUids = authUsers.filter(u => u.firebaseUid).map(u => u.firebaseUid);
 
         let profiles: any[] = [];
