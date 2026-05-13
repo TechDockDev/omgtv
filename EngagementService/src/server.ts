@@ -11,6 +11,12 @@ async function main() {
       { http: `${config.HTTP_HOST}:${config.HTTP_PORT}` },
       "EngagementService ready"
     );
+
+    // Start Official Store Analytics 12-hour scheduler
+    const { StoreAnalyticsService } = await import("./services/store-analytics");
+    const { getPrisma } = await import("./lib/prisma");
+    StoreAnalyticsService.startScheduler(getPrisma());
+
   } catch (error) {
     app.log.error({ err: error }, "Failed to start EngagementService");
     await app.close();

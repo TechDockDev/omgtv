@@ -517,29 +517,20 @@ export default async function adminRoutes(app: FastifyInstance) {
       const { page, limit, type } = request.query as z.infer<typeof canceledUsersQuerySchema>;
       const skip = (page - 1) * limit;
 
-      // Fetch all to categorize by price dynamically
+      // 1. Get all users with CANCELED status
       const allCanceled = await prisma.userSubscription.findMany({
         where: { status: "CANCELED" },
         include: {
           plan: true,
           trialPlan: true,
-          transaction: {
-            select: {
-              id: true,
-              amountPaise: true,
-              currency: true,
-              status: true,
-              razorpayPaymentId: true,
-              subscriptionId: true,
-              createdAt: true,
-            },
-          },
+          transaction: true
         },
         orderBy: { updatedAt: "desc" },
       });
 
-      // Fetch cumulative payments for these users to categorize correctly
       const userIdsForPayments = [...new Set(allCanceled.map(sub => sub.userId))];
+      
+      // 2. Fetch cumulative payments to categorize them correctly (Master Truth)
       const payments = await prisma.transaction.groupBy({
         by: ['userId'],
         where: {
@@ -551,9 +542,15 @@ export default async function adminRoutes(app: FastifyInstance) {
 
       const paymentMap = new Map(payments.map(p => [p.userId, p._sum.amountPaise || 0]));
 
-      // Filter by Price (Smart Comparison based on cumulative payments)
-      const canceledSubs = allCanceled.filter(sub => (paymentMap.get(sub.userId) || 0) >= 9900);
-      const canceledTrials = allCanceled.filter(sub => (paymentMap.get(sub.userId) || 0) < 9900);
+      // 3. Categorize into Sub vs Trial based on ₹99 threshold
+      const categorized = allCanceled.map(sub => {
+        const totalPaid = paymentMap.get(sub.userId) || 0;
+        const isSubscriber = totalPaid >= 9900;
+        return { sub, isSubscriber };
+      });
+
+      const canceledSubs = categorized.filter(c => c.isSubscriber).map(c => c.sub);
+      const canceledTrials = categorized.filter(c => !c.isSubscriber).map(c => c.sub);
 
       let filteredData = allCanceled;
       if (type === "trial") filteredData = canceledTrials;
@@ -561,18 +558,15 @@ export default async function adminRoutes(app: FastifyInstance) {
 
       const total = filteredData.length;
       const data = filteredData.slice(skip, skip + limit);
-      const trialCount = canceledTrials.length;
-      const subCount = canceledSubs.length;
 
-      // Fetch user details from UserService
+      // 4. Fetch user details
       const userIds = [...new Set(data.map((sub) => sub.userId))];
       const userMap = await fetchUserDetails(userIds);
 
       const items = data.map((sub) => {
         const user = userMap.get(sub.userId);
-        const amountPaid = sub.transaction?.amountPaise || 0;
-        const planPrice = sub.plan?.pricePaise || 0;
-        const isTrial = sub.trialPlanId !== null || (sub.planId && amountPaid < planPrice);
+        const totalPaid = paymentMap.get(sub.userId) || 0;
+        const isTrial = totalPaid < 9900;
 
         return {
           id: sub.id,
@@ -581,40 +575,15 @@ export default async function adminRoutes(app: FastifyInstance) {
             ? { id: sub.userId, name: user.name, email: user.email, phone: user.phoneNumber }
             : { id: sub.userId, name: "Unknown", email: "", phone: "" },
           cancelType: isTrial ? "trial" : "subscription",
-          plan: sub.plan
-            ? {
-              id: sub.plan.id,
-              name: sub.plan.name,
-              pricePaise: sub.plan.pricePaise,
-              durationDays: sub.plan.durationDays,
-              currency: sub.plan.currency,
-            }
-            : null,
-          trialPlan: sub.trialPlan
-            ? {
-              id: sub.trialPlan.id,
-              trialPricePaise: sub.trialPlan.trialPricePaise,
-              durationDays: sub.trialPlan.durationDays,
-              isAutoDebit: sub.trialPlan.isAutoDebit,
-            }
-            : null,
+          plan: sub.plan,
+          trialPlan: sub.trialPlan,
           razorpaySubscriptionId: sub.razorpayOrderId,
           status: sub.status,
           startsAt: sub.startsAt,
           endsAt: sub.endsAt,
           createdAt: sub.createdAt,
-          canceledAt: sub.updatedAt, // updatedAt reflects when status changed to CANCELED
-          transaction: sub.transaction
-            ? {
-              id: sub.transaction.id,
-              amountPaise: sub.transaction.amountPaise,
-              currency: sub.transaction.currency,
-              status: sub.transaction.status,
-              paymentId: sub.transaction.razorpayPaymentId,
-              subscriptionId: sub.transaction.subscriptionId,
-              createdAt: sub.transaction.createdAt,
-            }
-            : null,
+          canceledAt: sub.updatedAt,
+          totalPaidPaise: totalPaid
         };
       });
 
@@ -622,13 +591,13 @@ export default async function adminRoutes(app: FastifyInstance) {
         success: true,
         statusCode: 200,
         userMessage: "Canceled users retrieved successfully",
-        developerMessage: "Paginated list of users who canceled their trial or subscription",
+        developerMessage: "List of users who canceled their trial or subscription",
         data: {
           items,
           stats: {
-            total: trialCount + subCount,
-            trial: trialCount,
-            subscription: subCount
+            total: canceledTrials.length + canceledSubs.length,
+            trial: canceledTrials.length,
+            subscription: canceledSubs.length
           },
           pagination: {
             total,

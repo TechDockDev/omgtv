@@ -104,3 +104,31 @@ model AppEvent {
   @@index([userId, createdAt])
   @@index([deviceId, createdAt])
 }
+
+model StoreAnalytics {
+  id              String   @id @default(uuid())
+  platform        String   // "android" or "ios"
+  date            DateTime // The day this data refers to
+  installs        Int      @default(0)
+  uninstalls      Int      @default(0)
+  impressions     Int      @default(0)
+  pageViews       Int      @default(0)
+  sessions        Int      @default(0)
+  
+  // Stability
+  crashes         Int      @default(0)
+  anrs            Int      @default(0) // Android specific
+  
+  // Retention (%)
+  retentionD1     Float    @default(0)
+  retentionD7     Float    @default(0)
+  retentionD30    Float    @default(0)
+  
+  activeUsers     Int?     @default(0)
+  averageRating   Float?
+  lastSyncedAt    DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@unique([platform, date])
+  @@index([platform, date])
+}

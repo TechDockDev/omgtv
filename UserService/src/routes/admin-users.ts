@@ -48,30 +48,28 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       const result = await listUsers(request.server.prisma, params);
 
       // Fetch aggregated stats from Subscription Service
-      let subscriptionStats = { active_subscribers: 0, active_trials: 0 };
+      let subscriptionStats: any = null;
       try {
         const subServiceUrl = config.SUBSCRIPTION_SERVICE_URL;
         const serviceToken = config.SERVICE_AUTH_TOKEN || "";
         const url = `${subServiceUrl}/internal/stats/users`;
 
-        console.log(`[adminUserRoutes] Fetching global subscription stats from ${url}`);
         const res = await fetch(url, {
           headers: { "x-service-token": serviceToken }
         });
 
-        console.log(`[adminUserRoutes] Global stats response status: ${res.status}`);
         if (res.ok) {
           subscriptionStats = await res.json();
-          console.log(`[adminUserRoutes] Global stats:`, subscriptionStats);
-        } else {
-          const errBody = await res.text();
-          console.error(`[adminUserRoutes] Global stats error response: ${errBody}`);
         }
       } catch (error) {
         console.error("[adminUserRoutes] Failed to fetch global subscription stats:", error);
       }
 
-      // Manual Global Response Wrapper (since UserService lacks the plugin currently)
+      const subs = subscriptionStats?.subscribers || { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 };
+      const trials = subscriptionStats?.trials || { total: 0, active_watching: 0, expired_blocked: 0, expired_canceled: 0 };
+      const conversions = subscriptionStats?.conversions || { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 };
+
+      // Manual Global Response Wrapper
       return {
         success: true,
         statusCode: 0,
@@ -80,23 +78,11 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
         data: result,
         stats: {
           totalRegistered: result.total,
-          totalSubscribed: ((subscriptionStats as any).active_subscribers || 0) + ((subscriptionStats as any).canceled_subscribers || 0) + ((subscriptionStats as any).expired_subscribers || 0),
-          activeSubscribers: (subscriptionStats as any).active_subscribers || 0,
-          canceledSubscribers: (subscriptionStats as any).canceled_subscribers || 0,
-          expiredSubscribers: (subscriptionStats as any).expired_subscribers || 0,
-          totalTrial: ((subscriptionStats as any).active_trials || 0) + ((subscriptionStats as any).canceled_trials || 0) + ((subscriptionStats as any).expired_trials || 0),
-          activeTrials: (subscriptionStats as any).active_trials || 0,
-          canceledTrials: (subscriptionStats as any).canceled_trials || 0,
-          expiredTrials: (subscriptionStats as any).expired_trials || 0,
-          planBreakdown: (subscriptionStats as any).plan_breakdown || [],
-          totalNotSubscribed: Math.max(0, result.total - (
-            ((subscriptionStats as any).active_subscribers || 0) + 
-            ((subscriptionStats as any).canceled_subscribers || 0) + 
-            ((subscriptionStats as any).expired_subscribers || 0) + 
-            ((subscriptionStats as any).active_trials || 0) + 
-            ((subscriptionStats as any).canceled_trials || 0) + 
-            ((subscriptionStats as any).expired_trials || 0)
-          ))
+          totalNotSubscribed: Math.max(0, result.total - (subs.total + trials.total)),
+          subscribers: subs,
+          trials: trials,
+          conversions: conversions,
+          planBreakdown: subscriptionStats?.plan_breakdown || []
         }
       };
     },

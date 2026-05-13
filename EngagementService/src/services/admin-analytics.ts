@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { StoreAnalyticsService } from "./store-analytics";
 import { loadConfig } from "../config";
 
 const config = loadConfig();
@@ -240,12 +241,42 @@ export interface GeneralDashboardStats {
     overview: {
         dau: MetricWithTrend;
         newUsers: MetricWithTrend;
+        totalUsers: number; // Independent of filter
         totalRevenue: MetricWithTrend;
         totalRegistered: MetricWithTrend;
         totalSubscribers: MetricWithTrend;
+        
+        // Detailed Subscriber Metrics
+        activeSubscribers: number;
+        autopayOffSubscribers: number;
+        expiredSubscribers: number;
+        canceledSubscribers: number;
+        
+        totalCanceled: number; // Sum of all canceled (Trial + Sub)
+
+        // Detailed Trial Metrics
+        activeTrials: number;
+        expiredTrials: number;
+        canceledTrials: number;
+
+        // Conversion Metrics
+        totalConversions: number;
+        activeConversions: number;
+        autopayOffConversions: number;
+        expiredConversions: number;
+        canceledConversions: number;
+
         totalLogin: MetricWithTrend;
         totalLogout: MetricWithTrend;
         totalUninstall: MetricWithTrend;
+
+        // Official Store Stats
+        storeStats: {
+            androidInstalls: number;
+            iosInstalls: number;
+            totalInstalls: number;
+            totalUninstalls: number;
+        };
     };
     contentPerformance: {
         topSeries: any[];
@@ -278,9 +309,32 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
     ]);
 
     const dau = Number(dauData[0]?.count || 0);
-    // Use actual subscriber count from SubscriptionService, NOT totalCustomers (which is all registered users)
-    const actualSubscribers = ((subStatsRes as any).active_subscribers || 0) + ((subStatsRes as any).active_trials || 0);
+    
+    // New Smart Aggregation for Subscribers: Active Watching + Auto-pay Off
+    const subStats = subStatsRes as any;
+    const subs = subStats.subscribers || { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 };
+    const trials = subStats.trials || { total: 0, active_watching: 0, expired_blocked: 0, expired_canceled: 0 };
+    const conversions = subStats.conversions || { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 };
+    
+    const actualSubscribers = (subs.active_watching || 0) + (subs.autopay_off_access || 0) + (trials.active_watching || 0);
     const uninstallCount = (uninstallRes as any).uninstallCount || 0;
+
+    // Official Store Stats
+    const storeService = new StoreAnalyticsService(prisma);
+    let storeSummary = await storeService.getStoreSummary(start, end);
+
+    // If we have no data for yesterday and we are looking at a recent period, trigger a sync
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+
+    if (storeSummary.totalInstalls === 0 && start <= yesterday && end >= yesterday) {
+        console.log("[StoreAnalytics] No data found for period. Triggering background sync...");
+        storeService.syncAll().catch(err => console.error("Background sync failed:", err));
+        
+        // Refetch after a short delay (optional, or just let the next load have it)
+        // For now, we return 0 and let the background worker finish.
+    }
 
     return {
         revenue: ((revRes as any).totalRevenuePaise || 0) / 100,
@@ -293,6 +347,9 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
         uninstall: uninstallCount,
         revenueTrend: (revRes as any).trend || [],
         userGrowthTrend: (userRes as any).trend || [],
+        // Raw sub stats for granular mapping
+        subStats: { subs, trials, conversions },
+        storeStats: storeSummary
     };
 }
 
@@ -330,11 +387,54 @@ export async function getGeneralDashboardStats(params: {
         getPeriodStats(prisma, prevStart, prevEnd, granularity),
     ]);
 
-    // Content Performance (Current Period)
-    const [topSeriesStats, topReelsStats] = await Promise.all([
-        prisma.contentStats.findMany({ where: { contentType: "SERIES" }, orderBy: { viewCount: "desc" }, take: 10 }),
-        prisma.contentStats.findMany({ where: { contentType: "REEL" }, orderBy: { viewCount: "desc" }, take: 10 }),
+    // Content Performance (Calculated for the Selected Period using AppEvents)
+    const [topSeriesStatsRaw, topReelsStatsRaw] = await Promise.all([
+        prisma.$queryRaw<{ contentId: string, count: bigint }[]>`
+            SELECT 
+                COALESCE(("eventData"->>'seriesId'), ("eventData"->>'contentId')) as "contentId",
+                COUNT(*) as count
+            FROM "AppEvent"
+            WHERE ("eventType" = 'video_play' OR "eventType" = 'screen_view')
+              AND "createdAt" >= ${currentStart} 
+              AND "createdAt" <= ${currentEnd}
+              AND ("eventData"->>'seriesId' IS NOT NULL OR (("eventData"->>'screen' = 'series_detail' OR "eventData"->>'screen' = 'audio_series') AND "eventData"->>'contentId' IS NOT NULL))
+            GROUP BY "contentId"
+            ORDER BY count DESC
+            LIMIT 15
+        `.catch(() => []),
+        prisma.$queryRaw<{ contentId: string, count: bigint }[]>`
+            SELECT 
+                ("eventData"->>'contentId') as "contentId",
+                COUNT(*) as count
+            FROM "AppEvent"
+            WHERE "eventType" = 'reel_view'
+              AND "createdAt" >= ${currentStart} 
+              AND "createdAt" <= ${currentEnd}
+              AND "eventData"->>'contentId' IS NOT NULL
+            GROUP BY "contentId"
+            ORDER BY count DESC
+            LIMIT 15
+        `.catch(() => []),
     ]);
+
+    // Map BigInt to Number and filter out nulls
+    const topSeriesStats = topSeriesStatsRaw
+        .filter(s => s.contentId && s.contentId !== 'null')
+        .map(s => ({ contentId: s.contentId, viewCount: Number(s.count), likeCount: 0, saveCount: 0 }));
+    
+    const topReelsStats = topReelsStatsRaw
+        .filter(s => s.contentId && s.contentId !== 'null')
+        .map(s => ({ contentId: s.contentId, viewCount: Number(s.count), likeCount: 0, saveCount: 0 }));
+
+    // Fallback to all-time stats if period data is empty
+    if (topSeriesStats.length === 0) {
+        const allTime = await prisma.contentStats.findMany({ where: { contentType: "SERIES" }, orderBy: { viewCount: "desc" }, take: 10 });
+        topSeriesStats.push(...allTime.map(s => ({ contentId: s.contentId, viewCount: s.viewCount, likeCount: s.likeCount, saveCount: s.saveCount })));
+    }
+    if (topReelsStats.length === 0) {
+        const allTime = await prisma.contentStats.findMany({ where: { contentType: "REEL" }, orderBy: { viewCount: "desc" }, take: 10 });
+        topReelsStats.push(...allTime.map(s => ({ contentId: s.contentId, viewCount: s.viewCount, likeCount: s.likeCount, saveCount: s.saveCount })));
+    }
 
     const fetchMetadataExtended = async (ids: string[], type: "reel" | "series" | "episode") => {
         if (ids.length === 0) return [];
@@ -406,12 +506,43 @@ export async function getGeneralDashboardStats(params: {
         overview: {
             dau: { value: currentStats.dau, percentageChange: calculateChange(currentStats.dau, prevStats.dau) },
             newUsers: { value: currentStats.newUsers, percentageChange: calculateChange(currentStats.newUsers, prevStats.newUsers) },
+            totalUsers: currentStats.totalRegistered, // This is all-time total
             totalRevenue: { value: currentStats.revenue, percentageChange: calculateChange(currentStats.revenue, prevStats.revenue) },
             totalRegistered: { value: currentStats.totalRegistered, percentageChange: calculateChange(currentStats.totalRegistered, prevStats.totalRegistered) },
             totalSubscribers: { value: currentStats.totalSubscribers, percentageChange: calculateChange(currentStats.totalSubscribers, prevStats.totalSubscribers) },
+            
+            // Subscriber Breakdown
+            activeSubscribers: currentStats.subStats.subs.active_watching,
+            autopayOffSubscribers: currentStats.subStats.subs.autopay_off_access,
+            expiredSubscribers: currentStats.subStats.subs.expired_blocked,
+            canceledSubscribers: currentStats.subStats.subs.expired_canceled,
+            
+            // Total Canceled matches your manual report: Auto-pay Off + Expired (Canceled)
+            totalCanceled: currentStats.subStats.subs.autopay_off_access + currentStats.subStats.subs.expired_canceled + currentStats.subStats.trials.expired_canceled,
+
+            // Trial Breakdown
+            activeTrials: currentStats.subStats.trials.active_watching,
+            expiredTrials: currentStats.subStats.trials.expired_blocked,
+            canceledTrials: currentStats.subStats.trials.expired_canceled,
+
+            // Conversion Breakdown
+            totalConversions: currentStats.subStats.conversions.total,
+            activeConversions: currentStats.subStats.conversions.active_watching,
+            autopayOffConversions: currentStats.subStats.conversions.autopay_off_access,
+            expiredConversions: currentStats.subStats.conversions.expired_blocked,
+            canceledConversions: currentStats.subStats.conversions.expired_canceled,
+
             totalLogin: { value: currentStats.login, percentageChange: calculateChange(currentStats.login, prevStats.login) },
             totalLogout: { value: currentStats.logout, percentageChange: calculateChange(currentStats.logout, prevStats.logout) },
             totalUninstall: { value: currentStats.uninstall, percentageChange: calculateChange(currentStats.uninstall, prevStats.uninstall) },
+            
+            storeStats: {
+                androidInstalls: currentStats.storeStats.android.installs,
+                iosInstalls: currentStats.storeStats.ios.installs,
+                totalInstalls: currentStats.storeStats.totalInstalls,
+                totalUninstalls: currentStats.storeStats.totalUninstalls,
+                totalCrashes: currentStats.storeStats.totalCrashes,       
+            }
         },
         contentPerformance: {
             topSeries: mapStats(seriesMetadata, topSeriesStats).slice(0, 10),

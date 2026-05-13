@@ -30,12 +30,42 @@ const dashboardResponseSchema = z.object({
     overview: z.object({
         dau: metricWithTrendSchema,
         newUsers: metricWithTrendSchema,
+        totalUsers: z.number(),
         totalRevenue: metricWithTrendSchema,
         totalRegistered: metricWithTrendSchema,
         totalSubscribers: metricWithTrendSchema,
+        
+        // Detailed Subscriber Metrics
+        activeSubscribers: z.number(),
+        autopayOffSubscribers: z.number(),
+        expiredSubscribers: z.number(),
+        canceledSubscribers: z.number(),
+        totalCanceled: z.number(),
+
+        // Detailed Trial Metrics
+        activeTrials: z.number(),
+        expiredTrials: z.number(),
+        canceledTrials: z.number(),
+
+        // Conversion Metrics
+        totalConversions: z.number(),
+        activeConversions: z.number(),
+        autopayOffConversions: z.number(),
+        expiredConversions: z.number(),
+        canceledConversions: z.number(),
+
         totalLogin: metricWithTrendSchema,
         totalLogout: metricWithTrendSchema,
         totalUninstall: metricWithTrendSchema,
+
+        // Official Store Stats
+        storeStats: z.object({
+            androidInstalls: z.number(),
+            iosInstalls: z.number(),
+            totalInstalls: z.number(),
+            totalUninstalls: z.number(),
+            totalCrashes: z.number().optional(),      // New
+        }),
     }),
     contentPerformance: z.object({
         topSeries: z.array(z.any()),
@@ -72,6 +102,56 @@ export default async function adminRoutes(fastify: FastifyInstance) {
             const { startDate, endDate, granularity } = request.query as z.infer<typeof dashboardQuerySchema>;
             return await getGeneralDashboardStats({ prisma, startDate, endDate, granularity });
         },
+    });
+
+    // Official Store Deep Dive
+    fastify.get("/analytics/store", {
+        schema: {
+            querystring: z.object({
+                startDate: z.string().optional(),
+                endDate: z.string().optional(),
+            }),
+            response: {
+                200: z.object({
+                    stats: z.array(z.object({
+                        platform: z.string(),
+                        date: z.date(),
+                        installs: z.number(),
+                        uninstalls: z.number(),
+                        impressions: z.number(),
+                        pageViews: z.number(),
+                        sessions: z.number().nullable(),
+                        crashes: z.number(),
+                        anrs: z.number(),
+                        averageRating: z.number().nullable(),
+                        lastSyncedAt: z.date()
+                    }))
+                })
+            }
+        },
+        handler: async (request) => {
+            if (!prisma) throw fastify.httpErrors.serviceUnavailable("Database not available");
+            const { startDate, endDate } = request.query as any;
+            const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+            const end = endDate ? new Date(endDate) : new Date();
+
+            const stats = await prisma.storeAnalytics.findMany({
+                where: { date: { gte: start, lte: end } },
+                orderBy: { date: "desc" }
+            });
+            return { stats };
+        }
+    });
+
+    // Manual Store Sync Trigger
+    fastify.post("/analytics/store/sync", {
+        handler: async (request) => {
+            if (!prisma) throw fastify.httpErrors.serviceUnavailable("Database not available");
+            const { StoreAnalyticsService } = await import("../services/store-analytics");
+            const service = new StoreAnalyticsService(prisma);
+            await service.syncAll();
+            return { success: true, message: "Sync triggered and completed" };
+        }
     });
 
     fastify.get("/analytics/ads/custom", {
