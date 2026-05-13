@@ -154,13 +154,13 @@ export class StoreAnalyticsService {
             await this.prisma.storeAnalytics.upsert({
                 where: { platform_date: { platform: "ios", date: yesterday } },
                 update: { 
-                    installs, refunds, netProceeds: proceeds, currency,
+                    installs,
                     impressions, pageViews, sessions,
                     lastSyncedAt: new Date() 
                 },
                 create: { 
                     platform: "ios", date: yesterday, 
-                    installs, refunds, netProceeds: proceeds, currency,
+                    installs,
                     impressions, pageViews, sessions
                 }
             });

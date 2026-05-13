@@ -276,6 +276,7 @@ export interface GeneralDashboardStats {
             iosInstalls: number;
             totalInstalls: number;
             totalUninstalls: number;
+            totalCrashes?: number;
         };
     };
     contentPerformance: {
