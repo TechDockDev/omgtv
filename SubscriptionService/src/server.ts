@@ -7,6 +7,7 @@ import packageJson from "../package.json";
 import { startGrpcServer } from "./grpc/server";
 import { startExpiryCron, stopExpiryCron } from "./jobs/expireCoins";
 import { startReminderCron, stopReminderCron } from "./jobs/coinReminders";
+import { startSubscriptionExpiryCron, stopSubscriptionExpiryCron } from "./jobs/expireSubscriptions";
 
 async function main() {
   const config = loadConfig();
@@ -22,6 +23,7 @@ async function main() {
 
     startExpiryCron(app.log);
     startReminderCron(app.log);
+    startSubscriptionExpiryCron(app.log);
 
     app.log.info(
       { version: packageJson.version, http: `${config.HTTP_HOST}:${config.HTTP_PORT}` },
@@ -40,6 +42,7 @@ async function main() {
     try {
       stopExpiryCron();
       stopReminderCron();
+      stopSubscriptionExpiryCron();
       await disconnectPrisma();
       await shutdownRedis();
       await shutdownObservability();

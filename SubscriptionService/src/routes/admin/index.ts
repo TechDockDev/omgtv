@@ -538,9 +538,22 @@ export default async function adminRoutes(app: FastifyInstance) {
         orderBy: { updatedAt: "desc" },
       });
 
-      // Filter by Price (Smart Comparison)
-      const canceledSubs = allCanceled.filter(sub => sub.trialPlanId === null && (sub.transaction?.amountPaise || 0) >= (sub.plan?.pricePaise || 0));
-      const canceledTrials = allCanceled.filter(sub => sub.trialPlanId !== null || (sub.planId && (sub.transaction?.amountPaise || 0) < (sub.plan?.pricePaise || 0)));
+      // Fetch cumulative payments for these users to categorize correctly
+      const userIdsForPayments = [...new Set(allCanceled.map(sub => sub.userId))];
+      const payments = await prisma.transaction.groupBy({
+        by: ['userId'],
+        where: {
+          userId: { in: userIdsForPayments },
+          status: 'SUCCESS'
+        },
+        _sum: { amountPaise: true }
+      });
+
+      const paymentMap = new Map(payments.map(p => [p.userId, p._sum.amountPaise || 0]));
+
+      // Filter by Price (Smart Comparison based on cumulative payments)
+      const canceledSubs = allCanceled.filter(sub => (paymentMap.get(sub.userId) || 0) >= 9900);
+      const canceledTrials = allCanceled.filter(sub => (paymentMap.get(sub.userId) || 0) < 9900);
 
       let filteredData = allCanceled;
       if (type === "trial") filteredData = canceledTrials;
