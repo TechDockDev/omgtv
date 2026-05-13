@@ -295,10 +295,25 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
 
     const uninstallUrl = `${config.NOTIFICATION_SERVICE_URL}/internal/analytics/uninstalls?startDate=${start.toISOString()}&endDate=${end.toISOString()}`;
     const appEventModel = (prisma as any).appEvent;
+    const fetchWithTimeout = (url: string, options: any = {}, timeout = 5000) => {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeout);
+        return fetch(url, { ...options, signal: controller.signal })
+            .then(res => {
+                clearTimeout(id);
+                return res.json();
+            })
+            .catch((err) => {
+                clearTimeout(id);
+                console.error(`Fetch failed for ${url}:`, err.message);
+                return null;
+            });
+    };
+
     const [revRes, userRes, subStatsRes, dauData, loginCount, logoutCount, uninstallRes] = await Promise.all([
-        fetch(revUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ totalRevenuePaise: 0, trend: [] })),
-        fetch(userUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ newCustomers: 0, totalCustomers: 0, trend: [] })),
-        fetch(subStatsUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ active_subscribers: 0, active_trials: 0 })),
+        fetchWithTimeout(revUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { totalRevenuePaise: 0, trend: [] }),
+        fetchWithTimeout(userUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { newCustomers: 0, totalCustomers: 0, trend: [] }),
+        fetchWithTimeout(subStatsUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { subscribers: {}, trials: {}, conversions: {} }),
         prisma.$queryRaw<{ count: bigint }[]>`
             SELECT COUNT(DISTINCT COALESCE("userId", "guestId", "deviceId")) as count 
             FROM "AppEvent" 
@@ -306,7 +321,7 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
         `.catch(() => [{ count: BigInt(0) }]),
         appEventModel ? appEventModel.count({ where: { eventType: "login", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
         appEventModel ? appEventModel.count({ where: { eventType: "logout", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
-        fetch(uninstallUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res.json()).catch(() => ({ uninstallCount: 0 })),
+        fetchWithTimeout(uninstallUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { uninstallCount: 0 }),
     ]);
 
     const dau = Number(dauData[0]?.count || 0);

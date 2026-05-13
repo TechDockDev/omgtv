@@ -401,7 +401,8 @@ export default async function internalRoutes(app: FastifyInstance) {
         total: 0,
         active_watching: 0,
         autopay_off_access: 0,
-        expired: 0
+        expired_blocked: 0,
+        expired_canceled: 0
       };
 
       convertedUsers.forEach(u => {
@@ -409,7 +410,8 @@ export default async function internalRoutes(app: FastifyInstance) {
         const isCanceled = u.currentStatus === 'CANCELED';
         
         if (isExpired) {
-          summary.expired++;
+          if (isCanceled) summary.expired_canceled++;
+          else summary.expired_blocked++;
         } else if (isCanceled) {
           summary.autopay_off_access++;
         } else {

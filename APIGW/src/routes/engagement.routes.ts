@@ -62,6 +62,8 @@ import {
   getUserContentStatsProxy,
   getGeneralDashboardStatsProxy,
   getCustomAdAnalyticsProxy,
+  getStoreAnalyticsProxy,
+  syncStoreAnalyticsProxy,
 } from "../proxy/engagement.proxy";
 import { getBatchContent } from "../proxy/content.proxy";
 import {
@@ -1160,6 +1162,70 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
         request.telemetrySpan
       );
     },
+  });
+
+  // Admin: Official Store Analytics (Both /admin and direct path for consistency)
+  const storeAnalyticsHandler = async (request: any) => {
+    const query = request.query as any;
+    return getStoreAnalyticsProxy(
+      query,
+      request.correlationId,
+      request.user!,
+      request.telemetrySpan
+    );
+  };
+
+  fastify.route({
+    method: "GET",
+    url: "/admin/analytics/store",
+    schema: {
+      querystring: z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }),
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["admin"])],
+    handler: storeAnalyticsHandler,
+  });
+
+  fastify.route({
+    method: "GET",
+    url: "/analytics/store",
+    schema: {
+      querystring: z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }),
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["admin"])],
+    handler: storeAnalyticsHandler,
+  });
+
+  // Admin: Trigger Store Sync
+  const storeSyncHandler = async (request: any) => {
+    return syncStoreAnalyticsProxy(
+      request.correlationId,
+      request.user!,
+      request.telemetrySpan
+    );
+  };
+
+  fastify.route({
+    method: "POST",
+    url: "/admin/analytics/store/sync",
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["admin"])],
+    handler: storeSyncHandler,
+  });
+
+  fastify.route({
+    method: "POST",
+    url: "/analytics/store/sync",
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["admin"])],
+    handler: storeSyncHandler,
   });
 
   // Logging to confirm registration

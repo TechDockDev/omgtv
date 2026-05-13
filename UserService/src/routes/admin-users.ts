@@ -132,7 +132,8 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
             totalTrialConverted: 0,
             active_watching: 0,
             autopay_off_access: 0,
-            expired: 0
+            expired_blocked: 0,
+            expired_canceled: 0
           },
         };
       }
@@ -154,7 +155,8 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
           totalTrialConverted: serverTotal,
           active_watching: conversionSummary?.active_watching || 0,
           autopay_off_access: conversionSummary?.autopay_off_access || 0,
-          expired: conversionSummary?.expired || 0
+          expired_blocked: conversionSummary?.expired_blocked || 0,
+          expired_canceled: conversionSummary?.expired_canceled || 0
         },
       };
     },

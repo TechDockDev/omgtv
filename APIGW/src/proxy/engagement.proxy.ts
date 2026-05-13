@@ -963,7 +963,7 @@ export async function getGeneralDashboardStatsProxy(
 ): Promise<unknown> {
   const baseUrl = resolveServiceUrl("engagement");
 
-  let path = "/internal/analytics/dashboard";
+  let path = "/admin/analytics/dashboard";
   const query = new URLSearchParams();
   if (params.startDate) query.append("startDate", params.startDate);
   if (params.endDate) query.append("endDate", params.endDate);
@@ -1010,7 +1010,7 @@ export async function getCustomAdAnalyticsProxy(
 ): Promise<unknown> {
   const baseUrl = resolveServiceUrl("engagement");
 
-  let path = "/internal/analytics/ads/custom";
+  let path = "/admin/analytics/ads/custom";
   const query = new URLSearchParams();
   if (params.startDate) query.append("startDate", params.startDate);
   if (params.endDate) query.append("endDate", params.endDate);
@@ -1066,7 +1066,7 @@ export async function deleteReviewProxy({
     const response = await performServiceRequest({
       serviceName: "engagement",
       baseUrl,
-      path: `/internal/reviews/${reviewId}`,
+      path: `/admin/reviews/${reviewId}`,
       method: "DELETE",
       correlationId,
       user,
@@ -1090,4 +1090,85 @@ export async function deleteReviewProxy({
   }
 
   return payload;
+}
+
+// Admin: Official Store Analytics
+export async function getStoreAnalyticsProxy(
+  params: { startDate?: string; endDate?: string },
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<unknown> {
+  const baseUrl = resolveServiceUrl("engagement");
+
+  let path = "/admin/analytics/store";
+  const query = new URLSearchParams();
+  if (params.startDate) query.append("startDate", params.startDate);
+  if (params.endDate) query.append("endDate", params.endDate);
+
+  const queryString = query.toString();
+  if (queryString) {
+    path += `?${queryString}`;
+  }
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<unknown>({
+      serviceName: "engagement",
+      baseUrl,
+      path,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:getStoreAnalytics",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to fetch store analytics",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return (payload as any)?.data ?? payload;
+}
+
+// Admin: Trigger Store Analytics Sync
+export async function syncStoreAnalyticsProxy(
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<unknown> {
+  const baseUrl = resolveServiceUrl("engagement");
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<unknown>({
+      serviceName: "engagement",
+      baseUrl,
+      path: "/admin/analytics/store/sync",
+      method: "POST",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:syncStoreAnalytics",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to trigger store sync",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  return (payload as any)?.data ?? payload;
 }
