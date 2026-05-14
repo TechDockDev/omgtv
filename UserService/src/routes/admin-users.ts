@@ -30,6 +30,8 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
     status: z.enum(["active", "inactive", "blocked", "all"]).default("all"),
     plan: z.string().optional().default("all"),
     tab: z.string().optional().default("all"),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
   });
 
   fastify.get("/app-users", {
@@ -39,12 +41,6 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
     handler: async (request, reply) => {
       const params = listUsersQuerySchema.parse(request.query);
 
-      // Ensure Admin (Optional strict check, can act as guard)
-      // Only check if auth service enabled properly?
-      // Assuming headers passed from internal or admin-api-gw. 
-      // Context checks skipped for brevity or handled by global guard?
-      // The current routes check specific user permission manually, let's proceed.
-
       const result = await listUsers(request.server.prisma, params);
 
       // Fetch aggregated stats from Subscription Service
@@ -52,9 +48,11 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       try {
         const subServiceUrl = config.SUBSCRIPTION_SERVICE_URL;
         const serviceToken = config.SERVICE_AUTH_TOKEN || "";
-        const url = `${subServiceUrl}/internal/stats/users`;
+        const statsUrl = new URL(`${subServiceUrl}/internal/stats/users`);
+        if (params.startDate) statsUrl.searchParams.set("startDate", params.startDate);
+        if (params.endDate) statsUrl.searchParams.set("endDate", params.endDate);
 
-        const res = await fetch(url, {
+        const res = await fetch(statsUrl.toString(), {
           headers: { "x-service-token": serviceToken }
         });
 

@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
 import { CoinService } from "../../services/coinService";
-import { TransactionSource } from "@prisma/client";
+import { TransactionSource, Prisma } from "@prisma/client";
 const coinService = new CoinService();
 
 const entitlementRequest = z.object({
@@ -105,70 +105,86 @@ export default async function internalRoutes(app: FastifyInstance) {
   });
 
   app.get("/stats/users", {
-    schema: {},
+    schema: {
+      querystring: z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }),
+    },
   }, async (request) => {
+    const { startDate, endDate } = request.query as { startDate?: string; endDate?: string };
+    const start = startDate ? new Date(startDate) : new Date(0);
+    const end = endDate ? new Date(endDate) : new Date("2099-12-31");
+
     const statsRows = await prisma.$queryRaw<any[]>`
-      WITH UserPayments AS (
-          SELECT 
-              "userId",
-              "amountPaise",
-              "createdAt",
-              SUM("amountPaise") OVER (PARTITION BY "userId" ORDER BY "createdAt") as cumulative_paid
-          FROM "Transaction"
-          WHERE "status" = 'SUCCESS'
-      ),
-      UserTotals AS (
-          SELECT "userId", SUM("amountPaise") as total_paid
-          FROM "Transaction"
-          WHERE "status" = 'SUCCESS'
-          GROUP BY "userId"
-      ),
-      -- All users who ever had a subscription (includes free trial users with no transactions)
-      AllSubscribedUsers AS (
-          SELECT DISTINCT us."userId", COALESCE(t.total_paid, 0) AS total_paid
-          FROM "UserSubscription" us
-          LEFT JOIN UserTotals t ON us."userId" = t."userId"
-      ),
-      TrialThresholds AS (
-          SELECT DISTINCT "userId" FROM "UserSubscription" WHERE "trialPlanId" IS NOT NULL
-          UNION
-          SELECT DISTINCT "userId" FROM UserPayments WHERE cumulative_paid < 9900
-      ),
-      ConversionCheck AS (
-          SELECT DISTINCT "userId"
-          FROM UserPayments
-          WHERE cumulative_paid >= 9900
-            AND "userId" IN (SELECT "userId" FROM TrialThresholds)
-      ),
-      UserStatus AS (
-          SELECT DISTINCT ON ("userId")
-              "userId", "status", "endsAt"
+      WITH
+      -- Source of truth for trials: UserSubscription with trialPlanId set (date-filtered by first trial start)
+      TrialStatus AS (
+          SELECT DISTINCT ON ("userId") "userId", "status", "endsAt"
           FROM "UserSubscription"
+          WHERE "trialPlanId" IS NOT NULL
+            AND "createdAt" >= ${start}
+            AND "createdAt" <= ${end}
           ORDER BY "userId", "createdAt" DESC
       ),
-      DetailedData AS (
+      -- Source of truth for paid subscribers: users with total_paid >= 9900 (date-filtered by first payment)
+      PaidUsers AS (
+          SELECT "userId"
+          FROM "Transaction"
+          WHERE "status" = 'SUCCESS'
+            AND "createdAt" >= ${start}
+            AND "createdAt" <= ${end}
+          GROUP BY "userId"
+          HAVING SUM("amountPaise") >= 9900
+      ),
+      -- Latest paid subscription status for subscriber categorization (no date filter — current status)
+      SubStatus AS (
+          SELECT DISTINCT ON ("userId") "userId", "status", "endsAt"
+          FROM "UserSubscription"
+          WHERE "trialPlanId" IS NULL AND "status" != 'PENDING'
+          ORDER BY "userId", "createdAt" DESC
+      ),
+      -- Conversions: users who had a trial AND paid >= 9900
+      Conversions AS (
+          SELECT p."userId"
+          FROM PaidUsers p
+          WHERE p."userId" IN (SELECT "userId" FROM TrialStatus)
+      ),
+      -- Trial rows: all trial users with their detailed status
+      TrialRows AS (
           SELECT
-              u."userId",
-              CASE WHEN u.total_paid >= 9900 THEN 'SUBSCRIBER' ELSE 'TRIAL' END as category,
+              ts."userId",
+              'TRIAL' AS category,
               CASE
-                  WHEN s."status" = 'ACTIVE' AND s."endsAt" >= NOW() THEN 'ACTIVE_WATCHING'
-                  WHEN s."status" = 'TRIAL' AND s."endsAt" >= NOW() THEN 'ACTIVE_WATCHING'
-                  WHEN s."status" = 'CANCELED' AND s."endsAt" >= NOW() THEN 'AUTOPAY_OFF_ACCESS'
-                  WHEN s."status" = 'CANCELED' AND s."endsAt" < NOW() THEN 'EXPIRED_CANCELED'
-                  WHEN s."status" = 'EXPIRED' THEN 'EXPIRED_BLOCKED'
+                  WHEN ts."status" IN ('ACTIVE', 'TRIAL') AND ts."endsAt" >= NOW() THEN 'ACTIVE_WATCHING'
+                  WHEN ts."status" = 'CANCELED' AND ts."endsAt" >= NOW() THEN 'AUTOPAY_OFF_ACCESS'
+                  WHEN ts."status" = 'CANCELED' AND ts."endsAt" < NOW() THEN 'EXPIRED_CANCELED'
+                  WHEN ts."status" = 'EXPIRED' THEN 'EXPIRED_BLOCKED'
                   ELSE 'EXPIRED_LEGACY'
-              END as detailed_status,
-              CASE WHEN c."userId" IS NOT NULL THEN 1 ELSE 0 END as is_conversion
-          FROM AllSubscribedUsers u
-          LEFT JOIN UserStatus s ON u."userId" = s."userId"
-          LEFT JOIN ConversionCheck c ON u."userId" = c."userId"
+              END AS detailed_status,
+              CASE WHEN c."userId" IS NOT NULL THEN 1 ELSE 0 END AS is_conversion
+          FROM TrialStatus ts
+          LEFT JOIN Conversions c ON ts."userId" = c."userId"
+      ),
+      -- Subscriber rows: all paid users with their subscription status
+      SubRows AS (
+          SELECT
+              p."userId",
+              'SUBSCRIBER' AS category,
+              CASE
+                  WHEN ss."status" = 'ACTIVE' AND ss."endsAt" >= NOW() THEN 'ACTIVE_WATCHING'
+                  WHEN ss."status" = 'CANCELED' AND ss."endsAt" >= NOW() THEN 'AUTOPAY_OFF_ACCESS'
+                  WHEN ss."status" = 'CANCELED' AND ss."endsAt" < NOW() THEN 'EXPIRED_CANCELED'
+                  WHEN ss."status" = 'EXPIRED' THEN 'EXPIRED_BLOCKED'
+                  ELSE 'EXPIRED_LEGACY'
+              END AS detailed_status,
+              CASE WHEN c."userId" IS NOT NULL THEN 1 ELSE 0 END AS is_conversion
+          FROM PaidUsers p
+          LEFT JOIN SubStatus ss ON p."userId" = ss."userId"
+          LEFT JOIN Conversions c ON p."userId" = c."userId"
       )
-      SELECT 
-          category,
-          detailed_status,
-          is_conversion,
-          COUNT(*)::int as user_count
-      FROM DetailedData
+      SELECT category, detailed_status, is_conversion, COUNT(*)::int AS user_count
+      FROM (SELECT * FROM TrialRows UNION ALL SELECT * FROM SubRows) combined
       GROUP BY 1, 2, 3
     `;
 
