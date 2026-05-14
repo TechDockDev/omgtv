@@ -359,7 +359,7 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
     const trials = subStats.trials || { total: 0, active_watching: 0, expired_blocked: 0, expired_canceled: 0 };
     const conversions = subStats.conversions || { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 };
     
-    const actualSubscribers = (subs.active_watching || 0) + (subs.autopay_off_access || 0) + (trials.active_watching || 0);
+    const actualSubscribers = (subs.active_watching || 0) + (subs.autopay_off_access || 0);
     const uninstallCount = (uninstallRes as any).uninstallCount || 0;
 
     // Official Store Stats

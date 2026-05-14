@@ -7,8 +7,10 @@ import { fetchUserDetails } from "../../services/userService";
 import { CoinService } from "../../services/coinService";
 import { StreakService } from "../../services/streakService";
 import { ContentClient } from "../../clients/content-client";
+import { NotificationClient } from "../../clients/notification-client";
 import { CoinTransactionType, TransactionSource, WalletStatus, StreakStatus } from "@prisma/client";
 import { getRedis } from "../../lib/redis";
+import { loadConfig } from "../../config";
 
 const coinService = new CoinService();
 const streakService = new StreakService();
@@ -775,25 +777,26 @@ export default async function adminRoutes(app: FastifyInstance) {
       const skip = (page - 1) * limit;
 
       // Date range — start of startDate day to end of endDate day
+      // Use IST (UTC+5:30) for date boundaries to match Razorpay dashboard
       const dateFilter = (startDate || endDate) ? {
-        gte: startDate ? new Date(`${startDate}T00:00:00.000Z`) : undefined,
-        lte: endDate ? new Date(`${endDate}T23:59:59.999Z`) : undefined,
+        gte: startDate ? new Date(`${startDate}T00:00:00.000+05:30`) : undefined,
+        lte: endDate ? new Date(`${endDate}T23:59:59.999+05:30`) : undefined,
       } : undefined;
 
       // 1. Build DB-level filters for each table
       const subWhere: any = {};
       if (status && ["SUCCESS", "PENDING", "FAILED"].includes(status)) subWhere.status = status;
       if (search) subWhere.userId = { contains: search };
-      if (dateFilter) subWhere.updatedAt = dateFilter;
+      if (dateFilter) subWhere.createdAt = dateFilter;
 
       const coinWhere: any = {};
       if (status && ["SUCCESS", "CREATED", "FAILED"].includes(status)) coinWhere.status = status;
       if (search) coinWhere.userId = { contains: search };
-      if (dateFilter) coinWhere.updatedAt = dateFilter;
+      if (dateFilter) coinWhere.createdAt = dateFilter;
 
       // Stats only change by date range — search is a per-user lookup, not a global stat
       const statsBase = {
-        ...(dateFilter ? { updatedAt: dateFilter } : {}),
+        ...(dateFilter ? { createdAt: dateFilter } : {}),
       };
 
       // 2. Fetch page data, counts, and stats all in parallel
@@ -1877,5 +1880,272 @@ export default async function adminRoutes(app: FastifyInstance) {
     const user = userMap.get(userId) || null;
 
     return { success: true, data: { ...detail, user } };
+  });
+
+  // ── At-Risk Subscribers ───────────────────────────────────────────────────
+
+  const notificationClient = new NotificationClient();
+
+  const atRiskQuerySchema = z.object({
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(20),
+    riskLevel: z.enum(["all", "critical", "high", "medium"]).default("all"),
+  });
+
+  // GET /admin/at-risk — paginated list of CANCELED subscribers with future endsAt, enriched with activity + notification history
+  app.get("/at-risk", { schema: { querystring: atRiskQuerySchema } }, async (request) => {
+    const { page, limit, riskLevel } = request.query as z.infer<typeof atRiskQuerySchema>;
+    const config = loadConfig();
+    const now = new Date();
+
+    // 1. Fetch all CANCELED subscriptions with future endsAt (auto-pay off, will churn)
+    const allAtRisk = await prisma.userSubscription.findMany({
+      where: { status: "CANCELED", endsAt: { gt: now } },
+      include: { plan: true, trialPlan: true },
+      orderBy: { endsAt: "asc" },
+    });
+
+    if (allAtRisk.length === 0) {
+      return {
+        success: true,
+        data: {
+          items: [],
+          summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0 },
+          pagination: { total: 0, page, limit, totalPages: 0 },
+        },
+      };
+    }
+
+    const userIds = [...new Set(allAtRisk.map(s => s.userId))];
+
+    // 2. Fetch activity from EngagementService + notification history in parallel
+    const [activityRes, notifHistory] = await Promise.all([
+      fetch(`${config.ENGAGEMENT_SERVICE_URL}/internal/users/at-risk-activity`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(config.SERVICE_AUTH_TOKEN ? { "x-service-token": config.SERVICE_AUTH_TOKEN } : {}) },
+        body: JSON.stringify({ userIds }),
+      }).then(r => r.ok ? r.json() as Promise<{ activity: Record<string, any> }> : { activity: {} }).catch(() => ({ activity: {} })),
+      notificationClient.getBulkHistory(userIds, "AT_RISK_CAMPAIGN"),
+    ]);
+
+    const activityMap: Record<string, any> = (activityRes as any).activity ?? {};
+
+    // 3. Calculate risk level per user
+    function getRiskLevel(daysSince: number | null, declinePct: number): "critical" | "high" | "medium" | "low" {
+      if ((daysSince !== null && daysSince > 14) || declinePct > 75) return "critical";
+      if ((daysSince !== null && daysSince >= 8) || declinePct >= 60) return "high";
+      if ((daysSince !== null && daysSince >= 1) || declinePct >= 50) return "medium";
+      return "low";
+    }
+
+    // 4. Enrich each subscription entry
+    const enriched = allAtRisk.map(sub => {
+      const activity = activityMap[sub.userId] ?? { lastActiveAt: null, daysSinceActive: null, recentWatchSeconds: 0, previousWatchSeconds: 0, watchTimeDeclinePct: 0 };
+      const notif = notifHistory[sub.userId] ?? { lastSentAt: null, count: 0 };
+      const daysRemaining = Math.max(0, Math.ceil((sub.endsAt!.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      const level = getRiskLevel(activity.daysSinceActive, activity.watchTimeDeclinePct);
+      const isTrial = sub.trialPlanId !== null;
+
+      return {
+        subscriptionId: sub.id,
+        userId: sub.userId,
+        planName: sub.plan?.name ?? (isTrial ? "Trial" : "Unknown"),
+        isTrial,
+        endsAt: sub.endsAt,
+        daysRemaining,
+        riskLevel: level,
+        activity: {
+          lastActiveAt: activity.lastActiveAt,
+          daysSinceActive: activity.daysSinceActive,
+          recentWatchSeconds: activity.recentWatchSeconds,
+          previousWatchSeconds: activity.previousWatchSeconds,
+          watchTimeDeclinePct: activity.watchTimeDeclinePct,
+        },
+        notifications: {
+          lastSentAt: notif.lastSentAt,
+          totalSent: notif.count,
+        },
+      };
+    });
+
+    // 5. Filter by riskLevel if requested
+    const filtered = riskLevel === "all" ? enriched : enriched.filter(e => e.riskLevel === riskLevel);
+    const total = filtered.length;
+    const skip = (page - 1) * limit;
+    const pageData = filtered.slice(skip, skip + limit);
+
+    // 6. Enrich page with user details
+    const pageUserIds = [...new Set(pageData.map(e => e.userId))];
+    const userMap = await fetchUserDetails(pageUserIds);
+
+    const items = pageData.map(e => ({
+      ...e,
+      user: userMap.has(e.userId)
+        ? { id: e.userId, name: userMap.get(e.userId)!.name, email: userMap.get(e.userId)!.email, phone: userMap.get(e.userId)!.phoneNumber }
+        : { id: e.userId, name: "Unknown", email: "", phone: "" },
+    }));
+
+    return {
+      success: true,
+      data: {
+        items,
+        summary: {
+          total,
+          critical: enriched.filter(e => e.riskLevel === "critical").length,
+          high: enriched.filter(e => e.riskLevel === "high").length,
+          medium: enriched.filter(e => e.riskLevel === "medium").length,
+          low: enriched.filter(e => e.riskLevel === "low").length,
+        },
+        pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      },
+    };
+  });
+
+  // POST /admin/at-risk/notify — send push campaign to selected at-risk users
+  app.post(
+    "/at-risk/notify",
+    {
+      schema: {
+        body: z.object({
+          userIds: z.array(z.string().min(1)).min(1).max(200),
+          title: z.string().min(1).max(100),
+          body: z.string().min(1).max(500),
+        }),
+      },
+    },
+    async (request) => {
+      const { userIds, title, body } = request.body as { userIds: string[]; title: string; body: string };
+
+      const results = await Promise.allSettled(
+        userIds.map(uid =>
+          notificationClient.sendPushStrict(uid, title, body, { type: "AT_RISK_CAMPAIGN" })
+        )
+      );
+
+      const sent = results.filter(r => r.status === "fulfilled").length;
+      const failed = results.filter(r => r.status === "rejected").length;
+
+      return {
+        success: true,
+        data: { sent, failed, total: userIds.length },
+      };
+    }
+  );
+
+  // ── Cohort Analysis ───────────────────────────────────────────────────────
+
+  const cohortQuerySchema = z.object({
+    weeks: z.coerce.number().int().min(1).max(52).default(12),
+  });
+
+  // GET /admin/cohorts/trials — weekly trial cohort: started, converted, cancelled, conv_rate
+  app.get("/cohorts/trials", { schema: { querystring: cohortQuerySchema } }, async (request) => {
+    const { weeks } = request.query as z.infer<typeof cohortQuerySchema>;
+
+    const rows = await prisma.$queryRaw<{
+      cohort_week: Date;
+      started: bigint;
+      converted: bigint;
+      cancelled: bigint;
+      conv_rate_pct: number;
+    }[]>`
+      WITH TrialCohorts AS (
+        SELECT
+          DATE_TRUNC('week', "createdAt") AS week_start,
+          "userId"
+        FROM "UserSubscription"
+        WHERE "trialPlanId" IS NOT NULL
+          AND "createdAt" >= NOW() - ${weeks} * INTERVAL '1 week'
+      ),
+      Converted AS (
+        SELECT DISTINCT "userId"
+        FROM "Transaction"
+        WHERE "status" = 'SUCCESS'
+          AND "trialPlanId" IS NULL
+          AND "amountPaise" >= 9900
+      )
+      SELECT
+        tc.week_start                                                              AS cohort_week,
+        COUNT(*)::bigint                                                           AS started,
+        COUNT(cv."userId")::bigint                                                 AS converted,
+        (COUNT(*) - COUNT(cv."userId"))::bigint                                    AS cancelled,
+        ROUND(COUNT(cv."userId")::numeric / NULLIF(COUNT(*), 0) * 100, 1)         AS conv_rate_pct
+      FROM TrialCohorts tc
+      LEFT JOIN Converted cv ON tc."userId" = cv."userId"
+      GROUP BY tc.week_start
+      ORDER BY tc.week_start DESC
+    `;
+
+    const data = rows.map(r => ({
+      cohortWeek: r.cohort_week.toISOString().split("T")[0],
+      started: Number(r.started),
+      converted: Number(r.converted),
+      cancelled: Number(r.cancelled),
+      convRatePct: Number(r.conv_rate_pct),
+    }));
+
+    return { success: true, data };
+  });
+
+  // GET /admin/cohorts/subscriptions — weekly subscription cohort: started, renewed, churned, renewal_rate
+  app.get("/cohorts/subscriptions", { schema: { querystring: cohortQuerySchema } }, async (request) => {
+    const { weeks } = request.query as z.infer<typeof cohortQuerySchema>;
+
+    const rows = await prisma.$queryRaw<{
+      cohort_week: Date;
+      started: bigint;
+      renewed: bigint;
+      churned: bigint;
+      renewal_rate_pct: number;
+    }[]>`
+      WITH SubCohorts AS (
+        SELECT
+          DATE_TRUNC('week', "createdAt") AS week_start,
+          "userId"
+        FROM "UserSubscription"
+        WHERE "trialPlanId" IS NULL
+          AND "status" != 'PENDING'
+          AND "createdAt" >= NOW() - ${weeks} * INTERVAL '1 week'
+      ),
+      Renewed AS (
+        SELECT sc."userId", sc.week_start
+        FROM SubCohorts sc
+        JOIN "Transaction" t ON sc."userId" = t."userId"
+        WHERE t."status" = 'SUCCESS'
+          AND t."trialPlanId" IS NULL
+          AND t."amountPaise" >= 9900
+          AND t."createdAt" >= sc.week_start
+        GROUP BY sc."userId", sc.week_start
+        HAVING COUNT(t."id") >= 2
+      ),
+      Churned AS (
+        SELECT DISTINCT "userId"
+        FROM "UserSubscription"
+        WHERE "trialPlanId" IS NULL
+          AND "status" IN ('EXPIRED', 'CANCELED')
+          AND "endsAt" < NOW()
+      )
+      SELECT
+        sc.week_start                                                                           AS cohort_week,
+        COUNT(DISTINCT sc."userId")::bigint                                                     AS started,
+        COUNT(DISTINCT r."userId")::bigint                                                      AS renewed,
+        COUNT(DISTINCT ch."userId")::bigint                                                     AS churned,
+        ROUND(COUNT(DISTINCT r."userId")::numeric / NULLIF(COUNT(DISTINCT sc."userId"), 0) * 100, 1) AS renewal_rate_pct
+      FROM SubCohorts sc
+      LEFT JOIN Renewed r  ON sc."userId" = r."userId" AND r.week_start = sc.week_start
+      LEFT JOIN Churned ch ON sc."userId" = ch."userId"
+      GROUP BY sc.week_start
+      ORDER BY sc.week_start DESC
+    `;
+
+    const data = rows.map(r => ({
+      cohortWeek: r.cohort_week.toISOString().split("T")[0],
+      started: Number(r.started),
+      renewed: Number(r.renewed),
+      churned: Number(r.churned),
+      renewalRatePct: Number(r.renewal_rate_pct),
+    }));
+
+    return { success: true, data };
   });
 }

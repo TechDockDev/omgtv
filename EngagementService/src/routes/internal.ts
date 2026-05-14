@@ -58,6 +58,7 @@ import {
   syncVisibility,
 } from "../services/collection-engagement";
 import { loadConfig } from "../config";
+import { Prisma } from "@prisma/client";
 
 function requireUserId(headers: Record<string, unknown>) {
   const value = headers["x-user-id"];
@@ -1254,6 +1255,81 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       }
 
       return { stats };
+    },
+  });
+
+  // POST /internal/users/at-risk-activity
+  // Returns lastActive, recent vs previous watch time, decline% per user — used by SubscriptionService at-risk feature
+  fastify.post("/users/at-risk-activity", {
+    schema: {
+      body: z.object({
+        userIds: z.array(z.string().min(1)).min(1).max(200),
+      }),
+    },
+    handler: async (request) => {
+      if (!prisma) throw fastify.httpErrors.serviceUnavailable("Database not available");
+
+      const { userIds } = request.body as { userIds: string[] };
+
+      const now = new Date();
+      const day30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const day60 = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+
+      const [lastActiveRows, recentWatch, previousWatch] = await Promise.all([
+        // Last app event per user
+        prisma.$queryRaw<{ userId: string; lastActiveAt: Date }[]>`
+          SELECT "userId", MAX("createdAt") as "lastActiveAt"
+          FROM "AppEvent"
+          WHERE "userId" IN (${Prisma.join(userIds)})
+          GROUP BY "userId"
+        `.catch(() => [] as any[]),
+
+        // Watch time last 30 days
+        prisma.viewProgress.groupBy({
+          by: ["userId"],
+          where: { userId: { in: userIds }, updatedAt: { gte: day30 } },
+          _sum: { progressSeconds: true },
+        }),
+
+        // Watch time 30-60 days ago
+        prisma.viewProgress.groupBy({
+          by: ["userId"],
+          where: { userId: { in: userIds }, updatedAt: { gte: day60, lt: day30 } },
+          _sum: { progressSeconds: true },
+        }),
+      ]);
+
+      const lastActiveMap = new Map(lastActiveRows.map((r: any) => [r.userId, r.lastActiveAt]));
+      const recentMap = new Map(recentWatch.map(r => [r.userId, r._sum.progressSeconds || 0]));
+      const previousMap = new Map(previousWatch.map(r => [r.userId, r._sum.progressSeconds || 0]));
+
+      const activity: Record<string, {
+        lastActiveAt: string | null;
+        daysSinceActive: number | null;
+        recentWatchSeconds: number;
+        previousWatchSeconds: number;
+        watchTimeDeclinePct: number;
+      }> = {};
+
+      for (const uid of userIds) {
+        const lastActive = lastActiveMap.get(uid) ?? null;
+        const daysSinceActive = lastActive
+          ? Math.floor((now.getTime() - new Date(lastActive).getTime()) / (1000 * 60 * 60 * 24))
+          : null;
+        const recent = recentMap.get(uid) ?? 0;
+        const previous = previousMap.get(uid) ?? 0;
+        const declinePct = previous > 0 ? Math.round(((previous - recent) / previous) * 100) : 0;
+
+        activity[uid] = {
+          lastActiveAt: lastActive ? new Date(lastActive).toISOString() : null,
+          daysSinceActive,
+          recentWatchSeconds: recent,
+          previousWatchSeconds: previous,
+          watchTimeDeclinePct: Math.max(0, declinePct),
+        };
+      }
+
+      return { activity };
     },
   });
 }

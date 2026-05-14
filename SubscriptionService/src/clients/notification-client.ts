@@ -34,4 +34,31 @@ export class NotificationClient {
             console.warn("[NotificationClient] Push failed (non-fatal):", err);
         }
     }
+
+    async sendPushStrict(userId: string, title: string, body: string, data?: Record<string, string>): Promise<void> {
+        const res = await fetch(`${this.baseUrl}/internal/push/send`, {
+            method: "POST",
+            headers: this.headers,
+            body: JSON.stringify({ userId, title, body, ...(data && { data }) }),
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(`NotificationService returned ${res.status}: ${text}`);
+        }
+    }
+
+    async getBulkHistory(userIds: string[], type?: string): Promise<Record<string, { lastSentAt: string | null; count: number }>> {
+        try {
+            const res = await fetch(`${this.baseUrl}/internal/notifications/bulk-history`, {
+                method: "POST",
+                headers: this.headers,
+                body: JSON.stringify({ userIds, ...(type && { type }) }),
+            });
+            if (!res.ok) return {};
+            const json = await res.json() as { history: Record<string, { lastSentAt: string | null; count: number }> };
+            return json.history ?? {};
+        } catch {
+            return {};
+        }
+    }
 }

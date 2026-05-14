@@ -23,6 +23,7 @@ const envSchema = z.object({
   USER_SERVICE_URL: z.string().url().default("http://localhost:4500"),
   CONTENT_SERVICE_URL: z.string().url().default("http://localhost:4200"),
   NOTIFICATION_SERVICE_URL: z.string().url().default("http://localhost:5200"),
+  ENGAGEMENT_SERVICE_URL: z.string().url().default("http://localhost:4700"),
   RAZORPAY_KEY_ID: z.string().min(1, "RAZORPAY_KEY_ID is required"),
   RAZORPAY_KEY_SECRET: z.string().min(1, "RAZORPAY_KEY_SECRET is required"),
   RAZORPAY_WEBHOOK_SECRET: z.string().min(1, "RAZORPAY_WEBHOOK_SECRET is required"),
