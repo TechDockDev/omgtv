@@ -876,6 +876,8 @@ data:
   RAZORPAY_KEY_SECRET: ""
   RAZORPAY_WEBHOOK_SECRET: ""
   USER_SERVICE_URL: http://user-service:4500
+  NOTIFICATION_SERVICE_URL: http://notification-service:5200
+  ENGAGEMENT_SERVICE_URL: http://engagement-service:4700
 ---
 
 ---

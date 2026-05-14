@@ -1889,7 +1889,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   const atRiskQuerySchema = z.object({
     page: z.coerce.number().min(1).default(1),
     limit: z.coerce.number().min(1).max(100).default(20),
-    riskLevel: z.enum(["all", "critical", "high", "medium"]).default("all"),
+    riskLevel: z.enum(["all", "critical", "high", "medium", "low"]).default("all"),
   });
 
   // GET /admin/at-risk — paginated list of CANCELED subscribers with future endsAt, enriched with activity + notification history
