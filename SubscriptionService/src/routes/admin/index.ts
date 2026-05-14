@@ -1932,14 +1932,23 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     // 3. Calculate risk level per user
     function getRiskLevel(daysSince: number | null, declinePct: number): "critical" | "high" | "medium" | "low" {
-      if ((daysSince !== null && daysSince > 14) || declinePct > 75) return "critical";
-      if ((daysSince !== null && daysSince >= 8) || declinePct >= 60) return "high";
-      if ((daysSince !== null && daysSince >= 1) || declinePct >= 50) return "medium";
+      if (daysSince === null) return "critical"; // never watched — highest risk
+      if (daysSince > 14 || declinePct > 75) return "critical";
+      if (daysSince >= 8 || declinePct >= 60) return "high";
+      if (daysSince >= 3 || declinePct >= 50) return "medium";
       return "low";
     }
 
-    // 4. Enrich each subscription entry
-    const enriched = allAtRisk.map(sub => {
+    // 4. Deduplicate by userId — keep the subscription expiring soonest
+    const seenUsers = new Set<string>();
+    const uniqueAtRisk = allAtRisk.filter(sub => {
+      if (seenUsers.has(sub.userId)) return false;
+      seenUsers.add(sub.userId);
+      return true;
+    });
+
+    // 5. Enrich each subscription entry
+    const enriched = uniqueAtRisk.map(sub => {
       const activity = activityMap[sub.userId] ?? { lastActiveAt: null, daysSinceActive: null, recentWatchSeconds: 0, previousWatchSeconds: 0, watchTimeDeclinePct: 0 };
       const notif = notifHistory[sub.userId] ?? { lastSentAt: null, count: 0 };
       const daysRemaining = Math.max(0, Math.ceil((sub.endsAt!.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
@@ -1968,13 +1977,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       };
     });
 
-    // 5. Filter by riskLevel if requested
+    // 6. Filter by riskLevel if requested
     const filtered = riskLevel === "all" ? enriched : enriched.filter(e => e.riskLevel === riskLevel);
     const total = filtered.length;
     const skip = (page - 1) * limit;
     const pageData = filtered.slice(skip, skip + limit);
 
-    // 6. Enrich page with user details
+    // 7. Enrich page with user details
     const pageUserIds = [...new Set(pageData.map(e => e.userId))];
     const userMap = await fetchUserDetails(pageUserIds);
 
@@ -1990,7 +1999,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       data: {
         items,
         summary: {
-          total,
+          total: enriched.length,
           critical: enriched.filter(e => e.riskLevel === "critical").length,
           high: enriched.filter(e => e.riskLevel === "high").length,
           medium: enriched.filter(e => e.riskLevel === "medium").length,
@@ -2051,11 +2060,12 @@ export default async function adminRoutes(app: FastifyInstance) {
     }[]>`
       WITH TrialCohorts AS (
         SELECT
-          DATE_TRUNC('week', "createdAt") AS week_start,
+          DATE_TRUNC('week', MIN("createdAt")) AS week_start,
           "userId"
         FROM "UserSubscription"
         WHERE "trialPlanId" IS NOT NULL
-          AND "createdAt" >= NOW() - ${weeks} * INTERVAL '1 week'
+        GROUP BY "userId"
+        HAVING DATE_TRUNC('week', MIN("createdAt")) >= NOW() - ${weeks} * INTERVAL '1 week'
       ),
       Converted AS (
         SELECT DISTINCT "userId"
@@ -2063,15 +2073,23 @@ export default async function adminRoutes(app: FastifyInstance) {
         WHERE "status" = 'SUCCESS'
           AND "trialPlanId" IS NULL
           AND "amountPaise" >= 9900
+      ),
+      StillActive AS (
+        SELECT DISTINCT "userId"
+        FROM "UserSubscription"
+        WHERE "trialPlanId" IS NOT NULL
+          AND "status" IN ('ACTIVE', 'TRIAL')
+          AND "endsAt" >= NOW()
       )
       SELECT
-        tc.week_start                                                              AS cohort_week,
-        COUNT(*)::bigint                                                           AS started,
-        COUNT(cv."userId")::bigint                                                 AS converted,
-        (COUNT(*) - COUNT(cv."userId"))::bigint                                    AS cancelled,
-        ROUND(COUNT(cv."userId")::numeric / NULLIF(COUNT(*), 0) * 100, 1)         AS conv_rate_pct
+        tc.week_start                                                                             AS cohort_week,
+        COUNT(*)::bigint                                                                          AS started,
+        COUNT(cv."userId")::bigint                                                                AS converted,
+        COUNT(CASE WHEN cv."userId" IS NULL AND sa."userId" IS NULL THEN 1 END)::bigint          AS cancelled,
+        ROUND(COUNT(cv."userId")::numeric / NULLIF(COUNT(*), 0) * 100, 1)                       AS conv_rate_pct
       FROM TrialCohorts tc
       LEFT JOIN Converted cv ON tc."userId" = cv."userId"
+      LEFT JOIN StillActive sa ON tc."userId" = sa."userId"
       GROUP BY tc.week_start
       ORDER BY tc.week_start DESC
     `;
@@ -2100,12 +2118,14 @@ export default async function adminRoutes(app: FastifyInstance) {
     }[]>`
       WITH SubCohorts AS (
         SELECT
-          DATE_TRUNC('week', "createdAt") AS week_start,
-          "userId"
-        FROM "UserSubscription"
-        WHERE "trialPlanId" IS NULL
-          AND "status" != 'PENDING'
-          AND "createdAt" >= NOW() - ${weeks} * INTERVAL '1 week'
+          DATE_TRUNC('week', MIN(t."createdAt")) AS week_start,
+          t."userId"
+        FROM "Transaction" t
+        WHERE t."status" = 'SUCCESS'
+          AND t."trialPlanId" IS NULL
+          AND t."amountPaise" >= 9900
+        GROUP BY t."userId"
+        HAVING DATE_TRUNC('week', MIN(t."createdAt")) >= NOW() - ${weeks} * INTERVAL '1 week'
       ),
       Renewed AS (
         SELECT sc."userId", sc.week_start
@@ -2119,11 +2139,11 @@ export default async function adminRoutes(app: FastifyInstance) {
         HAVING COUNT(t."id") >= 2
       ),
       Churned AS (
-        SELECT DISTINCT "userId"
-        FROM "UserSubscription"
-        WHERE "trialPlanId" IS NULL
-          AND "status" IN ('EXPIRED', 'CANCELED')
-          AND "endsAt" < NOW()
+        SELECT DISTINCT us."userId"
+        FROM "UserSubscription" us
+        WHERE us."trialPlanId" IS NULL
+          AND us."status" IN ('EXPIRED', 'CANCELED')
+          AND us."endsAt" < NOW()
       )
       SELECT
         sc.week_start                                                                           AS cohort_week,
