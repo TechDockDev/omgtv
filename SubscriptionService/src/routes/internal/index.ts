@@ -123,6 +123,12 @@ export default async function internalRoutes(app: FastifyInstance) {
           WHERE "status" = 'SUCCESS'
           GROUP BY "userId"
       ),
+      -- All users who ever had a subscription (includes free trial users with no transactions)
+      AllSubscribedUsers AS (
+          SELECT DISTINCT us."userId", COALESCE(t.total_paid, 0) AS total_paid
+          FROM "UserSubscription" us
+          LEFT JOIN UserTotals t ON us."userId" = t."userId"
+      ),
       TrialThresholds AS (
           SELECT DISTINCT "userId" FROM "UserSubscription" WHERE "trialPlanId" IS NOT NULL
           UNION
@@ -135,16 +141,16 @@ export default async function internalRoutes(app: FastifyInstance) {
             AND "userId" IN (SELECT "userId" FROM TrialThresholds)
       ),
       UserStatus AS (
-          SELECT DISTINCT ON ("userId") 
+          SELECT DISTINCT ON ("userId")
               "userId", "status", "endsAt"
-          FROM "UserSubscription" 
+          FROM "UserSubscription"
           ORDER BY "userId", "createdAt" DESC
       ),
       DetailedData AS (
-          SELECT 
-              t."userId",
-              CASE WHEN t.total_paid >= 9900 THEN 'SUBSCRIBER' ELSE 'TRIAL' END as category,
-              CASE 
+          SELECT
+              u."userId",
+              CASE WHEN u.total_paid >= 9900 THEN 'SUBSCRIBER' ELSE 'TRIAL' END as category,
+              CASE
                   WHEN s."status" = 'ACTIVE' AND s."endsAt" >= NOW() THEN 'ACTIVE_WATCHING'
                   WHEN s."status" = 'TRIAL' AND s."endsAt" >= NOW() THEN 'ACTIVE_WATCHING'
                   WHEN s."status" = 'CANCELED' AND s."endsAt" >= NOW() THEN 'AUTOPAY_OFF_ACCESS'
@@ -153,9 +159,9 @@ export default async function internalRoutes(app: FastifyInstance) {
                   ELSE 'EXPIRED_LEGACY'
               END as detailed_status,
               CASE WHEN c."userId" IS NOT NULL THEN 1 ELSE 0 END as is_conversion
-          FROM UserTotals t
-          LEFT JOIN UserStatus s ON t."userId" = s."userId"
-          LEFT JOIN ConversionCheck c ON t."userId" = c."userId"
+          FROM AllSubscribedUsers u
+          LEFT JOIN UserStatus s ON u."userId" = s."userId"
+          LEFT JOIN ConversionCheck c ON u."userId" = c."userId"
       )
       SELECT 
           category,
@@ -168,7 +174,7 @@ export default async function internalRoutes(app: FastifyInstance) {
 
     const result = {
       subscribers: { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 },
-      trials: { total: 0, active_watching: 0, expired_blocked: 0, expired_canceled: 0 },
+      trials: { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 },
       conversions: { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 }
     };
 
@@ -185,6 +191,7 @@ export default async function internalRoutes(app: FastifyInstance) {
       } else {
         result.trials.total += count;
         if (row.detailed_status === 'ACTIVE_WATCHING') result.trials.active_watching += count;
+        else if (row.detailed_status === 'AUTOPAY_OFF_ACCESS') result.trials.autopay_off_access += count;
         else if (row.detailed_status === 'EXPIRED_BLOCKED') result.trials.expired_blocked += count;
         else if (row.detailed_status === 'EXPIRED_CANCELED') result.trials.expired_canceled += count;
       }
@@ -200,6 +207,148 @@ export default async function internalRoutes(app: FastifyInstance) {
     });
 
     return result;
+  });
+
+  // GET /internal/stats/cancellations
+  // Per-subscription logic — matches /admin/canceled-users categorization exactly
+  app.get("/stats/cancellations", async () => {
+    const now = new Date();
+
+    const rows = await prisma.$queryRaw<any[]>`
+      WITH CanceledSubs AS (
+        SELECT DISTINCT ON (us."userId")
+          us."userId",
+          us."endsAt",
+          us."trialPlanId",
+          us."transactionId",
+          t."amountPaise"
+        FROM "UserSubscription" us
+        LEFT JOIN "Transaction" t ON us."transactionId" = t."id"
+        WHERE us."status" = 'CANCELED'
+        ORDER BY us."userId", us."updatedAt" DESC
+      ),
+      UserCumulative AS (
+        SELECT "userId", SUM("amountPaise") AS total_paid
+        FROM "Transaction"
+        WHERE "status" = 'SUCCESS'
+        GROUP BY "userId"
+      ),
+      HadTrial AS (
+        SELECT DISTINCT "userId" FROM "UserSubscription" WHERE "trialPlanId" IS NOT NULL
+      )
+      SELECT
+        cs."userId",
+        cs."endsAt",
+        CASE
+          WHEN cs."trialPlanId" IS NOT NULL OR COALESCE(cs."amountPaise", 0) < 9900 THEN 'TRIAL'
+          ELSE 'SUBSCRIBER'
+        END AS category,
+        CASE
+          WHEN ht."userId" IS NOT NULL AND COALESCE(uc.total_paid, 0) >= 9900 THEN true
+          ELSE false
+        END AS is_converted,
+        CASE WHEN cs."endsAt" < ${now} THEN true ELSE false END AS is_expired
+      FROM CanceledSubs cs
+      LEFT JOIN UserCumulative uc ON cs."userId" = uc."userId"
+      LEFT JOIN HadTrial ht ON cs."userId" = ht."userId"
+    `;
+
+    const result = {
+      total: rows.length,
+      trial: 0, trialExpired: 0,
+      subscription: 0, subscriptionExpired: 0,
+      converted: 0, convertedExpired: 0,
+    };
+
+    for (const row of rows) {
+      const expired = row.is_expired === true || row.is_expired === 't';
+      const converted = row.is_converted === true || row.is_converted === 't';
+
+      if (converted) {
+        result.converted++;
+        if (expired) result.convertedExpired++;
+      } else if (row.category === 'TRIAL') {
+        result.trial++;
+        if (expired) result.trialExpired++;
+      } else {
+        result.subscription++;
+        if (expired) result.subscriptionExpired++;
+      }
+    }
+
+    return result;
+  });
+
+  // GET /internal/stats/churn?startDate=...&endDate=...
+  app.get("/stats/churn", {
+    schema: {
+      querystring: z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }),
+    },
+  }, async (request) => {
+    const { startDate, endDate } = request.query as { startDate?: string; endDate?: string };
+    const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const end = endDate ? new Date(endDate) : new Date();
+
+    const rows = await prisma.$queryRaw<{ customer_type: string; total_at_start: bigint; lost: bigint }[]>`
+      WITH at_start AS (
+        SELECT
+          us."userId",
+          CASE
+            WHEN COALESCE(SUM(t."amountPaise") FILTER (WHERE t."status" = 'SUCCESS'), 0) >= 9900 THEN 'PAID'
+            ELSE 'TRIAL'
+          END AS customer_type
+        FROM "UserSubscription" us
+        LEFT JOIN "Transaction" t ON t."userId" = us."userId"
+        WHERE us."status" != 'PENDING'
+          AND us."startsAt" <= ${start}
+          AND us."endsAt"   >= ${start}
+        GROUP BY us."userId"
+      ),
+      still_active AS (
+        SELECT DISTINCT "userId"
+        FROM "UserSubscription"
+        WHERE "status" != 'PENDING'
+          AND "endsAt" >= ${end}
+          AND "userId" IN (SELECT "userId" FROM at_start)
+      ),
+      lost AS (
+        SELECT "userId", customer_type FROM at_start
+        WHERE "userId" NOT IN (SELECT "userId" FROM still_active)
+      )
+      SELECT
+        a.customer_type,
+        COUNT(DISTINCT a."userId") AS total_at_start,
+        COUNT(DISTINCT l."userId") AS lost
+      FROM at_start a
+      LEFT JOIN lost l ON a."userId" = l."userId"
+      GROUP BY a.customer_type
+    `;
+
+    let paidAtStart = 0, paidLost = 0, trialAtStart = 0, trialLost = 0;
+    for (const row of rows) {
+      if (row.customer_type === 'PAID') {
+        paidAtStart = Number(row.total_at_start);
+        paidLost = Number(row.lost);
+      } else {
+        trialAtStart = Number(row.total_at_start);
+        trialLost = Number(row.lost);
+      }
+    }
+
+    const totalAtStart = paidAtStart + trialAtStart;
+    const totalLost = paidLost + trialLost;
+
+    const calc = (lost: number, total: number) =>
+      total > 0 ? Number(((lost / total) * 100).toFixed(2)) : 0;
+
+    return {
+      overall:  { customersAtStart: totalAtStart,  customersLost: totalLost,  churnRate: calc(totalLost,  totalAtStart)  },
+      paid:     { customersAtStart: paidAtStart,    customersLost: paidLost,   churnRate: calc(paidLost,   paidAtStart)   },
+      trial:    { customersAtStart: trialAtStart,   customersLost: trialLost,  churnRate: calc(trialLost,  trialAtStart)  },
+    };
   });
 
   app.get("/subscriptions/by-plan", {

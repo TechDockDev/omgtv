@@ -250,14 +250,19 @@ export interface GeneralDashboardStats {
         activeSubscribers: number;
         autopayOffSubscribers: number;
         expiredSubscribers: number;
-        canceledSubscribers: number;
-        
-        totalCanceled: number; // Sum of all canceled (Trial + Sub)
 
         // Detailed Trial Metrics
         activeTrials: number;
         expiredTrials: number;
-        canceledTrials: number;
+
+        // Cancellation Stats — per-subscription logic, matches /admin/canceled-users
+        canceledTotal: number;
+        canceledTrial: number;
+        canceledTrialExpired: number;
+        canceledSubscription: number;
+        canceledSubscriptionExpired: number;
+        canceledConverted: number;
+        canceledConvertedExpired: number;
 
         // Conversion Metrics
         totalConversions: number;
@@ -266,6 +271,13 @@ export interface GeneralDashboardStats {
         expiredConversions: number;
         canceledConversions: number;
 
+        activeViewers: MetricWithTrend;
+        totalWatchTime: MetricWithTrend;
+        churnRate: {
+            overall: MetricWithTrend;
+            paid: MetricWithTrend;
+            trial: MetricWithTrend;
+        };
         totalLogin: MetricWithTrend;
         totalLogout: MetricWithTrend;
         totalUninstall: MetricWithTrend;
@@ -292,6 +304,8 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
     const revUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/revenue/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
     const userUrl = `${config.USER_SERVICE_URL}/internal/stats?startDate=${start.toISOString()}&endDate=${end.toISOString()}&granularity=${granularity}`;
     const subStatsUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/stats/users`;
+    const cancelStatsUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/stats/cancellations`;
+    const churnUrl = `${config.SUBSCRIPTION_SERVICE_URL}/internal/stats/churn?startDate=${start.toISOString()}&endDate=${end.toISOString()}`;
 
     const uninstallUrl = `${config.NOTIFICATION_SERVICE_URL}/internal/analytics/uninstalls?startDate=${start.toISOString()}&endDate=${end.toISOString()}`;
     const appEventModel = (prisma as any).appEvent;
@@ -310,18 +324,31 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
             });
     };
 
-    const [revRes, userRes, subStatsRes, dauData, loginCount, logoutCount, uninstallRes] = await Promise.all([
+    const [revRes, userRes, subStatsRes, cancelStatsRes, churnRes, dauData, loginCount, logoutCount, uninstallRes, activeViewersData, allTimeWatchData] = await Promise.all([
         fetchWithTimeout(revUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { totalRevenuePaise: 0, trend: [] }),
         fetchWithTimeout(userUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { newCustomers: 0, totalCustomers: 0, trend: [] }),
         fetchWithTimeout(subStatsUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { subscribers: {}, trials: {}, conversions: {} }),
+        fetchWithTimeout(cancelStatsUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { total: 0, trial: 0, trialExpired: 0, subscription: 0, subscriptionExpired: 0, converted: 0, convertedExpired: 0 }),
+        fetchWithTimeout(churnUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { customersLost: 0, customersAtStart: 0, churnRate: 0 }),
         prisma.$queryRaw<{ count: bigint }[]>`
-            SELECT COUNT(DISTINCT COALESCE("userId", "guestId", "deviceId")) as count 
-            FROM "AppEvent" 
+            SELECT COUNT(DISTINCT COALESCE("userId", "guestId", "deviceId")) as count
+            FROM "AppEvent"
             WHERE "createdAt" >= ${start} AND "createdAt" <= ${end}
         `.catch(() => [{ count: BigInt(0) }]),
         appEventModel ? appEventModel.count({ where: { eventType: "login", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
         appEventModel ? appEventModel.count({ where: { eventType: "logout", createdAt: { gte: start, lte: end } } }).catch(() => 0) : 0,
         fetchWithTimeout(uninstallUrl, { headers: { "x-service-token": config.SERVICE_AUTH_TOKEN || "" } }).then(res => res || { uninstallCount: 0 }),
+        // Active viewers in period — unique users who watched anything (date-filterable, accurate)
+        prisma.$queryRaw<{ count: bigint }[]>`
+            SELECT COUNT(DISTINCT "userId") as count
+            FROM "ViewProgress"
+            WHERE "updatedAt" >= ${start} AND "updatedAt" <= ${end}
+        `.catch(() => [{ count: BigInt(0) }]),
+        // All-time total watch seconds — matches individual user API (no date filter, cumulative)
+        prisma.$queryRaw<{ total_seconds: bigint }[]>`
+            SELECT COALESCE(SUM("progressSeconds"), 0) as total_seconds
+            FROM "ViewProgress"
+        `.catch(() => [{ total_seconds: BigInt(0) }]),
     ]);
 
     const dau = Number(dauData[0]?.count || 0);
@@ -365,7 +392,15 @@ async function getPeriodStats(prisma: PrismaClient, start: Date, end: Date, gran
         userGrowthTrend: (userRes as any).trend || [],
         // Raw sub stats for granular mapping
         subStats: { subs, trials, conversions },
-        storeStats: storeSummary
+        cancelStats: cancelStatsRes as any,
+        storeStats: storeSummary,
+        activeViewers: Number(activeViewersData[0]?.count || 0),
+        totalWatchSeconds: Number((allTimeWatchData as any)[0]?.total_seconds || 0),
+        churnRate: {
+            overall: Number((churnRes as any)?.overall?.churnRate || 0),
+            paid:    Number((churnRes as any)?.paid?.churnRate    || 0),
+            trial:   Number((churnRes as any)?.trial?.churnRate   || 0),
+        },
     };
 }
 
@@ -531,15 +566,19 @@ export async function getGeneralDashboardStats(params: {
             activeSubscribers: currentStats.subStats.subs.active_watching,
             autopayOffSubscribers: currentStats.subStats.subs.autopay_off_access,
             expiredSubscribers: currentStats.subStats.subs.expired_blocked,
-            canceledSubscribers: currentStats.subStats.subs.expired_canceled,
-            
-            // Total Canceled matches your manual report: Auto-pay Off + Expired (Canceled)
-            totalCanceled: currentStats.subStats.subs.autopay_off_access + currentStats.subStats.subs.expired_canceled + currentStats.subStats.trials.expired_canceled,
 
             // Trial Breakdown
             activeTrials: currentStats.subStats.trials.active_watching,
             expiredTrials: currentStats.subStats.trials.expired_blocked,
-            canceledTrials: currentStats.subStats.trials.expired_canceled,
+
+            // Cancellation Stats — per-subscription logic, matches /admin/canceled-users
+            canceledTotal: currentStats.cancelStats.total,
+            canceledTrial: currentStats.cancelStats.trial,
+            canceledTrialExpired: currentStats.cancelStats.trialExpired,
+            canceledSubscription: currentStats.cancelStats.subscription,
+            canceledSubscriptionExpired: currentStats.cancelStats.subscriptionExpired,
+            canceledConverted: currentStats.cancelStats.converted,
+            canceledConvertedExpired: currentStats.cancelStats.convertedExpired,
 
             // Conversion Breakdown
             totalConversions: currentStats.subStats.conversions.total,
@@ -548,6 +587,13 @@ export async function getGeneralDashboardStats(params: {
             expiredConversions: currentStats.subStats.conversions.expired_blocked,
             canceledConversions: currentStats.subStats.conversions.expired_canceled,
 
+            activeViewers: { value: currentStats.activeViewers, percentageChange: calculateChange(currentStats.activeViewers, prevStats.activeViewers) },
+            totalWatchTime: { value: currentStats.totalWatchSeconds, percentageChange: 0 },
+            churnRate: {
+                overall: { value: currentStats.churnRate.overall, percentageChange: calculateChange(currentStats.churnRate.overall, prevStats.churnRate.overall) },
+                paid:    { value: currentStats.churnRate.paid,    percentageChange: calculateChange(currentStats.churnRate.paid,    prevStats.churnRate.paid)    },
+                trial:   { value: currentStats.churnRate.trial,   percentageChange: calculateChange(currentStats.churnRate.trial,   prevStats.churnRate.trial)   },
+            },
             totalLogin: { value: currentStats.login, percentageChange: calculateChange(currentStats.login, prevStats.login) },
             totalLogout: { value: currentStats.logout, percentageChange: calculateChange(currentStats.logout, prevStats.logout) },
             totalUninstall: { value: currentStats.uninstall, percentageChange: calculateChange(currentStats.uninstall, prevStats.uninstall) },

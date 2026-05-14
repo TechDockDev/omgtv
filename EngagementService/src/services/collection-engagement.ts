@@ -1156,9 +1156,12 @@ export async function upsertViewProgress(params: {
   }
 
   const isCompleted = progressSeconds >= durationSeconds * 0.95; // 95% threshold for completion
-  const completedAt = isCompleted ? new Date() : null;
   const timestamp = Date.now();
   const updatedAt = new Date().toISOString();
+
+  // Preserve existing completedAt if the user is rewatching a previously completed episode
+  const existingCompletedAt = await redis.hget(redisProgressKey(userId, episodeId), "completedAt");
+  const completedAt = isCompleted ? new Date() : (existingCompletedAt ? new Date(existingCompletedAt) : null);
 
   // Atomic Pipeline
   const pipeline = redis.pipeline();

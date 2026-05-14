@@ -66,7 +66,7 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       }
 
       const subs = subscriptionStats?.subscribers || { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 };
-      const trials = subscriptionStats?.trials || { total: 0, active_watching: 0, expired_blocked: 0, expired_canceled: 0 };
+      const trials = subscriptionStats?.trials || { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 };
       const conversions = subscriptionStats?.conversions || { total: 0, active_watching: 0, autopay_off_access: 0, expired_blocked: 0, expired_canceled: 0 };
 
       // Manual Global Response Wrapper

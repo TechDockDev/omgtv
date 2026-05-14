@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { StoreAnalyticsService } from "../services/store-analytics";
 import {
     getUserContentStats,
     getGeneralDashboardStats,
@@ -39,13 +40,19 @@ const dashboardResponseSchema = z.object({
         activeSubscribers: z.number(),
         autopayOffSubscribers: z.number(),
         expiredSubscribers: z.number(),
-        canceledSubscribers: z.number(),
-        totalCanceled: z.number(),
 
         // Detailed Trial Metrics
         activeTrials: z.number(),
         expiredTrials: z.number(),
-        canceledTrials: z.number(),
+
+        // Cancellation Stats — per-subscription logic, matches /admin/canceled-users
+        canceledTotal: z.number(),
+        canceledTrial: z.number(),
+        canceledTrialExpired: z.number(),
+        canceledSubscription: z.number(),
+        canceledSubscriptionExpired: z.number(),
+        canceledConverted: z.number(),
+        canceledConvertedExpired: z.number(),
 
         // Conversion Metrics
         totalConversions: z.number(),
@@ -54,6 +61,13 @@ const dashboardResponseSchema = z.object({
         expiredConversions: z.number(),
         canceledConversions: z.number(),
 
+        activeViewers: metricWithTrendSchema,
+        totalWatchTime: metricWithTrendSchema,
+        churnRate: z.object({
+            overall: metricWithTrendSchema,
+            paid:    metricWithTrendSchema,
+            trial:   metricWithTrendSchema,
+        }),
         totalLogin: metricWithTrendSchema,
         totalLogout: metricWithTrendSchema,
         totalUninstall: metricWithTrendSchema,
@@ -179,12 +193,16 @@ export default async function adminRoutes(fastify: FastifyInstance) {
 
     // Manual Store Sync Trigger
     fastify.post("/analytics/store/sync", {
-        handler: async (request) => {
+        handler: async (request, reply) => {
             if (!prisma) throw fastify.httpErrors.serviceUnavailable("Database not available");
-            const { StoreAnalyticsService } = await import("../services/store-analytics");
-            const service = new StoreAnalyticsService(prisma);
-            await service.syncAll();
-            return { success: true, message: "Sync triggered and completed" };
+            try {
+                const service = new StoreAnalyticsService(prisma);
+                await service.syncAll();
+                return { success: true, message: "Sync triggered and completed" };
+            } catch (err: any) {
+                fastify.log.error({ err }, "Store sync failed");
+                return reply.code(500).send({ success: false, message: err?.message || "Sync failed" });
+            }
         }
     });
 
