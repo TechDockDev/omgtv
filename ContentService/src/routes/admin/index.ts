@@ -12,6 +12,7 @@ import adminImageRoutes from "./images";
 import adminTopTenRoutes from "./top-ten";
 import adminAdRoutes from "./ads";
 import adminTrailerRoutes from "./trailers";
+import adminAppConfigRoutes from "./app-config";
 
 export default async function adminRoutes(fastify: FastifyInstance) {
   fastify.addHook("preHandler", async (request, reply) => {
@@ -84,4 +85,5 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   await fastify.register(adminTopTenRoutes, { prefix: "/catalog/top-10" });
   await fastify.register(adminAdRoutes, { prefix: "/catalog/ads" });
   await fastify.register(adminTrailerRoutes, { prefix: "/catalog/series" });
+  await fastify.register(adminAppConfigRoutes, { prefix: "/app-config" });
 }

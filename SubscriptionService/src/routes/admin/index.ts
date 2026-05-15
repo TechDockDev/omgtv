@@ -1892,69 +1892,70 @@ export default async function adminRoutes(app: FastifyInstance) {
     riskLevel: z.enum(["all", "critical", "high", "medium", "low"]).default("all"),
   });
 
-  // GET /admin/at-risk — paginated list of CANCELED subscribers with future endsAt, enriched with activity + notification history
+  // GET /admin/at-risk — two lists: expiring (CANCELED, risk by daysRemaining) + inactive (ACTIVE, risk by daysSinceActive)
   app.get("/at-risk", { schema: { querystring: atRiskQuerySchema } }, async (request) => {
     const { page, limit, riskLevel } = request.query as z.infer<typeof atRiskQuerySchema>;
     const config = loadConfig();
     const now = new Date();
 
-    // 1. Fetch all CANCELED subscriptions with future endsAt (auto-pay off, will churn)
-    const allAtRisk = await prisma.userSubscription.findMany({
-      where: { status: "CANCELED", endsAt: { gt: now } },
-      include: { plan: true, trialPlan: true },
-      orderBy: { endsAt: "asc" },
-    });
+    // 1. Fetch CANCELED (expiring) and ACTIVE subscriptions in parallel
+    const [allExpiring, allActive] = await Promise.all([
+      prisma.userSubscription.findMany({
+        where: { status: "CANCELED", endsAt: { gt: now } },
+        include: { plan: true, trialPlan: true },
+        orderBy: { endsAt: "asc" },
+      }),
+      prisma.userSubscription.findMany({
+        where: { status: "ACTIVE", endsAt: { gt: now } },
+        include: { plan: true, trialPlan: true },
+        orderBy: { endsAt: "asc" },
+      }),
+    ]);
 
-    if (allAtRisk.length === 0) {
-      return {
-        success: true,
-        data: {
-          items: [],
-          summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0 },
-          pagination: { total: 0, page, limit, totalPages: 0 },
-        },
-      };
-    }
+    // 2. Deduplicate by userId — keep earliest endsAt per user
+    const dedup = <T extends { userId: string }>(items: T[]): T[] => {
+      const seen = new Set<string>();
+      return items.filter(i => { if (seen.has(i.userId)) return false; seen.add(i.userId); return true; });
+    };
+    const uniqueExpiring = dedup(allExpiring);
+    const uniqueActive = dedup(allActive);
 
-    const userIds = [...new Set(allAtRisk.map(s => s.userId))];
+    // 3. Fetch activity + notif history for all user IDs combined
+    const allUserIds = [...new Set([...uniqueExpiring.map(s => s.userId), ...uniqueActive.map(s => s.userId)])];
 
-    // 2. Fetch activity from EngagementService + notification history in parallel
     const [activityRes, notifHistory] = await Promise.all([
-      fetch(`${config.ENGAGEMENT_SERVICE_URL}/internal/users/at-risk-activity`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(config.SERVICE_AUTH_TOKEN ? { "x-service-token": config.SERVICE_AUTH_TOKEN } : {}) },
-        body: JSON.stringify({ userIds }),
-      }).then(r => r.ok ? r.json() as Promise<{ activity: Record<string, any> }> : { activity: {} }).catch(() => ({ activity: {} })),
-      notificationClient.getBulkHistory(userIds, "AT_RISK_CAMPAIGN"),
+      allUserIds.length > 0
+        ? fetch(`${config.ENGAGEMENT_SERVICE_URL}/internal/users/at-risk-activity`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...(config.SERVICE_AUTH_TOKEN ? { "x-service-token": config.SERVICE_AUTH_TOKEN } : {}) },
+            body: JSON.stringify({ userIds: allUserIds }),
+          }).then(r => r.ok ? r.json() as Promise<{ activity: Record<string, any> }> : { activity: {} }).catch(() => ({ activity: {} }))
+        : Promise.resolve({ activity: {} }),
+      allUserIds.length > 0 ? notificationClient.getBulkHistory(allUserIds, "AT_RISK_CAMPAIGN") : Promise.resolve({} as Record<string, { lastSentAt: string | null; count: number }>),
     ]);
 
     const activityMap: Record<string, any> = (activityRes as any).activity ?? {};
 
-    // 3. Calculate risk level per user
-    function getRiskLevel(daysSince: number | null, declinePct: number): "critical" | "high" | "medium" | "low" {
-      if (daysSince === null) return "critical"; // never watched — highest risk
-      if (daysSince > 14 || declinePct > 75) return "critical";
-      if (daysSince >= 8 || declinePct >= 60) return "high";
-      if (daysSince >= 3 || declinePct >= 50) return "medium";
+    // 4. Risk functions — separate logic per list
+    function getExpiryRisk(daysRemaining: number): "critical" | "high" | "medium" | "low" {
+      if (daysRemaining <= 7) return "critical";
+      if (daysRemaining <= 14) return "high";
+      if (daysRemaining <= 21) return "medium";
       return "low";
     }
 
-    // 4. Deduplicate by userId — keep the subscription expiring soonest
-    const seenUsers = new Set<string>();
-    const uniqueAtRisk = allAtRisk.filter(sub => {
-      if (seenUsers.has(sub.userId)) return false;
-      seenUsers.add(sub.userId);
-      return true;
-    });
+    function getInactivityRisk(daysSince: number | null): "critical" | "high" | "medium" | "low" {
+      if (daysSince === null || daysSince > 14) return "critical";
+      if (daysSince >= 8) return "high";
+      if (daysSince >= 3) return "medium";
+      return "low";
+    }
 
-    // 5. Enrich each subscription entry
-    const enriched = uniqueAtRisk.map(sub => {
+    const buildItem = (sub: typeof uniqueExpiring[number], riskFn: (sub: typeof uniqueExpiring[number], activity: any) => "critical" | "high" | "medium" | "low") => {
       const activity = activityMap[sub.userId] ?? { lastActiveAt: null, daysSinceActive: null, recentWatchSeconds: 0, previousWatchSeconds: 0, watchTimeDeclinePct: 0 };
       const notif = notifHistory[sub.userId] ?? { lastSentAt: null, count: 0 };
       const daysRemaining = Math.max(0, Math.ceil((sub.endsAt!.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-      const level = getRiskLevel(activity.daysSinceActive, activity.watchTimeDeclinePct);
       const isTrial = sub.trialPlanId !== null;
-
       return {
         subscriptionId: sub.id,
         userId: sub.userId,
@@ -1962,7 +1963,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         isTrial,
         endsAt: sub.endsAt,
         daysRemaining,
-        riskLevel: level,
+        riskLevel: riskFn(sub, activity),
         activity: {
           lastActiveAt: activity.lastActiveAt,
           daysSinceActive: activity.daysSinceActive,
@@ -1970,42 +1971,64 @@ export default async function adminRoutes(app: FastifyInstance) {
           previousWatchSeconds: activity.previousWatchSeconds,
           watchTimeDeclinePct: activity.watchTimeDeclinePct,
         },
-        notifications: {
-          lastSentAt: notif.lastSentAt,
-          totalSent: notif.count,
-        },
+        notifications: { lastSentAt: notif.lastSentAt, totalSent: notif.count },
       };
-    });
+    };
 
-    // 6. Filter by riskLevel if requested
-    const filtered = riskLevel === "all" ? enriched : enriched.filter(e => e.riskLevel === riskLevel);
-    const total = filtered.length;
+    // 5. Build expiring list (risk by daysRemaining)
+    const enrichedExpiring = uniqueExpiring.map(sub =>
+      buildItem(sub, (s, _a) => {
+        const dr = Math.max(0, Math.ceil((s.endsAt!.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+        return getExpiryRisk(dr);
+      })
+    );
+
+    // 6. Build inactive list (risk by daysSinceActive) — only users inactive >= 3 days
+    const enrichedInactive = uniqueActive
+      .map(sub => buildItem(sub, (_s, a) => getInactivityRisk(a.daysSinceActive)))
+      .filter(e => e.activity.daysSinceActive === null || e.activity.daysSinceActive >= 3);
+
+    // 7. Apply riskLevel filter to both
+    const filteredExpiring = riskLevel === "all" ? enrichedExpiring : enrichedExpiring.filter(e => e.riskLevel === riskLevel);
+    const filteredInactive = riskLevel === "all" ? enrichedInactive : enrichedInactive.filter(e => e.riskLevel === riskLevel);
+
+    // 8. Paginate both lists with same page/limit
     const skip = (page - 1) * limit;
-    const pageData = filtered.slice(skip, skip + limit);
+    const pageExpiring = filteredExpiring.slice(skip, skip + limit);
+    const pageInactive = filteredInactive.slice(skip, skip + limit);
 
-    // 7. Enrich page with user details
-    const pageUserIds = [...new Set(pageData.map(e => e.userId))];
+    // 9. Fetch user details for page items only
+    const pageUserIds = [...new Set([...pageExpiring.map(e => e.userId), ...pageInactive.map(e => e.userId)])];
     const userMap = await fetchUserDetails(pageUserIds);
 
-    const items = pageData.map(e => ({
+    const attachUser = (e: ReturnType<typeof buildItem>) => ({
       ...e,
       user: userMap.has(e.userId)
         ? { id: e.userId, name: userMap.get(e.userId)!.name, email: userMap.get(e.userId)!.email, phone: userMap.get(e.userId)!.phoneNumber }
         : { id: e.userId, name: "Unknown", email: "", phone: "" },
-    }));
+    });
+
+    const makeSummary = (items: ReturnType<typeof buildItem>[]) => ({
+      total: items.length,
+      critical: items.filter(e => e.riskLevel === "critical").length,
+      high: items.filter(e => e.riskLevel === "high").length,
+      medium: items.filter(e => e.riskLevel === "medium").length,
+      low: items.filter(e => e.riskLevel === "low").length,
+    });
 
     return {
       success: true,
       data: {
-        items,
-        summary: {
-          total: enriched.length,
-          critical: enriched.filter(e => e.riskLevel === "critical").length,
-          high: enriched.filter(e => e.riskLevel === "high").length,
-          medium: enriched.filter(e => e.riskLevel === "medium").length,
-          low: enriched.filter(e => e.riskLevel === "low").length,
+        expiring: {
+          summary: makeSummary(enrichedExpiring),
+          items: pageExpiring.map(attachUser),
+          pagination: { total: filteredExpiring.length, page, limit, totalPages: Math.ceil(filteredExpiring.length / limit) },
         },
-        pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+        inactive: {
+          summary: makeSummary(enrichedInactive),
+          items: pageInactive.map(attachUser),
+          pagination: { total: filteredInactive.length, page, limit, totalPages: Math.ceil(filteredInactive.length / limit) },
+        },
       },
     };
   });

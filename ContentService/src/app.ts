@@ -21,6 +21,7 @@ import internalRoutes from "./routes/internal";
 import adminRoutes from "./routes/admin";
 import viewerCatalogRoutes from "./routes/viewer/catalog";
 import mobileAppRoutes from "./routes/viewer/mobile";
+import { getAppConfig } from "./routes/admin/app-config";
 
 export async function buildApp() {
   const config = loadConfig();
@@ -68,6 +69,12 @@ export async function buildApp() {
   });
   await app.register(mobileAppRoutes, {
     prefix: `${externalBase}/mobile`,
+  });
+
+  // Public app config — no auth required
+  app.get(`${externalBase}/app-config`, async () => {
+    const data = await getAppConfig(app.prisma);
+    return { success: true, data };
   });
 
   app.get("/health", async () => ({ status: "ok" }));

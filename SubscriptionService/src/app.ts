@@ -12,6 +12,8 @@ import serviceAuthPlugin from "./plugins/service-auth";
 import adminRoutes from "./routes/admin";
 import customerRoutes from "./routes/customer";
 import internalRoutes from "./routes/internal";
+import { startAtRiskNotifier } from "./jobs/at-risk-notifier";
+import { getPrisma } from "./lib/prisma";
 
 export async function buildApp() {
   const config = loadConfig();
@@ -73,6 +75,8 @@ export async function buildApp() {
   await app.register(import("./routes/webhooks"), { prefix: `${externalBase}/webhooks` });
 
   app.get("/health", async () => ({ status: "ok" }));
+
+  startAtRiskNotifier(getPrisma());
 
   return app;
 }

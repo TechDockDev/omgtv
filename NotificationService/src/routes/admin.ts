@@ -220,4 +220,98 @@ export default async function adminRoutes(server: FastifyInstance) {
 
         return { total, limit, offset, notifications: enriched };
     });
+
+    /**
+     * GET /admin/notifications?type=&status=&trigger=&startDate=&endDate=&search=&page=&limit=
+     * Full notification history — all types, all triggers, paginated
+     */
+    server.get('/notifications', {
+        schema: {
+            querystring: z.object({
+                type: z.string().optional().transform(v => v === '' ? undefined : v).pipe(
+                    z.enum(['EMAIL', 'PUSH', 'IN_APP']).optional()
+                ),
+                status: z.string().optional().transform(v => v === '' ? undefined : v).pipe(
+                    z.enum(['PENDING', 'SENT', 'FAILED', 'READ']).optional()
+                ),
+                trigger: z.string().optional(),
+                startDate: z.string().optional(),
+                endDate: z.string().optional(),
+                search: z.string().optional(),
+                page: z.coerce.number().int().min(1).default(1),
+                limit: z.coerce.number().int().min(1).max(100).default(20),
+            }),
+        },
+    }, async (request) => {
+        const { type, status, trigger, startDate, endDate, search, page, limit } =
+            request.query as {
+                type?: string; status?: string; trigger?: string;
+                startDate?: string; endDate?: string; search?: string;
+                page: number; limit: number;
+            };
+        const offset = (page - 1) * limit;
+
+        const where: any = {};
+        if (type) where.type = type;
+        if (status) where.status = status;
+        if (trigger) where.data = { path: ['type'], equals: trigger };
+        if (startDate || endDate) {
+            where.createdAt = {};
+            if (startDate) where.createdAt.gte = new Date(startDate);
+            if (endDate) where.createdAt.lte = new Date(endDate);
+        }
+
+        const [notifications, total] = await Promise.all([
+            prisma.notification.findMany({
+                where,
+                orderBy: { createdAt: 'desc' },
+                take: limit,
+                skip: offset,
+                select: {
+                    id: true,
+                    userId: true,
+                    type: true,
+                    title: true,
+                    body: true,
+                    data: true,
+                    status: true,
+                    priority: true,
+                    error: true,
+                    fcmMessageId: true,
+                    fcmError: true,
+                    createdAt: true,
+                    updatedAt: true,
+                },
+            }),
+            prisma.notification.count({ where }),
+        ]);
+
+        const userIds = [...new Set(notifications.map(n => n.userId))];
+        const profiles = await userProvider.getUserProfiles(userIds);
+
+        const enriched = notifications.map(n => ({
+            ...n,
+            trigger: (n.data as any)?.trigger ?? (n.data as any)?.type ?? null,
+            user: profiles[n.userId] ?? { name: null, email: null, phone: null },
+        }));
+
+        const filtered = search
+            ? enriched.filter(n => {
+                const q = search.toLowerCase();
+                return (
+                    n.user.name?.toLowerCase().includes(q) ||
+                    n.user.email?.toLowerCase().includes(q) ||
+                    n.userId.toLowerCase().includes(q)
+                );
+            })
+            : enriched;
+
+        return {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+            notifications: filtered,
+        };
+    });
 }
