@@ -4,12 +4,14 @@ import {
   loginAdmin,
   registerAdmin,
   authenticateCustomer,
+  authenticateCustomerDlt,
   initializeGuest,
   rotateRefreshToken,
   revokeSessions,
   verifyActiveSession,
   AuthError,
 } from "../services/auth";
+import { sendCustomerOtp, verifyCustomerOtp, linkOtpLogToSubject, OtpError } from "../services/otp";
 import { type AccessTokenPayload } from "../plugins/jwt";
 import {
   adminLoginBodySchema,
@@ -19,6 +21,8 @@ import {
   refreshBodySchema,
   logoutBodySchema,
   deviceSyncBodySchemaMinimal,
+  otpSendBodySchema,
+  otpVerifyBodySchema,
   type AdminLoginBody,
   type AdminRegisterBody,
   type CustomerLoginBody,
@@ -27,6 +31,8 @@ import {
   type RefreshBody,
   type LogoutBody,
   type DeviceSyncBody,
+  type OtpSendBody,
+  type OtpVerifyBody,
 } from "../schemas/auth";
 
 function mapAuthError(fastify: FastifyInstance, error: AuthError): never {
@@ -268,6 +274,86 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
     },
   });
 
+
+  fastify.post<{ Body: OtpSendBody }>("/api/v1/auth/customer/otp/send", {
+    schema: { body: otpSendBodySchema },
+    handler: async (request, reply) => {
+      const body = otpSendBodySchema.parse(request.body);
+      try {
+        const result = await sendCustomerOtp({
+          prisma: request.server.prisma,
+          redis: request.server.redis,
+          phone: body.phone,
+          ip: request.ip,
+          deviceId: body.deviceId,
+          appVersion: body.deviceInfo?.appVersion,
+        });
+        return reply.status(200).send({ success: true, expiresIn: result.expiresIn });
+      } catch (error) {
+        if (error instanceof OtpError) {
+          if (error.code === "RATE_LIMITED") throw fastify.httpErrors.tooManyRequests(error.message);
+          if (error.code === "DLT_DISABLED") throw fastify.httpErrors.serviceUnavailable(error.message);
+          throw fastify.httpErrors.badGateway(error.message);
+        }
+        request.log.error({ err: error }, "OTP send failed");
+        throw fastify.httpErrors.internalServerError();
+      }
+    },
+  });
+
+  fastify.post<{ Body: OtpVerifyBody }>("/api/v1/auth/customer/otp/verify", {
+    schema: { body: otpVerifyBodySchema },
+    handler: async (request, reply) => {
+      const body = otpVerifyBodySchema.parse(request.body);
+      try {
+        await verifyCustomerOtp({
+          prisma: request.server.prisma,
+          redis: request.server.redis,
+          phone: body.phone,
+          code: body.otp,
+          ip: request.ip,
+          deviceId: body.deviceId,
+          appVersion: body.deviceInfo?.appVersion,
+        });
+
+        const tokens = await authenticateCustomerDlt({
+          prisma: request.server.prisma,
+          phoneNumber: body.phone,
+          deviceId: body.deviceId,
+          guestId: body.guestId,
+          deviceInfo: body.deviceInfo,
+          signAccessToken: request.server.signAccessToken,
+          userService: request.server.userService,
+          redis: request.server.redis,
+        });
+
+        // Link VERIFY_SUCCESS log to the resolved subject (fire-and-forget)
+        request.server.prisma.customerIdentity
+          .findUnique({ where: { phoneNumber: body.phone }, select: { subjectId: true } })
+          .then((identity) => {
+            if (identity) {
+              return linkOtpLogToSubject({
+                prisma: request.server.prisma,
+                phone: body.phone,
+                subjectId: identity.subjectId,
+              });
+            }
+          })
+          .catch((err) => request.log.error({ err }, "Failed to link OTP log to subject"));
+
+        return reply.status(200).send(tokens);
+      } catch (error) {
+        if (error instanceof OtpError) {
+          if (error.code === "RATE_LIMITED") throw fastify.httpErrors.tooManyRequests(error.message);
+          if (error.code === "EXPIRED_OTP") throw fastify.httpErrors.gone(error.message);
+          throw fastify.httpErrors.unprocessableEntity(error.message);
+        }
+        if (error instanceof AuthError) mapAuthError(fastify, error);
+        request.log.error({ err: error }, "OTP verify failed");
+        throw fastify.httpErrors.internalServerError();
+      }
+    },
+  });
 
   fastify.get<{ Reply: { valid: boolean } }>("/api/v1/auth/session/verify", {
     handler: async (request, reply) => {

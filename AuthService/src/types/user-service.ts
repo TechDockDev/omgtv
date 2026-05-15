@@ -70,7 +70,7 @@ export interface UserServiceIntegration {
   }): Promise<void>;
   listRoles(): Promise<UserServiceRole[]>;
   ensureCustomerProfile(params: {
-    firebaseUid: string;
+    firebaseUid?: string;
     phoneNumber?: string;
     deviceId: string;
     guestId?: string;

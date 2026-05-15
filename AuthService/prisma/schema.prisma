@@ -19,6 +19,22 @@ enum GuestLifecycleStatus {
   MIGRATED
 }
 
+enum AuthProvider {
+  FIREBASE
+  DLT
+}
+
+enum OtpEvent {
+  SEND_REQUESTED
+  DLT_API_SUCCESS
+  DLT_API_FAILED
+  VERIFY_ATTEMPT
+  VERIFY_SUCCESS
+  VERIFY_FAILED
+  EXPIRED
+  RATE_LIMITED
+}
+
 model AuthSubject {
   id              String          @id @default(uuid())
   type            AuthSubjectType
@@ -43,13 +59,16 @@ model AdminCredential {
 }
 
 model CustomerIdentity {
-  subject      AuthSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  subjectId    String       @id
-  firebaseUid  String       @unique
-  customerId   String       @unique
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  subject      AuthSubject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subjectId    String        @id
+  firebaseUid  String?       @unique
+  phoneNumber  String?       @unique @map("phoneNumber")
+  authProvider AuthProvider  @default(FIREBASE) @map("authProvider")
+  customerId   String        @unique
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   lastLoginAt  DateTime?
+  otpLogs      OtpLog[]
 }
 
 model GuestIdentity {
@@ -78,6 +97,26 @@ model Session {
   createdAt        DateTime    @default(now())
   expiresAt        DateTime
 
+  @@index([subjectId])
+}
+
+model OtpLog {
+  id           String           @id @default(uuid())
+  phone        String
+  event        OtpEvent
+  subjectId    String?
+  customer     CustomerIdentity? @relation(fields: [subjectId], references: [subjectId])
+  dltRequestId String?
+  errorCode    String?
+  errorMessage String?
+  attemptCount Int               @default(1)
+  ip           String?
+  deviceId     String?
+  appVersion   String?
+  createdAt    DateTime          @default(now())
+
+  @@index([phone, createdAt])
+  @@index([event, createdAt])
   @@index([subjectId])
 }
 

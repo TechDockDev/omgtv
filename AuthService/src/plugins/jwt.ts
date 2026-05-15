@@ -17,7 +17,7 @@ export type CustomerAccessTokenPayload = {
   sub: string;
   userType: "CUSTOMER";
   userId: string;
-  firebaseUid: string;
+  firebaseUid?: string;
   deviceId: string;
   sessionId?: string;
 };

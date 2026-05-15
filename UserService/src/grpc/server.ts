@@ -447,13 +447,14 @@ export async function startGrpcServer(
     EnsureCustomerProfileRequest,
     EnsureCustomerProfileResponse
   > = async (call, callback) => {
-    const firebaseUid = call.request.firebase_uid;
+    const firebaseUid = call.request.firebase_uid || undefined;
+    const phoneNumber = call.request.phone_number || undefined;
     const deviceId = call.request.device_id;
-    if (!firebaseUid || !deviceId) {
+    if ((!firebaseUid && !phoneNumber) || !deviceId) {
       callback(
         createServiceError(
           status.INVALID_ARGUMENT,
-          "firebase_uid and device_id are required"
+          "device_id and either firebase_uid or phone_number are required"
         )
       );
       return;
@@ -475,7 +476,7 @@ export async function startGrpcServer(
       const result = await ensureCustomerProfile({
         prisma: handlerContext.prisma,
         firebaseUid,
-        phoneNumber: call.request.phone_number || undefined,
+        phoneNumber,
         deviceId,
         guestId: call.request.guest_id || undefined,
         deviceInfo,

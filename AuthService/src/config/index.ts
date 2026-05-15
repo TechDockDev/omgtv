@@ -69,6 +69,12 @@ const envSchema = z.object({
     .transform((value) => (value && value.length > 0 ? value : undefined)),
   NOTIFICATION_SERVICE_ADDRESS: z.string().default("localhost:50072"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
+  DLT_API_KEY: z.string().optional(),
+  DLT_TEMPLATE_NAME: z.string().default("omgtv"),
+  DLT_OTP_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+  DLT_OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+  DLT_OTP_RESEND_WINDOW_SECONDS: z.coerce.number().int().positive().default(600),
+  DLT_OTP_MAX_SENDS: z.coerce.number().int().positive().default(3),
 });
 
 type Env = z.infer<typeof envSchema>;

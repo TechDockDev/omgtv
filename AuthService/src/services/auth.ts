@@ -1,5 +1,6 @@
 import {
   AuthSubjectType,
+  AuthProvider,
   GuestLifecycleStatus,
   PrismaClient,
 } from "@prisma/client";
@@ -206,6 +207,111 @@ async function upsertCustomerSubject(params: {
       firebaseUid: subject.customer.firebaseUid,
     };
   });
+}
+
+async function upsertCustomerSubjectByPhone(params: {
+  prisma: PrismaClient;
+  phoneNumber: string;
+  customerId: string;
+}): Promise<{ subjectId: string; customerId: string; phoneNumber: string }> {
+  const { prisma, phoneNumber, customerId } = params;
+
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.customerIdentity.findFirst({
+      where: { OR: [{ phoneNumber }, { customerId }] },
+    });
+
+    if (existing) {
+      const updated = await tx.customerIdentity.update({
+        where: { subjectId: existing.subjectId },
+        data: { phoneNumber, customerId, lastLoginAt: new Date() },
+      });
+      return {
+        subjectId: updated.subjectId,
+        customerId: updated.customerId,
+        phoneNumber: updated.phoneNumber!,
+      };
+    }
+
+    const subject = await tx.authSubject.create({
+      data: {
+        type: AuthSubjectType.CUSTOMER,
+        customer: {
+          create: {
+            phoneNumber,
+            customerId,
+            authProvider: AuthProvider.DLT,
+            lastLoginAt: new Date(),
+          },
+        },
+      },
+      include: { customer: true },
+    });
+
+    if (!subject.customer) throw new Error("Failed to create customer identity");
+
+    return {
+      subjectId: subject.id,
+      customerId: subject.customer.customerId,
+      phoneNumber: subject.customer.phoneNumber!,
+    };
+  });
+}
+
+export async function authenticateCustomerDlt(params: {
+  prisma: PrismaClient;
+  phoneNumber: string;
+  deviceId: string;
+  guestId?: string;
+  deviceInfo?: { os?: string; osVersion?: string; deviceName?: string; model?: string; appVersion?: string; network?: string; fcmToken?: string; permissions?: Record<string, boolean> };
+  signAccessToken: (payload: AccessTokenPayload, expiresIn?: number) => Promise<string>;
+  userService: UserServiceIntegration;
+  redis: Redis;
+}): Promise<TokenResponse> {
+  const { prisma, phoneNumber, deviceId, guestId, deviceInfo, signAccessToken, userService, redis } = params;
+
+  if (!userService.isEnabled) {
+    throw new Error("UserService integration is required for customer login");
+  }
+
+  const ensureResult = await userService.ensureCustomerProfile({
+    phoneNumber,
+    deviceId,
+    guestId,
+    deviceInfo,
+  });
+
+  const identity = await upsertCustomerSubjectByPhone({
+    prisma,
+    phoneNumber,
+    customerId: ensureResult.customerId,
+  });
+
+  if (ensureResult.guestProfileId) {
+    const guestIdentity = await prisma.guestIdentity.findUnique({
+      where: { guestProfileId: ensureResult.guestProfileId },
+    });
+    if (guestIdentity) {
+      await prisma.guestIdentity.update({
+        where: { guestProfileId: guestIdentity.guestProfileId },
+        data: {
+          status: GuestLifecycleStatus.MIGRATED,
+          migratedToSubjectId: identity.subjectId,
+          migratedAt: new Date(),
+        },
+      });
+      await prisma.session.deleteMany({ where: { subjectId: guestIdentity.subjectId } });
+    }
+  }
+
+  const payload: AccessTokenPayload = {
+    sub: identity.subjectId,
+    userType: "CUSTOMER",
+    userId: identity.customerId,
+    deviceId,
+  };
+
+  return issueSessionTokens({ prisma, redis, subjectId: identity.subjectId, payload, signAccessToken, deviceId });
 }
 
 async function ensureGuestSubject(params: {
@@ -688,14 +794,13 @@ export async function rotateRefreshToken(params: {
     }
   }
 
-  // Update lastLoginAt for customers on token refresh (tracks "last active" from splash screen)
-  if (payload.userType === "CUSTOMER" && payload.firebaseUid) {
+  // Update lastLoginAt for all customers on token refresh (tracks "last active" from splash screen)
+  if (payload.userType === "CUSTOMER") {
     await prisma.customerIdentity.update({
       where: { subjectId: session.subjectId },
       data: { lastLoginAt: new Date() },
     }).catch((err) => {
-      // Non-critical: don't fail the refresh if this update fails
-      console.error("[rotateRefreshToken] Failed to update lastLoginAt:", err);
+      logger.error({ err }, "Failed to update lastLoginAt on token refresh");
     });
   }
 
@@ -746,10 +851,6 @@ export async function verifyActiveSession(params: {
   const { redis, subjectId, sessionId } = params;
   const key = `${ACTIVE_SESSION_PREFIX}${subjectId}`;
   const activeSessionId = await redis.get(key);
-
-  console.log(`[VerifySession] checking key=${key}`);
-  console.log(`[VerifySession] token.sessionId=${sessionId}`);
-  console.log(`[VerifySession] redis.activeSessionId=${activeSessionId}`);
 
   return activeSessionId === sessionId;
 }

@@ -11,6 +11,9 @@ import {
   logoutSuccessResponseSchema,
   deviceSyncBodySchema,
   deviceSyncSuccessResponseSchema,
+  otpSendBodySchema,
+  otpVerifyBodySchema,
+  otpSendSuccessResponseSchema,
   type AdminLoginBody,
   type AdminRegisterBody,
   type CustomerLoginBody,
@@ -20,6 +23,8 @@ import {
   type TokenPayload,
   type LogoutBody,
   type DeviceSyncBody,
+  type OtpSendBody,
+  type OtpVerifyBody,
 } from "../schemas/auth.schema";
 import { errorResponseSchema } from "../schemas/base.schema";
 import {
@@ -30,6 +35,8 @@ import {
   refreshTokens,
   logoutUser,
   syncDevice,
+  sendOtp,
+  verifyOtp,
 } from "../proxy/auth.proxy";
 import { createHttpError } from "../utils/errors";
 
@@ -299,6 +306,57 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
       );
 
       return reply.status(204).send({});
+    },
+  });
+
+  fastify.route<{ Body: OtpSendBody }>({
+    method: "POST",
+    url: "/customer/otp/send",
+    schema: {
+      body: otpSendBodySchema,
+      response: {
+        200: otpSendSuccessResponseSchema,
+        400: errorResponseSchema,
+        429: errorResponseSchema,
+        503: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: true },
+      gatewayRateLimit: { max: 5, timeWindowMs: 60_000 },
+      security: { bodyLimit: 8 * 1024 },
+    },
+    async handler(request, reply) {
+      const body = otpSendBodySchema.parse(request.body);
+      const result = await sendOtp(body, request.correlationId, request.telemetrySpan);
+      return reply.status(200).send({ success: true, expiresIn: result.expiresIn });
+    },
+  });
+
+  fastify.route<{ Body: OtpVerifyBody; Reply: TokenPayload }>({
+    method: "POST",
+    url: "/customer/otp/verify",
+    schema: {
+      body: otpVerifyBodySchema,
+      response: {
+        200: tokenSuccessResponseSchema,
+        400: errorResponseSchema,
+        410: errorResponseSchema,
+        422: errorResponseSchema,
+        429: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: true },
+      gatewayRateLimit: { max: 10, timeWindowMs: 60_000 },
+      security: { bodyLimit: 8 * 1024 },
+    },
+    async handler(request, reply) {
+      const body = otpVerifyBodySchema.parse(request.body);
+      const tokens = await verifyOtp(body, request.correlationId, request.telemetrySpan);
+      return reply.status(200).send({ tokens });
     },
   });
 };

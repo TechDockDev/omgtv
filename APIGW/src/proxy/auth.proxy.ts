@@ -11,6 +11,9 @@ import {
   tokenResponseSchema,
   tokenRefreshBodySchema,
   logoutBodySchema,
+  otpSendBodySchema,
+  otpVerifyBodySchema,
+  otpSendResponseSchema,
   type AdminLoginBody,
   type AdminRegisterBody,
   type CustomerLoginBody,
@@ -20,6 +23,8 @@ import {
   type LogoutBody,
   type TokenResponse,
   type DeviceSyncBody,
+  type OtpSendBody,
+  type OtpVerifyBody,
   deviceSyncBodySchema,
 } from "../schemas/auth.schema";
 
@@ -421,4 +426,75 @@ export async function syncDevice(
     }
     throw error;
   }
+}
+
+export async function sendOtp(
+  body: OtpSendBody,
+  correlationId: string,
+  span?: Span
+): Promise<{ success: boolean; expiresIn: number }> {
+  const baseUrl = resolveServiceUrl("auth");
+  const validatedBody = otpSendBodySchema.parse(body);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<{ success: boolean; expiresIn: number }>({
+      serviceName: "auth",
+      baseUrl,
+      path: "/api/v1/auth/customer/otp/send",
+      method: "POST",
+      correlationId,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:auth:otp-send",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 429) throw createHttpError(429, "Too many OTP requests", error.cause);
+      if (error.statusCode === 503) throw createHttpError(503, "OTP service unavailable", error.cause);
+      throw createHttpError(Math.min(error.statusCode, 502), "OTP send failed", error.cause);
+    }
+    throw error;
+  }
+
+  const parsed = otpSendResponseSchema.safeParse(payload);
+  if (!parsed.success) throw new Error("Invalid response from auth service");
+  return parsed.data;
+}
+
+export async function verifyOtp(
+  body: OtpVerifyBody,
+  correlationId: string,
+  span?: Span
+): Promise<TokenResponse> {
+  const baseUrl = resolveServiceUrl("auth");
+  const validatedBody = otpVerifyBodySchema.parse(body);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<TokenResponse>({
+      serviceName: "auth",
+      baseUrl,
+      path: "/api/v1/auth/customer/otp/verify",
+      method: "POST",
+      correlationId,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:auth:otp-verify",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 422) throw createHttpError(422, "Invalid or incorrect OTP", error.cause);
+      if (error.statusCode === 410) throw createHttpError(410, "OTP expired", error.cause);
+      if (error.statusCode === 429) throw createHttpError(429, "Too many attempts", error.cause);
+      throw createHttpError(Math.min(error.statusCode, 502), "OTP verification failed", error.cause);
+    }
+    throw error;
+  }
+
+  const parsed = tokenResponseSchema.safeParse(payload);
+  if (!parsed.success) throw new Error("Invalid response from auth service");
+  return parsed.data;
 }

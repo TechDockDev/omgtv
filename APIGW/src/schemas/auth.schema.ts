@@ -119,6 +119,30 @@ export const deviceSyncBodySchema = z.object({
   deviceInfo: deviceInfoSchema.unwrap(),
 });
 
+export const otpSendBodySchema = z.object({
+  phone: z.string().trim().regex(/^\+91[6-9]\d{9}$/),
+  deviceId: deviceIdSchema,
+  deviceInfo: deviceInfoSchema,
+});
+
+export const otpVerifyBodySchema = z.object({
+  phone: z.string().trim().regex(/^\+91[6-9]\d{9}$/),
+  otp: z.string().trim().length(6),
+  deviceId: deviceIdSchema,
+  guestId: guestIdOptionalSchema,
+  deviceInfo: deviceInfoSchema,
+});
+
+export const otpSendResponseSchema = z.object({
+  success: z.boolean(),
+  expiresIn: z.number(),
+});
+
+export const otpSendSuccessResponseSchema = createSuccessResponseSchema(otpSendResponseSchema);
+
+export type OtpSendBody = z.infer<typeof otpSendBodySchema>;
+export type OtpVerifyBody = z.infer<typeof otpVerifyBodySchema>;
+
 export type AdminLoginBody = z.infer<typeof adminLoginBodySchema>;
 export type AdminRegisterBody = z.infer<typeof adminRegisterBodySchema>;
 export type CustomerLoginBody = z.infer<typeof customerLoginBodySchema>;

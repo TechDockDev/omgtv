@@ -95,8 +95,8 @@ model DeviceIdentity {
 
 model CustomerProfile {
   id           String               @id @default(uuid())
-  firebaseUid  String               @unique
-  phoneNumber  String?
+  firebaseUid  String?              @unique
+  phoneNumber  String?              @unique
   name         String?
   email        String?
   status       String               @default("active") // active, inactive, blocked

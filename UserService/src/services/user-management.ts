@@ -244,42 +244,44 @@ export async function listUsers(
                     { email: { contains: search, mode: "insensitive" } }
                 ]
             },
-            select: { firebaseUid: true }
+            select: { firebaseUid: true, id: true }
         });
-        profileSearchUids = profiles.map((p: any) => p.firebaseUid);
+        profileSearchUids = profiles.filter((p: any) => p.firebaseUid).map((p: any) => p.firebaseUid);
+        (profileSearchUids as any).__customerIds = profiles.map((p: any) => p.id);
     }
 
     if (status && status !== "all") {
         const profiles = await prisma.customerProfile.findMany({
             where: { status },
-            select: { firebaseUid: true }
+            select: { firebaseUid: true, id: true }
         });
-        statusProfileUids = profiles.map((p: any) => p.firebaseUid);
+        statusProfileUids = profiles.filter((p: any) => p.firebaseUid).map((p: any) => p.firebaseUid);
+        (statusProfileUids as any).__customerIds = profiles.map((p: any) => p.id);
     }
 
     // Combine conditions for search
     if (search) {
         const searchPattern = `%${search}%`;
-        if (profileSearchUids.length > 0) {
-            conditions.push(Prisma.sql`(
-                c."firebaseUid" ILIKE ${searchPattern} OR 
-                c."customerId" ILIKE ${searchPattern} OR
-                c."firebaseUid" IN (${Prisma.join(profileSearchUids)})
-            )`);
-        } else {
-            conditions.push(Prisma.sql`(
-                c."firebaseUid" ILIKE ${searchPattern} OR 
-                c."customerId" ILIKE ${searchPattern}
-            )`);
-        }
+        const customerIds: string[] = (profileSearchUids as any).__customerIds || [];
+        const fbParts: any[] = [
+            Prisma.sql`c."firebaseUid" ILIKE ${searchPattern}`,
+            Prisma.sql`c."customerId" ILIKE ${searchPattern}`,
+        ];
+        if (profileSearchUids.length > 0) fbParts.push(Prisma.sql`c."firebaseUid" IN (${Prisma.join(profileSearchUids)})`);
+        if (customerIds.length > 0) fbParts.push(Prisma.sql`c."customerId" IN (${Prisma.join(customerIds)})`);
+        conditions.push(Prisma.sql`(${Prisma.join(fbParts, " OR ")})`);
     }
 
     // Combine conditions for status
     if (statusProfileUids !== null) {
-        if (statusProfileUids.length > 0) {
-            conditions.push(Prisma.sql`c."firebaseUid" IN (${Prisma.join(statusProfileUids)})`);
+        const customerIds: string[] = (statusProfileUids as any).__customerIds || [];
+        if (statusProfileUids.length > 0 || customerIds.length > 0) {
+            const parts: any[] = [];
+            if (statusProfileUids.length > 0) parts.push(Prisma.sql`c."firebaseUid" IN (${Prisma.join(statusProfileUids)})`);
+            if (customerIds.length > 0) parts.push(Prisma.sql`c."customerId" IN (${Prisma.join(customerIds)})`);
+            conditions.push(Prisma.sql`(${Prisma.join(parts, " OR ")})`);
         } else {
-            conditions.push(Prisma.sql`1 = 0`); // no matching status
+            conditions.push(Prisma.sql`1 = 0`);
         }
     }
 
@@ -311,17 +313,19 @@ export async function listUsers(
 
         const total = Number(totalResult[0]?.count || 0);
 
-        // 2. Fetch Profile Data from UserDB
-        const firebaseUids = authUsers
-            .filter(u => u.firebaseUid)
-            .map(u => u.firebaseUid);
+        // 2. Fetch Profile Data from UserDB — Firebase users by firebaseUid, DLT users by customerId
+        const firebaseUids = authUsers.filter(u => u.firebaseUid).map(u => u.firebaseUid);
+        const dltCustomerIds = authUsers.filter(u => !u.firebaseUid && u.customerId).map(u => u.customerId);
 
-        let profiles: any[] = [];
-        if (firebaseUids.length > 0) {
-            profiles = await prisma.customerProfile.findMany({
-                where: { firebaseUid: { in: firebaseUids } }
-            });
-        }
+        const [fbProfiles, dltProfiles] = await Promise.all([
+            firebaseUids.length > 0
+                ? prisma.customerProfile.findMany({ where: { firebaseUid: { in: firebaseUids } } })
+                : Promise.resolve([]),
+            dltCustomerIds.length > 0
+                ? prisma.customerProfile.findMany({ where: { id: { in: dltCustomerIds } } })
+                : Promise.resolve([]),
+        ]);
+        const profiles = [...fbProfiles, ...dltProfiles];
 
         // 3. Fetch real analytics + subscription + coin data in parallel
         const userIds = authUsers.map(u => u.id);
@@ -335,9 +339,11 @@ export async function listUsers(
         const { activeUsers, trialUsers } = subscriptionData;
 
         const items: UserListItem[] = authUsers.map((u) => {
-            const profile = profiles.find(p => p.firebaseUid === u.firebaseUid);
+            const profile = u.firebaseUid
+                ? profiles.find((p: any) => p.firebaseUid === u.firebaseUid)
+                : profiles.find((p: any) => p.id === u.customerId);
             // @ts-ignore: Schema updated but client generation pending
-            const name = profile?.name || u.firebaseUid || "Customer";
+            const name = profile?.name || profile?.phoneNumber || u.customerId || "Customer";
             // @ts-ignore: Schema updated but client generation pending
             const email = profile?.email || null;
             const phone = profile?.phoneNumber || null;
@@ -447,38 +453,40 @@ export async function listTrialConvertedUsers(
                     { email: { contains: search, mode: "insensitive" } },
                 ],
             },
-            select: { firebaseUid: true },
+            select: { firebaseUid: true, id: true },
         });
-        profileSearchUids = profiles.map((p: any) => p.firebaseUid);
+        profileSearchUids = profiles.filter((p: any) => p.firebaseUid).map((p: any) => p.firebaseUid);
+        (profileSearchUids as any).__customerIds = profiles.map((p: any) => p.id);
     }
 
     if (status && status !== "all") {
         const profiles = await prisma.customerProfile.findMany({
             where: { status },
-            select: { firebaseUid: true },
+            select: { firebaseUid: true, id: true },
         });
-        statusProfileUids = profiles.map((p: any) => p.firebaseUid);
+        statusProfileUids = profiles.filter((p: any) => p.firebaseUid).map((p: any) => p.firebaseUid);
+        (statusProfileUids as any).__customerIds = profiles.map((p: any) => p.id);
     }
 
     if (search) {
         const searchPattern = `%${search}%`;
-        if (profileSearchUids.length > 0) {
-            conditions.push(Prisma.sql`(
-                c."firebaseUid" ILIKE ${searchPattern} OR
-                c."customerId" ILIKE ${searchPattern} OR
-                c."firebaseUid" IN (${Prisma.join(profileSearchUids)})
-            )`);
-        } else {
-            conditions.push(Prisma.sql`(
-                c."firebaseUid" ILIKE ${searchPattern} OR
-                c."customerId" ILIKE ${searchPattern}
-            )`);
-        }
+        const customerIds: string[] = (profileSearchUids as any).__customerIds || [];
+        const fbParts: any[] = [
+            Prisma.sql`c."firebaseUid" ILIKE ${searchPattern}`,
+            Prisma.sql`c."customerId" ILIKE ${searchPattern}`,
+        ];
+        if (profileSearchUids.length > 0) fbParts.push(Prisma.sql`c."firebaseUid" IN (${Prisma.join(profileSearchUids)})`);
+        if (customerIds.length > 0) fbParts.push(Prisma.sql`c."customerId" IN (${Prisma.join(customerIds)})`);
+        conditions.push(Prisma.sql`(${Prisma.join(fbParts, " OR ")})`);
     }
 
     if (statusProfileUids !== null) {
-        if (statusProfileUids.length > 0) {
-            conditions.push(Prisma.sql`c."firebaseUid" IN (${Prisma.join(statusProfileUids)})`);
+        const customerIds: string[] = (statusProfileUids as any).__customerIds || [];
+        if (statusProfileUids.length > 0 || customerIds.length > 0) {
+            const parts: any[] = [];
+            if (statusProfileUids.length > 0) parts.push(Prisma.sql`c."firebaseUid" IN (${Prisma.join(statusProfileUids)})`);
+            if (customerIds.length > 0) parts.push(Prisma.sql`c."customerId" IN (${Prisma.join(customerIds)})`);
+            conditions.push(Prisma.sql`(${Prisma.join(parts, " OR ")})`);
         } else {
             conditions.push(Prisma.sql`1 = 0`);
         }
@@ -511,13 +519,17 @@ export async function listTrialConvertedUsers(
         const total = Number(totalResult[0]?.count || 0);
         console.log(`[listTrialConvertedUsers] Found ${authUsers.length} matching users in AuthDB (Total: ${total})`);
         const firebaseUids = authUsers.filter(u => u.firebaseUid).map(u => u.firebaseUid);
+        const dltCustomerIds = authUsers.filter(u => !u.firebaseUid && u.customerId).map(u => u.customerId);
 
-        let profiles: any[] = [];
-        if (firebaseUids.length > 0) {
-            profiles = await prisma.customerProfile.findMany({
-                where: { firebaseUid: { in: firebaseUids } },
-            });
-        }
+        const [fbProfiles2, dltProfiles2] = await Promise.all([
+            firebaseUids.length > 0
+                ? prisma.customerProfile.findMany({ where: { firebaseUid: { in: firebaseUids } } })
+                : Promise.resolve([]),
+            dltCustomerIds.length > 0
+                ? prisma.customerProfile.findMany({ where: { id: { in: dltCustomerIds } } })
+                : Promise.resolve([]),
+        ]);
+        const profiles = [...fbProfiles2, ...dltProfiles2];
 
         const authUserIds = authUsers.map(u => u.id);
         const [analyticsMap, coinMap] = await Promise.all([
@@ -526,11 +538,13 @@ export async function listTrialConvertedUsers(
         ]);
 
         const items: UserListItem[] = authUsers.map((u) => {
-            const profile = profiles.find(p => p.firebaseUid === u.firebaseUid);
+            const profile = u.firebaseUid
+                ? profiles.find((p: any) => p.firebaseUid === u.firebaseUid)
+                : profiles.find((p: any) => p.id === u.customerId);
             const conversion = conversionMap.get(u.id);
 
             // @ts-ignore
-            const name = profile?.name || u.firebaseUid || "Customer";
+            const name = profile?.name || profile?.phoneNumber || u.customerId || "Customer";
             // @ts-ignore
             const email = profile?.email || null;
             const phone = profile?.phoneNumber || null;
@@ -587,22 +601,23 @@ export async function getUserDetails(
         const u = result[0];
         if (!u) return null;
 
-        let name = "Unknown";
+        let name = "Customer";
         let email = null;
         let phone = null;
         let status = "active";
 
-        if (u.firebaseUid) {
-            const profile = await prisma.customerProfile.findUnique({
-                where: { firebaseUid: u.firebaseUid }
-            });
+        const profile = u.firebaseUid
+            ? await prisma.customerProfile.findUnique({ where: { firebaseUid: u.firebaseUid } })
+            : await prisma.customerProfile.findUnique({ where: { id: u.customerId } });
+
+        if (profile) {
             // @ts-ignore: Schema updated
-            name = profile?.name || u.firebaseUid || "Customer";
+            name = profile.name || profile.phoneNumber || u.customerId || "Customer";
             // @ts-ignore: Schema updated
-            email = profile?.email || null;
-            phone = profile?.phoneNumber || null;
+            email = profile.email || null;
+            phone = profile.phoneNumber || null;
             // @ts-ignore: Schema updated
-            status = profile?.status || "active";
+            status = profile.status || "active";
         }
 
         // Real analytics + subscription + coin data
@@ -675,33 +690,34 @@ export async function updateUser(
     const result = await authPrisma.$queryRaw<any[]>(query);
     const u = result[0];
 
-    if (!u || !u.firebaseUid) return false; // Can only update Customers with profiles
+    if (!u) return false;
 
-    // 2. Upsert CustomerProfile
-    // Note: If schema update failed on 'name'/'email'/'status', this will crash at runtime.
-    // We assume schema is applied.
-    await prisma.customerProfile.upsert({
-        where: { firebaseUid: u.firebaseUid },
-        create: {
-            firebaseUid: u.firebaseUid,
-            phoneNumber: data.phone,
+    const updateData = {
+        ...(data.phone !== undefined && { phoneNumber: data.phone }),
+        // @ts-ignore: Schema updated
+        ...(data.name !== undefined && { name: data.name }),
+        // @ts-ignore: Schema updated
+        ...(data.email !== undefined && { email: data.email }),
+        // @ts-ignore: Schema updated
+        ...(data.status !== undefined && { status: data.status }),
+    };
+
+    if (u.firebaseUid) {
+        await prisma.customerProfile.upsert({
+            where: { firebaseUid: u.firebaseUid },
             // @ts-ignore: Schema updated
-            name: data.name,
+            create: { firebaseUid: u.firebaseUid, ...updateData },
+            update: updateData,
+        });
+    } else {
+        // DLT user — profile keyed by customerId (CustomerProfile.id)
+        await prisma.customerProfile.upsert({
+            where: { id: u.customerId },
             // @ts-ignore: Schema updated
-            email: data.email,
-            // @ts-ignore: Schema updated
-            status: data.status || "active"
-        },
-        update: {
-            phoneNumber: data.phone,
-            // @ts-ignore: Schema updated
-            name: data.name,
-            // @ts-ignore: Schema updated
-            email: data.email,
-            // @ts-ignore: Schema updated
-            status: data.status // if undefined, prisma ignores or we should conditionally add
-        }
-    });
+            create: { id: u.customerId, ...updateData },
+            update: updateData,
+        });
+    }
 
     return true;
 }

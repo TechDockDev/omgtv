@@ -13,7 +13,7 @@ export type DeviceInfo = {
 
 export type EnsureCustomerProfileParams = {
   prisma: PrismaClient;
-  firebaseUid: string;
+  firebaseUid?: string;
   phoneNumber?: string;
   deviceId: string;
   guestId?: string;
@@ -60,9 +60,11 @@ export async function ensureCustomerProfile(
       },
     });
 
-    const existingCustomer = await tx.customerProfile.findUnique({
-      where: { firebaseUid },
-    });
+    const existingCustomer = firebaseUid
+      ? await tx.customerProfile.findUnique({ where: { firebaseUid } })
+      : phoneNumber
+        ? await tx.customerProfile.findFirst({ where: { phoneNumber } })
+        : null;
 
     const customer = existingCustomer
       ? phoneNumber && existingCustomer.phoneNumber !== phoneNumber
@@ -73,7 +75,7 @@ export async function ensureCustomerProfile(
         : existingCustomer
       : await tx.customerProfile.create({
         data: {
-          firebaseUid,
+          firebaseUid: firebaseUid ?? undefined,
           phoneNumber,
         },
       });

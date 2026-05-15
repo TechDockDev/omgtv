@@ -117,11 +117,15 @@ export class UserProvider {
     async getUserProfiles(userIds: string[]): Promise<Record<string, { name: string | null; email: string | null; phone: string | null }>> {
         if (userIds.length === 0) return {};
 
+        const serviceToken = process.env.SERVICE_AUTH_TOKEN;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (serviceToken) headers['x-service-token'] = serviceToken;
+
         try {
-            const response = await fetch(`${this.userServiceUrl}/internal/users/profiles`, {
+            const response = await fetch(`${this.userServiceUrl}/internal/users/profiles-by-auth-id`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userIds })
+                headers,
+                body: JSON.stringify({ authIds: userIds })
             });
 
             if (!response.ok) {

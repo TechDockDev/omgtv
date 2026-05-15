@@ -415,7 +415,7 @@ const userServicePlugin = fp(async function userServicePlugin(
       return response.roles.map(mapRole);
     },
     async ensureCustomerProfile(params: {
-      firebaseUid: string;
+      firebaseUid?: string;
       phoneNumber?: string;
       deviceId: string;
       guestId?: string;
@@ -432,7 +432,7 @@ const userServicePlugin = fp(async function userServicePlugin(
         permissions_json: params.deviceInfo.permissions ? JSON.stringify(params.deviceInfo.permissions) : undefined,
       } : undefined;
       const response = await ensureCustomerProfileUnary({
-        firebase_uid: params.firebaseUid,
+        firebase_uid: params.firebaseUid ?? "",
         phone_number: params.phoneNumber,
         device_id: params.deviceId,
         guest_id: params.guestId,

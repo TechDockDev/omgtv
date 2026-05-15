@@ -109,6 +109,25 @@ export const deviceSyncBodySchemaMinimal = z.object({
   }),
 });
 
+export const otpSendBodySchema = z.object({
+  phone: z.string().trim().regex(/^\+91[6-9]\d{9}$/, "Must be a valid Indian mobile number with +91 prefix"),
+  deviceId: deviceIdSchema,
+  deviceInfo: deviceInfoSchema,
+});
+
+export const otpVerifyBodySchema = z.object({
+  phone: z.string().trim().regex(/^\+91[6-9]\d{9}$/, "Must be a valid Indian mobile number with +91 prefix"),
+  otp: z.string().trim().length(6),
+  deviceId: deviceIdSchema,
+  guestId: guestIdOptionalSchema,
+  deviceInfo: deviceInfoSchema,
+});
+
+export const otpSendResponseSchema = z.object({
+  success: z.boolean(),
+  expiresIn: z.number(),
+});
+
 export const forgotPasswordRequestSchema = z.object({
   email: z.string().trim().email(),
 });
@@ -137,6 +156,8 @@ export const updatePasswordSchema = z.object({
   newPassword: z.string().trim().min(8),
 });
 
+export type OtpSendBody = z.infer<typeof otpSendBodySchema>;
+export type OtpVerifyBody = z.infer<typeof otpVerifyBodySchema>;
 export type AdminLoginBody = z.infer<typeof adminLoginBodySchema>;
 export type AdminRegisterBody = z.infer<typeof adminRegisterBodySchema>;
 export type CustomerLoginBody = z.infer<typeof customerLoginBodySchema>;
