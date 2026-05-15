@@ -589,21 +589,23 @@ export default async function customerRoutes(app: FastifyInstance) {
     await invalidateEntitlementCache(transaction.userId);
 
     const isTrial = !!trialPlanId;
-    if (isTrial) {
-      const trialDays = Math.round((endsAt.getTime() - startsAt.getTime()) / (1000 * 86400));
-      await notificationClient.sendPush(
-        transaction.userId,
-        "Free Trial Activated!",
-        `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`,
-        { type: "SUBSCRIPTION_ACTIVATED" }
-      );
-    } else {
-      await notificationClient.sendPush(
-        transaction.userId,
-        "Subscription Activated",
-        "Your subscription is now active. Enjoy unlimited content!",
-        { type: "SUBSCRIPTION_ACTIVATED" }
-      );
+    if (!(await notificationClient.hasSentRecently(transaction.userId, "SUBSCRIPTION_ACTIVATED"))) {
+      if (isTrial) {
+        const trialDays = Math.round((endsAt.getTime() - startsAt.getTime()) / (1000 * 86400));
+        await notificationClient.sendPush(
+          transaction.userId,
+          "Free Trial Activated!",
+          `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`,
+          { type: "SUBSCRIPTION_ACTIVATED" }
+        );
+      } else {
+        await notificationClient.sendPush(
+          transaction.userId,
+          "Subscription Activated",
+          "Your subscription is now active. Enjoy unlimited content!",
+          { type: "SUBSCRIPTION_ACTIVATED" }
+        );
+      }
     }
 
     return reply.send({

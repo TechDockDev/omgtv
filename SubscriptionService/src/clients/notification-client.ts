@@ -47,6 +47,13 @@ export class NotificationClient {
         }
     }
 
+    async hasSentRecently(userId: string, type: string, withinMinutes: number = 120): Promise<boolean> {
+        const history = await this.getBulkHistory([userId], type);
+        const lastSentAt = history[userId]?.lastSentAt;
+        if (!lastSentAt) return false;
+        return (Date.now() - new Date(lastSentAt).getTime()) < withinMinutes * 60_000;
+    }
+
     async getBulkHistory(userIds: string[], type?: string): Promise<Record<string, { lastSentAt: string | null; count: number }>> {
         try {
             const res = await fetch(`${this.baseUrl}/internal/notifications/bulk-history`, {

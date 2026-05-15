@@ -14,6 +14,7 @@ data:
   ACCESS_TOKEN_TTL: "864000"
   REDIS_URL: "redis://10.244.194.227:6379"
   NOTIFICATION_SERVICE_ADDRESS: "notification-service:50072"
+  DLT_TEMPLATE_NAME: "omgtv"
 ---
 apiVersion: v1
 kind: ConfigMap

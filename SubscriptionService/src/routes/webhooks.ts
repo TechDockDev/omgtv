@@ -154,14 +154,16 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
                         request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
                         await invalidateEntitlementCache(transaction.userId);
-                        await notificationClient.sendPush(
-                            transaction.userId,
-                            isTrial ? "Free Trial Activated!" : "Subscription Activated",
-                            isTrial
-                                ? `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`
-                                : "Your subscription is now active. Enjoy unlimited content!",
-                            { type: "SUBSCRIPTION_ACTIVATED" }
-                        );
+                        if (!(await notificationClient.hasSentRecently(transaction.userId, "SUBSCRIPTION_ACTIVATED"))) {
+                            await notificationClient.sendPush(
+                                transaction.userId,
+                                isTrial ? "Free Trial Activated!" : "Subscription Activated",
+                                isTrial
+                                    ? `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`
+                                    : "Your subscription is now active. Enjoy unlimited content!",
+                                { type: "SUBSCRIPTION_ACTIVATED" }
+                            );
+                        }
                     }
                 } else {
                     // 2. Might be a renewal or trial transition
@@ -375,14 +377,16 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 data: { status: "SUCCESS" }
                             });
                         }
-                        await notificationClient.sendPush(
-                            tx.userId,
-                            isTrial ? "Free Trial Activated!" : "Subscription Activated",
-                            isTrial
-                                ? `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`
-                                : "Your subscription is now active. Enjoy unlimited content!",
-                            { type: "SUBSCRIPTION_ACTIVATED" }
-                        );
+                        if (!(await notificationClient.hasSentRecently(tx.userId, "SUBSCRIPTION_ACTIVATED"))) {
+                            await notificationClient.sendPush(
+                                tx.userId,
+                                isTrial ? "Free Trial Activated!" : "Subscription Activated",
+                                isTrial
+                                    ? `Your ${trialDays} day trial has been activated. Enjoy watching the episodes!`
+                                    : "Your subscription is now active. Enjoy unlimited content!",
+                                { type: "SUBSCRIPTION_ACTIVATED" }
+                            );
+                        }
                     }
                 }
             } else if (
