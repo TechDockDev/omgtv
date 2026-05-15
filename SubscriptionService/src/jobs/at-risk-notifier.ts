@@ -63,7 +63,7 @@ const FREE_USER_TRIGGERS = [
 
 const PUSH_BATCH_SIZE = 50;
 const PUSH_BATCH_DELAY_MS = 500;
-const DEDUP_HOURS = 20;
+const USER_FETCH_MAX_PAGES = 200; // hard cap: 200 × 5000 = 1M users max
 
 async function sendInBatches(
   userIds: string[],
@@ -81,7 +81,28 @@ async function sendInBatches(
   }
 }
 
+// Arbitrary stable int used as the Postgres advisory lock key for this job.
+// Must be unique across all jobs that use advisory locks in this service.
+const ADVISORY_LOCK_KEY = 7_001;
+
 async function runAtRiskNotifier(prisma: PrismaClient) {
+  // Acquire a cluster-wide Postgres advisory lock so only one pod runs at a time.
+  const [row] = await prisma.$queryRaw<[{ acquired: boolean }]>`
+    SELECT pg_try_advisory_lock(${ADVISORY_LOCK_KEY}) AS acquired
+  `;
+  if (!row.acquired) {
+    console.log("[AtRiskNotifier] Lock held by another instance — skipping this tick");
+    return;
+  }
+
+  try {
+    await runAtRiskNotifierInner(prisma);
+  } finally {
+    await prisma.$queryRaw`SELECT pg_advisory_unlock(${ADVISORY_LOCK_KEY})`;
+  }
+}
+
+async function runAtRiskNotifierInner(prisma: PrismaClient) {
   const config = loadConfig();
   const notificationClient = new NotificationClient();
   const now = new Date();
@@ -102,11 +123,9 @@ async function runAtRiskNotifier(prisma: PrismaClient) {
     const userIds = expiring.map((s) => s.userId);
     const history = await notificationClient.getBulkHistory(userIds, trigger.key);
 
-    const toNotify = userIds.filter((id) => {
-      const h = history[id];
-      if (!h?.lastSentAt) return true;
-      return (now.getTime() - new Date(h.lastSentAt).getTime()) / 3_600_000 >= DEDUP_HOURS;
-    });
+    // Each expiry trigger fires once per subscription cycle — the ±0.5d window
+    // ensures it only matches on the right day, and we never re-send once sent.
+    const toNotify = userIds.filter((id) => !history[id]?.lastSentAt);
 
     await sendInBatches(toNotify, trigger.title, trigger.body, { type: trigger.key, trigger: trigger.key }, notificationClient);
   }
@@ -148,11 +167,9 @@ async function runAtRiskNotifier(prisma: PrismaClient) {
 
       const history = await notificationClient.getBulkHistory(matchedIds, trigger.key);
 
-      const toNotify = matchedIds.filter((id) => {
-        const h = history[id];
-        if (!h?.lastSentAt) return true;
-        return (now.getTime() - new Date(h.lastSentAt).getTime()) / 3_600_000 >= DEDUP_HOURS;
-      });
+      // Inactivity reminders fire once ever — if the user already received this
+      // specific trigger (INACTIVE_7D or INACTIVE_14D) we never send it again.
+      const toNotify = matchedIds.filter((id) => !history[id]?.lastSentAt);
 
       await sendInBatches(toNotify, trigger.title, trigger.body, { type: trigger.key, trigger: trigger.key }, notificationClient);
     }
@@ -162,7 +179,8 @@ async function runAtRiskNotifier(prisma: PrismaClient) {
   // Get all registered user IDs from UserService (paginated, max 5000 per call)
   const allUserIds: string[] = [];
   let searchOffset = 0;
-  while (true) {
+  let page = 0;
+  while (page < USER_FETCH_MAX_PAGES) {
     const res = await fetch(`${config.USER_SERVICE_URL}/internal/users/search`, {
       method: "POST",
       headers: {
@@ -178,6 +196,7 @@ async function runAtRiskNotifier(prisma: PrismaClient) {
     allUserIds.push(...batch);
     if (batch.length < 5000) break;
     searchOffset += 5000;
+    page++;
   }
 
   if (allUserIds.length === 0) return;
@@ -219,16 +238,26 @@ async function runAtRiskNotifier(prisma: PrismaClient) {
   }
 }
 
+let atRiskTimer: ReturnType<typeof setInterval> | null = null;
+let atRiskRunning = false;
+
 export function startAtRiskNotifier(prisma: PrismaClient) {
+  if (atRiskTimer) return; // guard against double-start
+
   const run = () => {
-    runAtRiskNotifier(prisma).catch((err) =>
-      console.error("[AtRiskNotifier] Job failed:", err)
-    );
+    if (atRiskRunning) {
+      console.warn("[AtRiskNotifier] Previous run still in progress — skipping this tick");
+      return;
+    }
+    atRiskRunning = true;
+    runAtRiskNotifier(prisma)
+      .catch((err) => console.error("[AtRiskNotifier] Job failed:", err))
+      .finally(() => { atRiskRunning = false; });
   };
 
   // Delay first run by 2 minutes to let the server fully start
   setTimeout(run, 2 * 60 * 1000);
 
   // Re-run every 24 hours
-  setInterval(run, 24 * 60 * 60 * 1000);
+  atRiskTimer = setInterval(run, 24 * 60 * 60 * 1000);
 }

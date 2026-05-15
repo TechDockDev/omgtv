@@ -55,17 +55,27 @@ export class NotificationClient {
     }
 
     async getBulkHistory(userIds: string[], type?: string): Promise<Record<string, { lastSentAt: string | null; count: number }>> {
-        try {
-            const res = await fetch(`${this.baseUrl}/internal/notifications/bulk-history`, {
-                method: "POST",
-                headers: this.headers,
-                body: JSON.stringify({ userIds, ...(type && { type }) }),
-            });
-            if (!res.ok) return {};
-            const json = await res.json() as { history: Record<string, { lastSentAt: string | null; count: number }> };
-            return json.history ?? {};
-        } catch {
-            return {};
+        if (userIds.length === 0) return {};
+
+        const CHUNK_SIZE = 500;
+        const merged: Record<string, { lastSentAt: string | null; count: number }> = {};
+
+        for (let i = 0; i < userIds.length; i += CHUNK_SIZE) {
+            const chunk = userIds.slice(i, i + CHUNK_SIZE);
+            try {
+                const res = await fetch(`${this.baseUrl}/internal/notifications/bulk-history`, {
+                    method: "POST",
+                    headers: this.headers,
+                    body: JSON.stringify({ userIds: chunk, ...(type && { type }) }),
+                });
+                if (!res.ok) continue;
+                const json = await res.json() as { history: Record<string, { lastSentAt: string | null; count: number }> };
+                Object.assign(merged, json.history ?? {});
+            } catch {
+                // non-fatal: missing history means we may over-send, but won't crash
+            }
         }
+
+        return merged;
     }
 }
