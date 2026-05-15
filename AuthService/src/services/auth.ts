@@ -154,7 +154,7 @@ async function upsertCustomerSubject(params: {
 }): Promise<{
   subjectId: string;
   customerId: string;
-  firebaseUid: string;
+  firebaseUid: string | undefined;
 }> {
   const { prisma, firebaseUid, customerId } = params;
 
@@ -177,7 +177,7 @@ async function upsertCustomerSubject(params: {
       return {
         subjectId: updated.subjectId,
         customerId: updated.customerId,
-        firebaseUid: updated.firebaseUid,
+        firebaseUid: updated.firebaseUid ?? undefined,
       };
     }
 
@@ -204,7 +204,7 @@ async function upsertCustomerSubject(params: {
     return {
       subjectId: subject.id,
       customerId: subject.customer.customerId,
-      firebaseUid: subject.customer.firebaseUid,
+      firebaseUid: subject.customer.firebaseUid ?? undefined,
     };
   });
 }
@@ -430,7 +430,7 @@ async function buildAccessPayload(params: {
         sub: subject.id,
         userType: "CUSTOMER",
         userId: subject.customer.customerId,
-        firebaseUid: subject.customer.firebaseUid,
+        firebaseUid: subject.customer.firebaseUid ?? undefined,
         deviceId,
       };
     }
