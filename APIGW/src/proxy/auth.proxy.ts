@@ -498,3 +498,34 @@ export async function verifyOtp(
   if (!parsed.success) throw new Error("Invalid response from auth service");
   return parsed.data;
 }
+
+export async function getAuthProviderAnalytics(
+  correlationId: string
+): Promise<unknown> {
+  const baseUrl = resolveServiceUrl("auth");
+  const response = await performServiceRequest<unknown>({
+    serviceName: "auth",
+    baseUrl,
+    path: "/api/v1/auth/admin/analytics/auth-providers",
+    method: "GET",
+    correlationId,
+    spanName: "proxy:auth:analytics-auth-providers",
+  });
+  return response.payload;
+}
+
+export async function getOtpPhoneAnalytics(
+  phone: string,
+  correlationId: string
+): Promise<unknown> {
+  const baseUrl = resolveServiceUrl("auth");
+  const response = await performServiceRequest<unknown>({
+    serviceName: "auth",
+    baseUrl,
+    path: `/api/v1/auth/admin/analytics/otp/phone/${encodeURIComponent(phone)}`,
+    method: "GET",
+    correlationId,
+    spanName: "proxy:auth:analytics-otp-phone",
+  });
+  return response.payload;
+}

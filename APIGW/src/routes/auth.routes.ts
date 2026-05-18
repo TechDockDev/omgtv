@@ -37,6 +37,8 @@ import {
   syncDevice,
   sendOtp,
   verifyOtp,
+  getAuthProviderAnalytics,
+  getOtpPhoneAnalytics,
 } from "../proxy/auth.proxy";
 import { createHttpError } from "../utils/errors";
 
@@ -331,6 +333,27 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
       const body = otpSendBodySchema.parse(request.body);
       const result = await sendOtp(body, request.correlationId, request.telemetrySpan);
       return reply.status(200).send({ success: true, expiresIn: result.expiresIn });
+    },
+  });
+
+  fastify.route({
+    method: "GET",
+    url: "/admin/analytics/auth-providers",
+    config: { auth: { public: false }, rateLimitPolicy: "authenticated" },
+    async handler(request, reply) {
+      const data = await getAuthProviderAnalytics(request.correlationId);
+      return reply.send(data);
+    },
+  });
+
+  fastify.route<{ Params: { phone: string } }>({
+    method: "GET",
+    url: "/admin/analytics/otp/phone/:phone",
+    config: { auth: { public: false }, rateLimitPolicy: "authenticated" },
+    async handler(request, reply) {
+      const { phone } = request.params;
+      const data = await getOtpPhoneAnalytics(phone, request.correlationId);
+      return reply.send(data);
     },
   });
 
