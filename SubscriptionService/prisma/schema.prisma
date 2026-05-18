@@ -45,6 +45,8 @@ model SubscriptionPlan {
   subscriberCount  Int      @default(0)
   icon             String?  // e.g., "Zap", "Crown", "Star"
   savings          Int      @default(0) // Percentage
+  cancelledPricePaise Int?  // Optional strike-through price
+  subscriptionViaTrial Boolean @default(false)
   razorpayPlanId   String?
   promoVideoUrl    String?  // Optional m3u8 link for this specific plan
   
@@ -60,6 +62,7 @@ model SubscriptionPlan {
 model TrialPlan {
   id              String           @id @default(uuid())
   trialPricePaise Int
+  cancelledTrialPricePaise Int?
   durationDays    Int
   reminderDays    Int
   isAutoDebit     Boolean          @default(true)

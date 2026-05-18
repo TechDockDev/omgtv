@@ -110,6 +110,7 @@ type EntitlementSnapshot = {
   canWatch: boolean;
   planPurchased: boolean;
   isTrial: boolean;
+  showTrialBanner: boolean;
 };
 
 type EntitlementLookup = {
@@ -723,6 +724,7 @@ export class MobileAppService {
       canWatch: hasAccess,
       planPurchased: entitlement.planPurchased,
       isTrial: entitlement.isTrial,
+      showTrialBanner: entitlement.showTrialBanner,
     };
 
     const streaming = this.buildStreamingInfo(
@@ -1030,7 +1032,7 @@ export class MobileAppService {
               })),
             },
             0,
-            { canWatch: true, planPurchased: false, isTrial: false }
+            { canWatch: true, planPurchased: false, isTrial: false, showTrialBanner: true }
           ),
         }
       : null;
@@ -1050,6 +1052,7 @@ export class MobileAppService {
       ad_on_series_open: detail.series.adOnSeriesOpen && !isSubscribed,
       ad_on_episode_swipe: detail.series.adOnEpisodeSwipe && !isSubscribed,
       show_banner_on_series_page: detail.series.showBannerOnSeriesPage && !isSubscribed,
+      show_trial_banner: options.entitlements.episode.showTrialBanner ?? true,
       swipe_ad_frequency: detail.series.swipeAdFrequency ?? 0,
       total_episodes: detail.series.total_episodes,
       free_episodes: detail.series.free_episodes,
@@ -1182,6 +1185,7 @@ export class MobileAppService {
       canWatch: hasAccess,
       planPurchased: entitlement.planPurchased,
       isTrial: entitlement.isTrial,
+      showTrialBanner: entitlement.showTrialBanner,
     };
 
     const streaming = this.buildStreamingInfo(
@@ -1353,6 +1357,7 @@ export class MobileAppService {
       canWatch: this.deps.config.defaultGuestCanWatch,
       planPurchased: this.deps.config.defaultPlanPurchased,
       isTrial: false,
+      showTrialBanner: true,
     };
 
     const userId = options?.context?.userId;
@@ -1395,6 +1400,7 @@ export class MobileAppService {
       canWatch: result.canWatch,
       planPurchased: result.planPurchased,
       isTrial: result.isTrial,
+      showTrialBanner: result.showTrialBanner,
     } satisfies EntitlementSnapshot;
   }
 

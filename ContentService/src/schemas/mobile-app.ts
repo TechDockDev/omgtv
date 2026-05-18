@@ -191,6 +191,7 @@ export const mobileSeriesDataSchema = z.object({
   ad_on_series_open: z.boolean(),
   ad_on_episode_swipe: z.boolean(),
   show_banner_on_series_page: z.boolean(),
+  show_trial_banner: z.boolean(),
   swipe_ad_frequency: z.number(),
   total_episodes: z.number().int().nonnegative(),
   free_episodes: z.number().int().nonnegative(),

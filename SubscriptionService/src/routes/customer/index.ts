@@ -72,6 +72,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       trialPlan: activeTrial ? {
         id: activeTrial.id,
         trialPricePaise: activeTrial.trialPricePaise,
+        cancelledTrialPricePaise: (activeTrial as any).cancelledTrialPricePaise,
         durationDays: activeTrial.durationDays,
         isAutoDebit: activeTrial.isAutoDebit,
         isEligible: !hasUsedTrial && !!globalTrialPlan,
@@ -96,6 +97,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     const formattedTrialPlans = trialPlans.map(tp => ({
       id: tp.id,
       trialPricePaise: tp.trialPricePaise,
+      cancelledTrialPricePaise: (tp as any).cancelledTrialPricePaise,
       durationDays: tp.durationDays,
       reminderDays: tp.reminderDays,
       isAutoDebit: tp.isAutoDebit,
@@ -221,6 +223,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     const data = subscription ? {
       ...subscription,
       isTrial,
+      showTrialBanner: !((subscription.plan as any)?.subscriptionViaTrial ?? false),
       // During trial period, show trial plan information
       displayPlan: subscription.trialPlan || subscription.plan
     } : null;

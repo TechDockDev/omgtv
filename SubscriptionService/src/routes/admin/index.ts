@@ -37,6 +37,8 @@ const planBodySchema = z.object({
   subscriberCount: z.number().int().nonnegative().default(0),
   icon: z.string().optional(),
   savings: z.number().int().nonnegative().default(0),
+  cancelledPricePaise: z.number().int().nonnegative().optional(),
+  subscriptionViaTrial: z.boolean().default(false),
   promoVideoUrl: z.string().url().nullable().optional(),
 });
 
@@ -289,6 +291,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   const trialPlanBodySchema = z.object({
     trialPricePaise: z.number().int().nonnegative(),
+    cancelledTrialPricePaise: z.number().int().nonnegative().optional(),
     durationDays: z.number().int().positive(),
     reminderDays: z.number().int().nonnegative(),
     isAutoDebit: z.boolean().default(true),
@@ -534,7 +537,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       const allUserIds = [...new Set(allCanceled.map(s => s.userId))];
       const cumulativePayments = await prisma.transaction.groupBy({
         by: ['userId'],
-        where: { userId: { in: allUserIds }, status: 'SUCCESS' },
+        where: { userId: { in: allUserIds }, status: 'SUCCESS', trialPlanId: null },
         _sum: { amountPaise: true }
       });
       const cumulativeMap = new Map(cumulativePayments.map(p => [p.userId, p._sum.amountPaise ?? 0]));

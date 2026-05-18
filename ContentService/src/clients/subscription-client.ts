@@ -12,6 +12,7 @@ const entitlementResponseSchema = z.object({
   planId: z.string(),
   status: z.string(),
   isTrial: z.boolean().optional(),
+  showTrialBanner: z.boolean().optional(),
   contentType: z.enum(["REEL", "EPISODE"]),
   freeLimits: z.record(z.any()).optional(),
 });
@@ -21,6 +22,7 @@ export type ContentEntitlement = {
   canWatch: boolean;
   planPurchased: boolean;
   isTrial: boolean;
+  showTrialBanner: boolean;
 };
 
 const unlockStatusRequestSchema = z.object({
@@ -83,6 +85,7 @@ export class SubscriptionClient {
       canWatch: parsed.data.allowed,
       planPurchased,
       isTrial: parsed.data.isTrial === true,
+      showTrialBanner: parsed.data.showTrialBanner ?? true,
     };
 
     if (redis) {

@@ -34,6 +34,7 @@ export default async function internalRoutes(app: FastifyInstance) {
         planId: subscription.planId || subscription.trialPlanId,
         status: subscription.status,
         isTrial: !!subscription.trialPlan,
+        showTrialBanner: !((subscription.plan as any)?.subscriptionViaTrial ?? false),
         contentType,
       };
     }
@@ -132,6 +133,7 @@ export default async function internalRoutes(app: FastifyInstance) {
           SELECT "userId"
           FROM "Transaction"
           WHERE "status" = 'SUCCESS'
+            AND "trialPlanId" IS NULL
             AND "createdAt" >= ${start}
             AND "createdAt" <= ${end}
           GROUP BY "userId"
@@ -247,6 +249,7 @@ export default async function internalRoutes(app: FastifyInstance) {
         SELECT "userId", SUM("amountPaise") AS total_paid
         FROM "Transaction"
         WHERE "status" = 'SUCCESS'
+          AND "trialPlanId" IS NULL
         GROUP BY "userId"
       ),
       HadTrial AS (
@@ -313,7 +316,7 @@ export default async function internalRoutes(app: FastifyInstance) {
         SELECT
           us."userId",
           CASE
-            WHEN COALESCE(SUM(t."amountPaise") FILTER (WHERE t."status" = 'SUCCESS'), 0) >= 9900 THEN 'PAID'
+            WHEN COALESCE(SUM(t."amountPaise") FILTER (WHERE t."status" = 'SUCCESS' AND t."trialPlanId" IS NULL), 0) >= 9900 THEN 'PAID'
             ELSE 'TRIAL'
           END AS customer_type
         FROM "UserSubscription" us
@@ -430,6 +433,7 @@ export default async function internalRoutes(app: FastifyInstance) {
               MAX("createdAt") as last_payment_date
           FROM "Transaction"
           WHERE "status" = 'SUCCESS'
+            AND "trialPlanId" IS NULL
           GROUP BY "userId"
       ),
       LatestSubscription AS (
@@ -463,33 +467,16 @@ export default async function internalRoutes(app: FastifyInstance) {
   }, async (request) => {
     const { limit } = request.query as { limit: number };
 
-    // Smart Logic for Trials: Cumulative Paid < 9900 AND Active
     const users = await prisma.$queryRaw<any[]>`
-      WITH UserPayments AS (
-          SELECT 
-              "userId",
-              SUM("amountPaise") as total_paid_paise,
-              MAX("createdAt") as last_payment_date
-          FROM "Transaction"
-          WHERE "status" = 'SUCCESS'
-          GROUP BY "userId"
-      ),
-      LatestSubscription AS (
-          SELECT DISTINCT ON ("userId") 
-              "userId", 
-              "status", 
-              "endsAt"
-          FROM "UserSubscription"
-          ORDER BY "userId", "createdAt" DESC
-      )
-      SELECT 
-          up."userId",
-          COALESCE(ls."endsAt", up.last_payment_date + interval '30 days') as "endsAt",
-          'Trial' as "planName"
-      FROM UserPayments up
-      LEFT JOIN LatestSubscription ls ON up."userId" = ls."userId"
-      WHERE up.total_paid_paise < 9900
-        AND COALESCE(ls."endsAt", up.last_payment_date + interval '30 days') > NOW()
+      SELECT DISTINCT ON (us."userId")
+          us."userId",
+          us."endsAt",
+          'Trial' AS "planName"
+      FROM "UserSubscription" us
+      WHERE us."trialPlanId" IS NOT NULL
+        AND us."status" IN ('TRIAL', 'ACTIVE', 'CANCELED')
+        AND us."endsAt" > NOW()
+      ORDER BY us."userId", us."endsAt" DESC
       LIMIT ${limit}
     `;
 
@@ -517,6 +504,7 @@ export default async function internalRoutes(app: FastifyInstance) {
                 SUM("amountPaise") OVER (PARTITION BY "userId" ORDER BY "createdAt") as cumulative_paid
             FROM "Transaction"
             WHERE "status" = 'SUCCESS'
+              AND "trialPlanId" IS NULL
         ),
         TrialThresholds AS (
             -- Users who either have a recorded trial subscription OR at some point had < ₹99 total payments
@@ -623,6 +611,7 @@ export default async function internalRoutes(app: FastifyInstance) {
               SUM("amountPaise") as total_paid_paise
           FROM "Transaction"
           WHERE "status" = 'SUCCESS'
+            AND "trialPlanId" IS NULL
           GROUP BY "userId"
       )
       SELECT 
