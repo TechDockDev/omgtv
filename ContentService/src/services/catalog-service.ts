@@ -1830,7 +1830,7 @@ export class CatalogService {
     adminId: string,
     input: {
       seriesId: string;
-      episodeId: string;
+      episodeId?: string;        // Optional — not needed when creating from trailer
       title: string;
       description?: string | null;
       status?: PublicationStatus;
@@ -1845,17 +1845,23 @@ export class CatalogService {
     const series = await this.repo.findSeriesById(input.seriesId);
     if (!series) throw new CatalogServiceError("NOT_FOUND", "Series not found");
 
-    const episode = await this.repo.findEpisodeById(input.episodeId);
-    if (!episode) throw new CatalogServiceError("NOT_FOUND", "Episode not found");
+    let episode: Awaited<ReturnType<typeof this.repo.findEpisodeById>> | null = null;
+    let trailerAsset: Awaited<ReturnType<typeof this.repo.findTrailerAssetBySeriesId>> | null = null;
 
-    if (episode.seriesId !== input.seriesId) {
-      throw new CatalogServiceError(
-        "FAILED_PRECONDITION",
-        "Episode does not belong to Series"
-      );
+    if (input.episodeId) {
+      // ── Episode-based reel (existing flow) ──
+      episode = await this.repo.findEpisodeById(input.episodeId);
+      if (!episode) throw new CatalogServiceError("NOT_FOUND", "Episode not found");
+
+      if (episode.seriesId !== input.seriesId) {
+        throw new CatalogServiceError(
+          "FAILED_PRECONDITION",
+          "Episode does not belong to Series"
+        );
+      }
     }
 
-    // Resolve Media Asset: explicit ID > uploadId > episode's asset
+    // Resolve Media Asset: explicit ID > uploadId > episode's asset > series trailer
     let targetMediaAssetId: string | null = null;
 
     if (input.mediaAssetId) {
@@ -1866,8 +1872,25 @@ export class CatalogService {
       const asset = await this.repo.findMediaAssetByUploadId(input.uploadId);
       if (!asset) throw new CatalogServiceError("FAILED_PRECONDITION", `MediaAsset not found for uploadId: ${input.uploadId}`);
       targetMediaAssetId = asset.id;
-    } else if (episode.mediaAsset) {
+    } else if (episode?.mediaAsset) {
+      // Episode path — use episode's linked media
       targetMediaAssetId = episode.mediaAsset.id;
+    } else if (!input.episodeId) {
+      // Trailer path — find the TRAILER MediaAsset for this series
+      trailerAsset = await this.repo.findTrailerAssetBySeriesId(input.seriesId);
+      if (!trailerAsset) {
+        throw new CatalogServiceError(
+          "FAILED_PRECONDITION",
+          "No trailer found for this series. Upload a trailer first or provide a mediaAssetId/uploadId."
+        );
+      }
+      if (trailerAsset.reelId) {
+        throw new CatalogServiceError(
+          "CONFLICT",
+          "A reel already exists for this series trailer"
+        );
+      }
+      targetMediaAssetId = trailerAsset.id;
     } else {
       throw new CatalogServiceError(
         "FAILED_PRECONDITION",
@@ -1875,12 +1898,15 @@ export class CatalogService {
       );
     }
 
-    const existingReelForEpisode = await this.repo.findReelByEpisodeId(input.episodeId);
-    if (existingReelForEpisode) {
-      throw new CatalogServiceError(
-        "CONFLICT",
-        "A reel already exists for this episode"
-      );
+    // Duplicate check: one reel per episode (only when episode-based)
+    if (input.episodeId) {
+      const existingReelForEpisode = await this.repo.findReelByEpisodeId(input.episodeId);
+      if (existingReelForEpisode) {
+        throw new CatalogServiceError(
+          "CONFLICT",
+          "A reel already exists for this episode"
+        );
+      }
     }
 
     // Auto-generate slug
@@ -1909,9 +1935,9 @@ export class CatalogService {
       visibility: input.visibility,
       publishedAt: input.publishedAt,
       tags: input.tags,
-      durationSeconds: input.durationSeconds ?? episode.durationSeconds, // Fallback to episode duration
+      durationSeconds: input.durationSeconds ?? episode?.durationSeconds ?? 0, // Fallback to episode duration, then 0 for trailers
       seriesId: input.seriesId,
-      episodeId: input.episodeId,
+      episodeId: input.episodeId ?? null,
       ownerId: (series.ownerId === this.defaultOwnerId) ? adminId : series.ownerId,
       categoryId: series.categoryId,
       adminId,

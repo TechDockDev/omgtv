@@ -2,6 +2,7 @@ import type { Span } from "@opentelemetry/api";
 import { resolveServiceUrl } from "../config";
 import { performServiceRequest, UpstreamServiceError } from "../utils/http";
 import { createHttpError } from "../utils/errors";
+import type { GatewayUser } from "../types";
 import {
   adminLoginBodySchema,
   adminRegisterBodySchema,
@@ -501,7 +502,8 @@ export async function verifyOtp(
 
 export async function getOtpAnalytics(
   params: { from?: string; to?: string; phone?: string },
-  correlationId: string
+  correlationId: string,
+  user?: GatewayUser
 ): Promise<unknown> {
   const baseUrl = resolveServiceUrl("auth");
   const query = new URLSearchParams();
@@ -515,13 +517,15 @@ export async function getOtpAnalytics(
     path: `/api/v1/auth/admin/analytics/otp${qs ? `?${qs}` : ""}`,
     method: "GET",
     correlationId,
+    user,
     spanName: "proxy:auth:analytics-otp",
   });
   return response.payload;
 }
 
 export async function getAuthProviderAnalytics(
-  correlationId: string
+  correlationId: string,
+  user?: GatewayUser
 ): Promise<unknown> {
   const baseUrl = resolveServiceUrl("auth");
   const response = await performServiceRequest<unknown>({
@@ -530,6 +534,7 @@ export async function getAuthProviderAnalytics(
     path: "/api/v1/auth/admin/analytics/auth-providers",
     method: "GET",
     correlationId,
+    user,
     spanName: "proxy:auth:analytics-auth-providers",
   });
   return response.payload;
@@ -537,7 +542,8 @@ export async function getAuthProviderAnalytics(
 
 export async function getOtpPhoneAnalytics(
   phone: string,
-  correlationId: string
+  correlationId: string,
+  user?: GatewayUser
 ): Promise<unknown> {
   const baseUrl = resolveServiceUrl("auth");
   const response = await performServiceRequest<unknown>({
@@ -546,6 +552,7 @@ export async function getOtpPhoneAnalytics(
     path: `/api/v1/auth/admin/analytics/otp/phone/${encodeURIComponent(phone)}`,
     method: "GET",
     correlationId,
+    user,
     spanName: "proxy:auth:analytics-otp-phone",
   });
   return response.payload;

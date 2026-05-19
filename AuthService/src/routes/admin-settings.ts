@@ -1,11 +1,10 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { generalSettingSchema, generalSettingResponseSchema, type GeneralSettingBody } from "../schemas/settings";
 import { authenticateAdmin } from "../utils/auth";
-import fp from "fastify-plugin";
 import { OtpEvent, AuthProvider } from "@prisma/client";
 import { z } from "zod";
 
-export default fp(async function adminSettingsRoutes(fastify: FastifyInstance) {
+const adminSettingsRoutes: FastifyPluginAsync = async function adminSettingsRoutes(fastify: FastifyInstance) {
     fastify.get("/general-settings", {
         schema: {
             response: {
@@ -84,20 +83,19 @@ export default fp(async function adminSettingsRoutes(fastify: FastifyInstance) {
             const to = query.to ? new Date(query.to) : new Date();
             const phoneFilter = query.phone ? { phone: query.phone } : {};
 
-            const [counts, perDay] = await Promise.all([
+            const [counts, rawLogs] = await Promise.all([
                 prisma.otpLog.groupBy({
                     by: ["event"],
                     where: { createdAt: { gte: from, lte: to }, ...phoneFilter },
                     _count: { event: true },
                 }),
-                prisma.otpLog.groupBy({
-                    by: ["event", "createdAt"],
+                prisma.otpLog.findMany({
                     where: {
                         createdAt: { gte: from, lte: to },
                         ...phoneFilter,
                         event: { in: [OtpEvent.SEND_REQUESTED, OtpEvent.VERIFY_SUCCESS, OtpEvent.VERIFY_FAILED] },
                     },
-                    _count: { event: true },
+                    select: { event: true, createdAt: true },
                     orderBy: { createdAt: "asc" },
                 }),
             ]);
@@ -108,6 +106,18 @@ export default fp(async function adminSettingsRoutes(fastify: FastifyInstance) {
                     counts.find((c) => c.event === e)?._count.event ?? 0,
                 ])
             );
+
+            // Aggregate raw logs by calendar day (YYYY-MM-DD) + event
+            const dayMap = new Map<string, Record<string, number>>();
+            for (const log of rawLogs) {
+                const day = log.createdAt.toISOString().slice(0, 10);
+                if (!dayMap.has(day)) dayMap.set(day, {});
+                const entry = dayMap.get(day)!;
+                entry[log.event] = (entry[log.event] ?? 0) + 1;
+            }
+            const perDay = Array.from(dayMap.entries())
+                .map(([date, events]) => ({ date, ...events }))
+                .sort((a, b) => a.date.localeCompare(b.date));
 
             const sent = funnel[OtpEvent.SEND_REQUESTED] || 0;
             const success = funnel[OtpEvent.VERIFY_SUCCESS] || 0;
@@ -196,4 +206,6 @@ export default fp(async function adminSettingsRoutes(fastify: FastifyInstance) {
             };
         },
     });
-});
+};
+
+export default adminSettingsRoutes;

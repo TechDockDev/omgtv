@@ -2258,12 +2258,28 @@ export class CatalogRepository {
   }
 
   async assignMediaAssetToReelById(mediaAssetId: string, reelId: string | null, seriesId: string | null) {
+    const asset = await this.prisma.mediaAsset.findUnique({ where: { id: mediaAssetId } });
+    if (!asset) return null;
+
+    let newType = asset.type;
+    if (reelId && asset.type !== MediaAssetType.TRAILER && asset.type !== MediaAssetType.EPISODE) {
+      newType = MediaAssetType.REEL;
+    }
+
+    // If unlinking, only clear seriesId if it's a dedicated REEL asset
+    let newSeriesId = seriesId;
+    if (reelId === null) {
+      if (asset.type === MediaAssetType.TRAILER || asset.type === MediaAssetType.EPISODE) {
+        newSeriesId = asset.seriesId; // Preserve existing seriesId
+      }
+    }
+
     return this.prisma.mediaAsset.update({
       where: { id: mediaAssetId },
       data: {
         reelId,
-        seriesId,
-        type: reelId ? MediaAssetType.REEL : undefined,
+        seriesId: newSeriesId,
+        type: newType,
       },
     });
   }
@@ -2293,6 +2309,14 @@ export class CatalogRepository {
       where: { reelId },
     });
   }
+
+  async findTrailerAssetBySeriesId(seriesId: string) {
+    return this.prisma.mediaAsset.findFirst({
+      where: { seriesId, type: MediaAssetType.TRAILER, deletedAt: null },
+      include: { variants: true }
+    });
+  }
+
 
   // --- Reel Methods (Additional) ---
 

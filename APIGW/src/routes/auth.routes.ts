@@ -343,7 +343,7 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
     config: { auth: { public: false }, rateLimitPolicy: "authenticated" },
     async handler(request, reply) {
       const { from, to, phone } = request.query;
-      const data = await getOtpAnalytics({ from, to, phone }, request.correlationId);
+      const data = await getOtpAnalytics({ from, to, phone }, request.correlationId, request.user);
       return reply.send(data);
     },
   });
@@ -353,7 +353,7 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
     url: "/admin/analytics/auth-providers",
     config: { auth: { public: false }, rateLimitPolicy: "authenticated" },
     async handler(request, reply) {
-      const data = await getAuthProviderAnalytics(request.correlationId);
+      const data = await getAuthProviderAnalytics(request.correlationId, request.user);
       return reply.send(data);
     },
   });
@@ -364,7 +364,7 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
     config: { auth: { public: false }, rateLimitPolicy: "authenticated" },
     async handler(request, reply) {
       const { phone } = request.params;
-      const data = await getOtpPhoneAnalytics(phone, request.correlationId);
+      const data = await getOtpPhoneAnalytics(phone, request.correlationId, request.user);
       return reply.send(data);
     },
   });

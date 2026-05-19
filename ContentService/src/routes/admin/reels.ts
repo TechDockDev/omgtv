@@ -1,16 +1,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import {
-  CatalogService,
-  CatalogServiceError,
-} from "../../services/catalog-service";
+import { CatalogServiceError } from "../../services/catalog-service";
 import { EngagementClient } from "../../clients/engagement-client";
 import { PublicationStatus, Visibility } from "@prisma/client";
 import { loadConfig } from "../../config";
 
 const createReelSchema = z.object({
   seriesId: z.string().uuid(),
-  episodeId: z.string().uuid(),
+  episodeId: z.string().uuid().optional(),  // Optional — not needed when creating from trailer
   title: z.string().min(1),
   description: z.string().max(5000).optional(),
   status: z.nativeEnum(PublicationStatus).optional(),
@@ -20,8 +17,6 @@ const createReelSchema = z.object({
   durationSeconds: z.number().int().positive().optional(),
   uploadId: z.string().optional(),
   mediaAssetId: z.string().uuid().optional(),
-  heroImageUrl: z.string().url().optional(),
-  defaultThumbnailUrl: z.string().url().optional(),
 });
 
 const updateReelTagsSchema = z.object({
@@ -35,8 +30,6 @@ const updateReelSchema = z.object({
   visibility: z.nativeEnum(Visibility).optional(),
   publishedAt: z.coerce.date().nullable().optional(),
   durationSeconds: z.number().int().positive().optional(),
-  heroImageUrl: z.string().url().nullable().optional(),
-  defaultThumbnailUrl: z.string().url().nullable().optional(),
 });
 
 export default async function adminReelRoutes(fastify: FastifyInstance) {
