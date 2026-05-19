@@ -499,6 +499,27 @@ export async function verifyOtp(
   return parsed.data;
 }
 
+export async function getOtpAnalytics(
+  params: { from?: string; to?: string; phone?: string },
+  correlationId: string
+): Promise<unknown> {
+  const baseUrl = resolveServiceUrl("auth");
+  const query = new URLSearchParams();
+  if (params.from) query.append("from", params.from);
+  if (params.to) query.append("to", params.to);
+  if (params.phone) query.append("phone", params.phone);
+  const qs = query.toString();
+  const response = await performServiceRequest<unknown>({
+    serviceName: "auth",
+    baseUrl,
+    path: `/api/v1/auth/admin/analytics/otp${qs ? `?${qs}` : ""}`,
+    method: "GET",
+    correlationId,
+    spanName: "proxy:auth:analytics-otp",
+  });
+  return response.payload;
+}
+
 export async function getAuthProviderAnalytics(
   correlationId: string
 ): Promise<unknown> {
