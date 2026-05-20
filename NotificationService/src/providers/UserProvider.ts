@@ -8,10 +8,18 @@ export interface UserSearchFilters {
 export class UserProvider {
     private userServiceUrl: string;
     private subscriptionServiceUrl: string;
+    private serviceToken: string | undefined;
 
     constructor() {
         this.userServiceUrl = process.env.USER_SERVICE_URL || 'http://user-service:4500';
         this.subscriptionServiceUrl = process.env.SUBSCRIPTION_SERVICE_URL || 'http://subscription-service:5100';
+        this.serviceToken = process.env.SERVICE_AUTH_TOKEN;
+    }
+
+    private get serviceHeaders(): Record<string, string> {
+        const h: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (this.serviceToken) h['x-service-token'] = this.serviceToken;
+        return h;
     }
 
     /**
@@ -26,7 +34,7 @@ export class UserProvider {
             while (true) {
                 const response = await fetch(`${this.userServiceUrl}/internal/users/search`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: this.serviceHeaders,
                     body: JSON.stringify({ filters, limit: PAGE_SIZE, offset })
                 });
 
@@ -62,7 +70,8 @@ export class UserProvider {
         try {
             while (true) {
                 const response = await fetch(
-                    `${this.subscriptionServiceUrl}/internal/subscriptions/active-users?limit=${PAGE_SIZE}&offset=${offset}`
+                    `${this.subscriptionServiceUrl}/internal/subscriptions/active-users?limit=${PAGE_SIZE}&offset=${offset}`,
+                    { headers: this.serviceHeaders }
                 );
 
                 if (!response.ok) {
@@ -95,7 +104,7 @@ export class UserProvider {
         try {
             const response = await fetch(`${this.userServiceUrl}/internal/users/fcm-tokens`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: this.serviceHeaders,
                 body: JSON.stringify({ userIds })
             });
 

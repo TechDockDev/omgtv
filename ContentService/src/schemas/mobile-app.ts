@@ -228,7 +228,7 @@ const reelItemSchema = z.object({
   id: z.string(),
   title: z.string(),
   description: z.string().nullable(),
-  duration_seconds: z.number().int().positive(),
+  duration_seconds: z.number().int().min(0),
   rating: z.number().nullable(),
   thumbnail: z.string().nullable(),
   streaming: streamingInfoSchema,

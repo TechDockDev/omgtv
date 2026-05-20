@@ -141,7 +141,12 @@ export class CampaignService {
                             totalSent += batchSent;
                             totalFailed += batchFailed;
 
-                            await prisma.notification.createMany({ data: notificationsData });
+                            // Non-blocking DB write — push already sent, don't abort campaign if logging fails
+                            try {
+                                await prisma.notification.createMany({ data: notificationsData });
+                            } catch (dbErr: any) {
+                                console.error(`[CampaignService] DB write failed for campaign ${id} batch, push was already sent:`, dbErr?.message);
+                            }
                         }
                     }
                 }
