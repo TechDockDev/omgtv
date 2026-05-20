@@ -102,10 +102,10 @@ export class UserProvider {
         if (userIds.length === 0) return [];
 
         try {
-            const response = await fetch(`${this.userServiceUrl}/internal/users/fcm-tokens`, {
+            const response = await fetch(`${this.userServiceUrl}/internal/users/fcm-tokens-by-auth-id`, {
                 method: 'POST',
                 headers: this.serviceHeaders,
-                body: JSON.stringify({ userIds })
+                body: JSON.stringify({ authIds: userIds })
             });
 
             if (!response.ok) {
