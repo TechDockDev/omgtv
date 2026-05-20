@@ -141,6 +141,15 @@ export class CampaignService {
                             totalSent += batchSent;
                             totalFailed += batchFailed;
 
+                            // Clean up stale tokens that FCM rejected as unregistered
+                            const staleTokens = uniqueTokens.filter((_, idx) => {
+                                const err = result.responses[idx]?.error as any;
+                                return err?.code === 'messaging/registration-token-not-registered';
+                            });
+                            if (staleTokens.length > 0) {
+                                userProvider.removeStaleTokens(staleTokens).catch(() => {});
+                            }
+
                             // Non-blocking DB write — push already sent, don't abort campaign if logging fails
                             try {
                                 await prisma.notification.createMany({ data: notificationsData });

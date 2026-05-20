@@ -4,6 +4,7 @@ import { pushNotificationService } from '../services/PushNotificationService';
 import prisma from '../prisma';
 import { loadConfig } from '../config';
 import { NotificationType } from '@prisma/client';
+import { userProvider } from '../providers/UserProvider';
 
 const sendPushSchema = z.object({
     userId: z.string(),
@@ -48,6 +49,15 @@ export default async function internalPushRoutes(fastify: FastifyInstance) {
         // 2. Send push via Firebase
         const tokens = [...new Set(fcmTokens.map(t => t.fcmToken))];
         const result = await pushNotificationService.sendToMultipleDevices(tokens, { title, body, data });
+
+        // Clean up stale tokens FCM rejected as unregistered (fire-and-forget)
+        const staleTokens = tokens.filter((_, idx) => {
+            const err = result.responses[idx]?.error as any;
+            return err?.code === 'messaging/registration-token-not-registered';
+        });
+        if (staleTokens.length > 0) {
+            userProvider.removeStaleTokens(staleTokens).catch(() => {});
+        }
 
         // 3. Persist notification record after FCM — if DB fails, push already went out so don't retry
         try {

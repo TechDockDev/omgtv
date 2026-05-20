@@ -160,6 +160,101 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
     },
   });
 
+  const uninstalledQuerySchema = z.object({
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(20),
+    search: z.string().optional(),
+  });
+
+  fastify.get("/app-users/uninstalled", {
+    schema: { querystring: uninstalledQuerySchema },
+    handler: async (request) => {
+      const { page, limit, search } = uninstalledQuerySchema.parse(request.query);
+      const prisma = request.server.prisma;
+
+      const whereClause: any = {
+        devices: { some: {} }, // has at least one linked device
+        NOT: {
+          devices: {
+            some: {
+              device: { fcmToken: { not: null } },
+            },
+          },
+        },
+      };
+
+      if (search) {
+        whereClause.OR = [
+          { phoneNumber: { contains: search } },
+          { name: { contains: search, mode: "insensitive" } },
+          { email: { contains: search, mode: "insensitive" } },
+        ];
+      }
+
+      const [users, total] = await Promise.all([
+        prisma.customerProfile.findMany({
+          where: whereClause,
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: { updatedAt: "desc" },
+          include: {
+            devices: {
+              include: {
+                device: {
+                  select: {
+                    deviceId: true,
+                    os: true,
+                    osVersion: true,
+                    deviceName: true,
+                    model: true,
+                    appVersion: true,
+                    lastSeenAt: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+        prisma.customerProfile.count({ where: whereClause }),
+      ]);
+
+      const items = users.map((u) => ({
+        userId: u.id,
+        name: u.name ?? null,
+        phone: u.phoneNumber ?? null,
+        email: u.email ?? null,
+        status: u.status,
+        registeredAt: u.createdAt,
+        lastSeenAt: u.devices.reduce<Date | null>((latest, link) => {
+          const t = link.device.lastSeenAt;
+          if (!t) return latest;
+          return !latest || t > latest ? t : latest;
+        }, null),
+        devices: u.devices.map((link) => ({
+          deviceId: link.device.deviceId,
+          os: link.device.os ?? null,
+          osVersion: link.device.osVersion ?? null,
+          deviceName: link.device.deviceName ?? null,
+          model: link.device.model ?? null,
+          appVersion: link.device.appVersion ?? null,
+          lastSeenAt: link.device.lastSeenAt ?? null,
+        })),
+      }));
+
+      return {
+        success: true,
+        statusCode: 0,
+        userMessage: "Uninstalled users fetched successfully",
+        data: {
+          items,
+          total,
+          page,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    },
+  });
+
   fastify.get("/app-users/:userId", {
     schema: {
       params: userIdParamsSchema,

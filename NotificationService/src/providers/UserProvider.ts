@@ -121,6 +121,22 @@ export class UserProvider {
     }
 
     /**
+     * Remove stale FCM tokens from UserService after FCM rejects them as unregistered.
+     */
+    async removeStaleTokens(tokens: string[]): Promise<void> {
+        if (tokens.length === 0) return;
+        try {
+            await fetch(`${this.userServiceUrl}/internal/users/fcm-tokens`, {
+                method: 'DELETE',
+                headers: this.serviceHeaders,
+                body: JSON.stringify({ tokens }),
+            });
+        } catch (error) {
+            console.error('[UserProvider] Failed to remove stale FCM tokens:', error);
+        }
+    }
+
+    /**
      * Fetch user profiles for a list of user IDs from UserService.
      */
     async getUserProfiles(userIds: string[]): Promise<Record<string, { name: string | null; email: string | null; phone: string | null }>> {
