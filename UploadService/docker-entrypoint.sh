@@ -6,11 +6,12 @@ if [ -z "${DATABASE_URL:-}" ]; then
 	exit 1
 fi
 
-PRISMA_DB_SYNC=${PRISMA_DB_SYNC:-true}
-
-if [ "$PRISMA_DB_SYNC" = "true" ]; then
-	echo "Syncing database schema via Prisma..."
-	npx prisma db push --schema="prisma/schema.prisma" --skip-generate
+MIGRATION_DIR="./prisma/migrations"
+if ls "${MIGRATION_DIR}"/*/migration.sql 2>/dev/null | grep -q .; then
+	echo "Running Prisma migrations..."
+	npx prisma migrate deploy --schema="prisma/schema.prisma"
+else
+	echo "No migration files found — skipping migrate deploy"
 fi
 
 exec node dist/server.js
