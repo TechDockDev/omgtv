@@ -10,6 +10,7 @@ import { NotificationClient } from "../../clients/notification-client";
 import { TransactionSource, CoinTransactionType } from "@prisma/client";
 import { loadConfig } from "../../config";
 import { getRazorpay } from "../../lib/razorpay";
+import { trackSubscriptionEvent } from "../../lib/analytics";
 const coinService = new CoinService();
 const streakService = new StreakService();
 const contentClient = new ContentClient();
@@ -576,7 +577,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
     }
 
-    await prisma.userSubscription.create({
+    const newSub = await prisma.userSubscription.create({
       data: {
         userId: transaction.userId,
         planId: transaction.planId,
@@ -592,6 +593,17 @@ export default async function customerRoutes(app: FastifyInstance) {
     await invalidateEntitlementCache(transaction.userId);
 
     const isTrial = !!trialPlanId;
+
+    if (isTrial) {
+      const trialDays = Math.round((endsAt.getTime() - startsAt.getTime()) / (1000 * 86400));
+      void trackSubscriptionEvent(transaction.userId, 'trial_activated', { plan_id: transaction.planId ?? '', trial_days: trialDays });
+      const priorTrials = await prisma.userSubscription.count({ where: { userId: transaction.userId, trialPlanId: { not: null }, id: { not: newSub.id } } });
+      if (priorTrials === 0) void trackSubscriptionEvent(transaction.userId, 'first_trial_purchased', { plan_id: transaction.planId ?? '', trial_days: trialDays });
+    } else {
+      void trackSubscriptionEvent(transaction.userId, 'subscription_activated', { plan_id: transaction.planId ?? '' });
+      const priorPaidSubs = await prisma.userSubscription.count({ where: { userId: transaction.userId, trialPlanId: null, id: { not: newSub.id } } });
+      if (priorPaidSubs === 0) void trackSubscriptionEvent(transaction.userId, 'first_subscription_purchased', { plan_id: transaction.planId ?? '' });
+    }
     if (!(await notificationClient.hasSentRecently(transaction.userId, "SUBSCRIPTION_ACTIVATED"))) {
       if (isTrial) {
         const trialDays = Math.round((endsAt.getTime() - startsAt.getTime()) / (1000 * 86400));

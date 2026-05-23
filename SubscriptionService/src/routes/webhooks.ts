@@ -8,6 +8,7 @@ import { SubscriptionStatus, TransactionSource } from "@prisma/client";
 import { invalidateEntitlementCache } from "../lib/redis";
 import { CoinService } from "../services/coinService";
 import { NotificationClient } from "../clients/notification-client";
+import { trackSubscriptionEvent } from "../lib/analytics";
 
 const coinService = new CoinService();
 const notificationClient = new NotificationClient();
@@ -154,6 +155,16 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
                         request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
                         await invalidateEntitlementCache(transaction.userId);
+
+                        if (isTrial) {
+                            void trackSubscriptionEvent(transaction.userId, 'trial_activated', { plan_id: transaction.planId ?? '', trial_days: trialDays });
+                            const priorTrials = await prisma.userSubscription.count({ where: { userId: transaction.userId, trialPlanId: { not: null }, id: { not: userSubscription.id } } });
+                            if (priorTrials === 0) void trackSubscriptionEvent(transaction.userId, 'first_trial_purchased', { plan_id: transaction.planId ?? '', trial_days: trialDays });
+                        } else {
+                            void trackSubscriptionEvent(transaction.userId, 'subscription_activated', { plan_id: transaction.planId ?? '' });
+                            const priorPaidSubs = await prisma.userSubscription.count({ where: { userId: transaction.userId, trialPlanId: null, id: { not: userSubscription.id } } });
+                            if (priorPaidSubs === 0) void trackSubscriptionEvent(transaction.userId, 'first_subscription_purchased', { plan_id: transaction.planId ?? '' });
+                        }
                         if (!(await notificationClient.hasSentRecently(transaction.userId, "SUBSCRIPTION_ACTIVATED"))) {
                             await notificationClient.sendPush(
                                 transaction.userId,
@@ -229,6 +240,14 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         });
 
                         await invalidateEntitlementCache(existingSub.userId);
+
+                        if (wasTrialSub) {
+                            void trackSubscriptionEvent(existingSub.userId, 'subscription_activated', { plan_id: existingSub.planId ?? '' });
+                            const priorPaidSubs = await prisma.userSubscription.count({ where: { userId: existingSub.userId, trialPlanId: null, id: { not: existingSub.id } } });
+                            if (priorPaidSubs === 0) void trackSubscriptionEvent(existingSub.userId, 'first_subscription_purchased', { plan_id: existingSub.planId ?? '' });
+                        } else {
+                            void trackSubscriptionEvent(existingSub.userId, 'subscription_renewed', { plan_id: existingSub.planId ?? '' });
+                        }
 
                         if (wasTrialSub) {
                             request.log.info({
@@ -358,7 +377,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }
                         }
 
-                        await prisma.userSubscription.create({
+                        const newSub = await prisma.userSubscription.create({
                             data: {
                                 userId: tx.userId,
                                 planId: tx.planId,
@@ -371,6 +390,16 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }
                         });
                         await invalidateEntitlementCache(tx.userId);
+
+                        if (isTrial) {
+                            void trackSubscriptionEvent(tx.userId, 'trial_activated', { plan_id: tx.planId ?? '', trial_days: trialDays });
+                            const priorTrials = await prisma.userSubscription.count({ where: { userId: tx.userId, trialPlanId: { not: null }, id: { not: newSub.id } } });
+                            if (priorTrials === 0) void trackSubscriptionEvent(tx.userId, 'first_trial_purchased', { plan_id: tx.planId ?? '', trial_days: trialDays });
+                        } else {
+                            void trackSubscriptionEvent(tx.userId, 'subscription_activated', { plan_id: tx.planId ?? '' });
+                            const priorPaidSubs = await prisma.userSubscription.count({ where: { userId: tx.userId, trialPlanId: null, id: { not: newSub.id } } });
+                            if (priorPaidSubs === 0) void trackSubscriptionEvent(tx.userId, 'first_subscription_purchased', { plan_id: tx.planId ?? '' });
+                        }
                         if (tx.status === "PENDING") {
                             await prisma.transaction.update({
                                 where: { id: tx.id },
@@ -408,15 +437,19 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
                     await prisma.userSubscription.update({
                         where: { id: existingSub.id },
-                        data: {
-                            status,
-                            // Trial cancel → lose access immediately (endsAt = now).
-                            // Paid plan cancel → keep access till current period end (endsAt unchanged).
-                            ...(isCancelledTrial ? { endsAt: new Date() } : {}),
-                        }
+                        data: { status }
                     });
                     await invalidateEntitlementCache(existingSub.userId);
                     request.log.info({ msg: `Subscription ${event}`, subscriptionId, status, isCancelledTrial });
+
+                    if (event === "subscription.cancelled") {
+                        const daysActive = Math.floor((Date.now() - existingSub.startsAt.getTime()) / (1000 * 86400));
+                        if (isCancelledTrial) {
+                            void trackSubscriptionEvent(existingSub.userId, 'trial_cancelled', { plan_id: existingSub.planId ?? '', days_in_trial: daysActive });
+                        } else {
+                            void trackSubscriptionEvent(existingSub.userId, 'subscription_cancelled', { plan_id: existingSub.planId ?? '', days_active: daysActive });
+                        }
+                    }
 
                     // Force immediate cancellation on Razorpay for trials so the paid period
                     // that follows the trial is never charged.
