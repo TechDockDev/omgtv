@@ -69,12 +69,20 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 }
 
                 // 1. Try to find a pending transaction for this subscription (Initial purchase)
-                const transaction = await prisma.transaction.findFirst({
-                    where: {
-                        subscriptionId: subscriptionId,
-                        status: "PENDING"
-                    }
+                // Also check FAILED — happens when user taps buy twice and first tx gets marked FAILED
+                let transaction = await prisma.transaction.findFirst({
+                    where: { subscriptionId: subscriptionId, status: "PENDING" }
                 });
+                if (!transaction) {
+                    const failedTx = await prisma.transaction.findFirst({
+                        where: { subscriptionId: subscriptionId, status: "FAILED" },
+                        orderBy: { createdAt: "desc" }
+                    });
+                    if (failedTx) {
+                        request.log.warn({ msg: "Recovering FAILED transaction on subscription.charged", subscriptionId, txId: failedTx.id });
+                        transaction = failedTx;
+                    }
+                }
 
                 if (transaction) {
                     await prisma.transaction.update({
@@ -184,14 +192,31 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         where: { razorpayOrderId: subscriptionId }
                     });
 
-                    if (existingSub) {
-                        // If the user cancelled auto-renew, the subscription is already CANCELED in our DB.
-                        // EXPIRED means we deliberately ended it (e.g., trial→paid upgrade superseded the old sub).
-                        // Razorpay may still fire subscription.charged for stale subscriptions, but we must NOT
-                        // reactivate one the user (or our own upgrade flow) already terminated.
-                        if (existingSub.status === "CANCELED" || existingSub.status === "EXPIRED") {
-                            request.log.info({ msg: "Skipping renewal for terminated subscription", subscriptionId, userId: existingSub.userId, status: existingSub.status });
-                            // Cancel on Razorpay side immediately to stop further charges
+                    if (!existingSub) {
+                        // Payment captured on Razorpay but no UserSubscription record in DB.
+                        // Log full payload so it can be manually replayed via fix script.
+                        request.log.error({
+                            msg: "UNMATCHED_WEBHOOK: subscription.charged has no UserSubscription record — manual fix required",
+                            subscriptionId,
+                            paymentId,
+                            amountPaise: payload.payment?.entity?.amount,
+                            razorpayCustomerId: payload.subscription?.entity?.customer_id,
+                            webhookPayload: payload,
+                        });
+                    } else {
+                        // Only block renewal if user explicitly cancelled OR it was a trial superseded by upgrade.
+                        // Do NOT use a time-based grace window — if Razorpay fired subscription.charged,
+                        // payment is confirmed regardless of how long ago endsAt was.
+                        const isSupersededTrial = existingSub.status === "EXPIRED" && !!existingSub.trialPlanId;
+
+                        if (existingSub.status === "CANCELED" || isSupersededTrial) {
+                            request.log.info({
+                                msg: "Skipping renewal for terminated subscription",
+                                subscriptionId,
+                                userId: existingSub.userId,
+                                status: existingSub.status,
+                                isSupersededTrial,
+                            });
                             try {
                                 await razorpay.subscriptions.cancel(subscriptionId, false);
                             } catch (cancelErr) {
@@ -200,46 +225,65 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             return reply.send({ status: "ok" });
                         }
 
-                        // Check if we already processed this exact payment
-                        let existingTx = null;
+                        // Idempotency: skip if this exact payment was already recorded
                         if (paymentId) {
-                            existingTx = await prisma.transaction.findFirst({
+                            const existingTx = await prisma.transaction.findFirst({
                                 where: { razorpayPaymentId: paymentId, status: "SUCCESS" }
                             });
+                            if (existingTx) {
+                                request.log.info({ msg: "Duplicate webhook — payment already processed", paymentId });
+                                return reply.send({ status: "ok" });
+                            }
                         }
 
-                        if (existingTx) {
-                            request.log.info({ msg: "Duplicate webhook for payment already processed", paymentId });
-                            return reply.send({ status: "ok" });
+                        // Validate current_end before using it — missing value would set endsAt to Invalid Date
+                        if (!subscriptionEntity.current_end) {
+                            request.log.error({ msg: "Renewal payload missing current_end — cannot set endsAt", subscriptionId, paymentId, webhookPayload: payload });
+                            return reply.code(500).send({ error: "Missing current_end in renewal payload" });
                         }
 
-                        // Detect trial-to-paid transition: if trialPlanId was set, this is a renewal after trial
                         const wasTrialSub = !!existingSub.trialPlanId;
+                        const amountPaise: number = payload.payment?.entity?.amount ?? 0;
+                        const currency: string = payload.payment?.entity?.currency ?? "INR";
+                        const newEndsAt = new Date(subscriptionEntity.current_end * 1000);
 
-                        await prisma.userSubscription.update({
-                            where: { id: existingSub.id },
-                            data: {
-                                status: "ACTIVE",
-                                endsAt: new Date(subscriptionEntity.current_end * 1000),
-                                trialPlanId: null  // Critical: Trial is over, user is now on full premium plan
-                            }
-                        });
+                        if (amountPaise === 0) {
+                            request.log.warn({ msg: "Renewal payment has amountPaise=0 — recording but flagging", subscriptionId, paymentId });
+                        }
 
-                        // Record new transaction for the charge
-                        await prisma.transaction.create({
-                            data: {
-                                userId: existingSub.userId,
-                                planId: existingSub.planId,
-                                amountPaise: payload.payment?.entity?.amount || 0,
-                                currency: payload.payment?.entity?.currency || "INR",
-                                status: "SUCCESS",
-                                subscriptionId: subscriptionId,
-                                razorpayPaymentId: paymentId,
-                                createdAt: new Date(),
-                            }
-                        });
+                        // Atomic: update subscription + create transaction in one DB transaction
+                        await prisma.$transaction([
+                            prisma.userSubscription.update({
+                                where: { id: existingSub.id },
+                                data: {
+                                    status: "ACTIVE",
+                                    endsAt: newEndsAt,
+                                    trialPlanId: null,
+                                }
+                            }),
+                            prisma.transaction.create({
+                                data: {
+                                    userId: existingSub.userId,
+                                    planId: existingSub.planId,
+                                    amountPaise,
+                                    currency,
+                                    status: "SUCCESS",
+                                    subscriptionId,
+                                    razorpayPaymentId: paymentId,
+                                    createdAt: new Date(),
+                                }
+                            }),
+                        ]);
 
                         await invalidateEntitlementCache(existingSub.userId);
+
+                        request.log.info({
+                            msg: wasTrialSub ? "TRIAL-TO-PAID TRANSITION" : "Subscription renewed",
+                            subId: existingSub.id,
+                            userId: existingSub.userId,
+                            amountPaise,
+                            newEndsAt,
+                        });
 
                         if (wasTrialSub) {
                             void trackSubscriptionEvent(existingSub.userId, 'subscription_activated', { plan_id: existingSub.planId ?? '' });
@@ -249,29 +293,14 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             void trackSubscriptionEvent(existingSub.userId, 'subscription_renewed', { plan_id: existingSub.planId ?? '' });
                         }
 
-                        if (wasTrialSub) {
-                            request.log.info({
-                                msg: "TRIAL-TO-PAID TRANSITION: Trial ended, subscription now on paid plan",
-                                subId: existingSub.id,
-                                userId: existingSub.userId,
-                                planId: existingSub.planId,
-                                newEndsAt: new Date(subscriptionEntity.current_end * 1000)
-                            });
-                            await notificationClient.sendPush(
-                                existingSub.userId,
-                                "Subscription Activated",
-                                "Your trial has ended and your paid subscription is now active.",
-                                { type: "SUBSCRIPTION_ACTIVATED" }
-                            );
-                        } else {
-                            request.log.info({ msg: "Subscription renewed", subId: existingSub.id });
-                            await notificationClient.sendPush(
-                                existingSub.userId,
-                                "Subscription Renewed",
-                                "Your subscription has been renewed successfully. Keep enjoying premium content!",
-                                { type: "SUBSCRIPTION_RENEWED" }
-                            );
-                        }
+                        await notificationClient.sendPush(
+                            existingSub.userId,
+                            wasTrialSub ? "Subscription Activated" : "Subscription Renewed",
+                            wasTrialSub
+                                ? "Your trial has ended and your paid subscription is now active."
+                                : "Your subscription has been renewed successfully. Keep enjoying premium content!",
+                            { type: wasTrialSub ? "SUBSCRIPTION_ACTIVATED" : "SUBSCRIPTION_RENEWED" }
+                        );
                     }
                 }
             } else if (event === "subscription.activated") {
@@ -535,7 +564,15 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
             return reply.send({ status: "ok" });
         } catch (err) {
-            request.log.error(err);
+            // Log full payload so the event can be manually replayed if needed
+            request.log.error({
+                msg: "Webhook processing failed",
+                event,
+                subscriptionId: payload?.subscription?.entity?.id,
+                paymentId: payload?.payment?.entity?.id,
+                err,
+                webhookPayload: payload,
+            });
             return reply.code(500).send({ error: "Webhook processing failed" });
         }
     });
