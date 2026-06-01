@@ -433,6 +433,8 @@ export default async function customerRoutes(app: FastifyInstance) {
             transactionId: transaction.id,
             provider: "phonepe",
             orderToken: orderToken.token,
+            phonePeOrderId: orderToken.orderId,
+            phonePeMerchantId: loadConfig().PHONEPE_MERCHANT_ID,
             merchantOrderId,
             merchantSubscriptionId,
             amountPaise: chargeAmount,
@@ -572,7 +574,7 @@ export default async function customerRoutes(app: FastifyInstance) {
       }
 
       const transaction = await prisma.transaction.findFirst({
-        where: { id: transactionId, provider: "phonepe" },
+        where: { id: transactionId, provider: "phonepe", userId },
       });
       if (!transaction) return reply.notFound("Transaction not found");
 
@@ -701,7 +703,11 @@ export default async function customerRoutes(app: FastifyInstance) {
               status: "PENDING_NOTIFY",
             },
           });
-        } catch { /* unique constraint — already created, safe to ignore */ }
+        } catch (err: any) {
+          if (!err?.message?.includes("Unique constraint")) {
+            request.log.error({ msg: "phonepe_verify: failed to create cycle 2 redemption — manual check needed", userId: transaction.userId, error: err?.message });
+          }
+        }
       }
 
       await invalidateEntitlementCache(transaction.userId);

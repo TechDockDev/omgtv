@@ -148,19 +148,30 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         }
 
                         // Activate user subscription - use TRIAL status if this is a trial purchase
-                        const userSubscription = await prisma.userSubscription.create({
-                            data: {
-                                userId: transaction.userId,
-                                planId: transaction.planId,
-                                trialPlanId: transaction.trialPlanId,
-                                status: isTrial ? "TRIAL" : "ACTIVE",
-                                razorpayOrderId: subscriptionId,
-                                transactionId: transaction.id,
-                                provider: "razorpay",
-                                startsAt: subStartsAt,
-                                endsAt: subEndsAt,
+                        let userSubscription;
+                        try {
+                            userSubscription = await prisma.userSubscription.create({
+                                data: {
+                                    userId: transaction.userId,
+                                    planId: transaction.planId,
+                                    trialPlanId: transaction.trialPlanId,
+                                    status: isTrial ? "TRIAL" : "ACTIVE",
+                                    razorpayOrderId: subscriptionId,
+                                    transactionId: transaction.id,
+                                    provider: "razorpay",
+                                    startsAt: subStartsAt,
+                                    endsAt: subEndsAt,
+                                }
+                            });
+                        } catch (err: any) {
+                            if (err?.code === "P2002") {
+                                // Duplicate webhook delivery — concurrent call already created the subscription
+                                request.log.info({ msg: "subscription.charged: duplicate webhook, subscription already created", subscriptionId });
+                                await invalidateEntitlementCache(transaction.userId);
+                                return reply.send({ status: "ok" });
                             }
-                        });
+                            throw err;
+                        }
 
                         request.log.info({ msg: `Subscription ${isTrial ? 'trial' : ''} activated from pending transaction`, userSubscriptionId: userSubscription.id });
                         await invalidateEntitlementCache(transaction.userId);
@@ -408,19 +419,29 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             }
                         }
 
-                        const newSub = await prisma.userSubscription.create({
-                            data: {
-                                userId: tx.userId,
-                                planId: tx.planId,
-                                trialPlanId: tx.trialPlanId,
-                                status: isTrial ? "TRIAL" : "ACTIVE",
-                                razorpayOrderId: subscriptionId,
-                                transactionId: tx.id,
-                                provider: "razorpay",
-                                startsAt,
-                                endsAt,
+                        let newSub;
+                        try {
+                            newSub = await prisma.userSubscription.create({
+                                data: {
+                                    userId: tx.userId,
+                                    planId: tx.planId,
+                                    trialPlanId: tx.trialPlanId,
+                                    status: isTrial ? "TRIAL" : "ACTIVE",
+                                    razorpayOrderId: subscriptionId,
+                                    transactionId: tx.id,
+                                    provider: "razorpay",
+                                    startsAt,
+                                    endsAt,
+                                }
+                            });
+                        } catch (err: any) {
+                            if (err?.code === "P2002") {
+                                request.log.info({ msg: "subscription.activated: duplicate webhook, subscription already created", subscriptionId });
+                                await invalidateEntitlementCache(tx.userId);
+                                return reply.send({ status: "ok" });
                             }
-                        });
+                            throw err;
+                        }
                         await invalidateEntitlementCache(tx.userId);
 
                         if (isTrial) {
@@ -646,7 +667,10 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 if (!merchantOrderId) return reply.send({ success: true });
                 const redemption = await prisma.phonePeRedemption.findUnique({ where: { merchantOrderId } });
                 if (!redemption || redemption.status === "SUCCESS") return reply.send({ success: true });
-                if (redemption.status !== "NOTIFIED") {
+                // Only update if still PENDING_NOTIFY — if already NOTIFIED/EXECUTING/beyond, the
+                // billing cron already recorded the notification. Resetting EXECUTING→NOTIFIED would
+                // restart the 24h cooling window on an in-flight payment and risk a double-execute.
+                if (redemption.status === "PENDING_NOTIFY") {
                     const notifiedAt = new Date();
                     await prisma.phonePeRedemption.update({
                         where: { merchantOrderId },
@@ -674,12 +698,14 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 });
                 if (!redemption) return reply.send({ success: true });
 
+                let didProcess = false;
                 await prisma.$transaction(async (tx) => {
                     const locked = await tx.phonePeRedemption.updateMany({
                         where: { merchantOrderId, status: { not: "SUCCESS" } },
                         data: { status: "SUCCESS" },
                     });
-                    if (locked.count === 0) return; // already processed by reconciliation
+                    if (locked.count === 0) return;
+                    didProcess = true;
 
                     const sub = redemption.userSubscription;
                     const durationDays = sub.plan?.durationDays ?? 30;
@@ -705,51 +731,72 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 status: "PENDING_NOTIFY",
                             },
                         });
-                    } catch { /* unique constraint — already created */ }
+                    } catch (err: any) {
+                        if (!err?.message?.includes("Unique constraint")) {
+                            request.log.error({ msg: "phonepe_webhook: failed to create next cycle redemption — manual check needed", merchantOrderId, error: err?.message });
+                        }
+                    }
                 });
 
-                await invalidateEntitlementCache(redemption.userId);
-                void notificationClient.sendPush(
-                    redemption.userId, "Subscription Renewed",
-                    "Your subscription has been renewed successfully!",
-                    { type: "SUBSCRIPTION_RENEWED" }
-                );
-                void trackSubscriptionEvent(redemption.userId, "subscription_renewed", {
-                    plan_id: redemption.userSubscription.planId ?? "",
-                    provider: "phonepe", cycle_number: redemption.cycleNumber,
-                });
+                if (didProcess) {
+                    await invalidateEntitlementCache(redemption.userId);
+                    void notificationClient.sendPush(
+                        redemption.userId, "Subscription Renewed",
+                        "Your subscription has been renewed successfully!",
+                        { type: "SUBSCRIPTION_RENEWED" }
+                    );
+                    void trackSubscriptionEvent(redemption.userId, "subscription_renewed", {
+                        plan_id: redemption.userSubscription.planId ?? "",
+                        provider: "phonepe", cycle_number: redemption.cycleNumber,
+                    });
+                }
                 return reply.send({ success: true });
             }
 
             if (event === "subscription.redemption.order.failed") {
                 if (!merchantOrderId) return reply.send({ success: true });
                 const redemption = await prisma.phonePeRedemption.findUnique({ where: { merchantOrderId } });
-                if (!redemption || redemption.status === "SUCCESS") return reply.send({ success: true });
+                if (!redemption || redemption.status === "SUCCESS" || redemption.status === "FAILED") return reply.send({ success: true });
 
+                const nonRetryableCodes = new Set([
+                    "TRANSACTION_NOT_PERMITTED", "SUBSCRIPTION_INVALID", "SUBSCRIPTION_CANCELLED",
+                    "SUBSCRIPTION_PAUSED", "MANDATE_LIMIT_EXCEEDED", "FREQUENCY_EXCEEDED",
+                    "INVALID_TRANSACTION", "AUTHORIZATION_FAILURE",
+                ]);
+                const isNonRetryable = payload.errorCode && nonRetryableCodes.has(payload.errorCode);
                 const newAttempts = redemption.executeAttempts + 1;
                 const windowExpiring = redemption.notifyWindowEnd
                     ? redemption.notifyWindowEnd.getTime() - Date.now() < 2 * 60 * 60 * 1000
                     : false;
 
-                if (newAttempts >= 3 || windowExpiring) {
-                    await prisma.phonePeRedemption.update({
-                        where: { merchantOrderId },
-                        data: { status: "FAILED", executeAttempts: newAttempts, lastError: payload.errorCode },
+                const permanentFail = isNonRetryable || newAttempts >= 3 || windowExpiring;
+
+                if (permanentFail) {
+                    let didFail = false;
+                    await prisma.$transaction(async (tx) => {
+                        const result = await tx.phonePeRedemption.updateMany({
+                            where: { merchantOrderId, status: { notIn: ["SUCCESS", "FAILED"] } },
+                            data: { status: "FAILED", executeAttempts: newAttempts, lastError: payload.errorCode },
+                        });
+                        if (result.count === 0) return;
+                        await tx.userSubscription.update({
+                            where: { id: redemption.userSubscriptionId },
+                            data: { status: "CANCELED" },
+                        });
+                        didFail = true;
                     });
-                    await prisma.userSubscription.update({
-                        where: { id: redemption.userSubscriptionId },
-                        data: { status: "CANCELED" },
-                    });
-                    await invalidateEntitlementCache(redemption.userId);
-                    try { await phonepe.cancelSubscription(redemption.merchantSubscriptionId, redemption.userId) } catch {}
-                    void notificationClient.sendPush(
-                        redemption.userId, "Payment Failed",
-                        "We couldn't renew your subscription. Please resubscribe to continue watching.",
-                        { type: "SUBSCRIPTION_PAYMENT_FAILED" }
-                    );
-                    void trackSubscriptionEvent(redemption.userId, "subscription_payment_failed", {
-                        provider: "phonepe", error_code: payload.errorCode, attempts: newAttempts,
-                    });
+                    if (didFail) {
+                        await invalidateEntitlementCache(redemption.userId);
+                        try { await phonepe.cancelSubscription(redemption.merchantSubscriptionId, redemption.userId) } catch {}
+                        void notificationClient.sendPush(
+                            redemption.userId, "Payment Failed",
+                            "We couldn't renew your subscription. Please resubscribe to continue watching.",
+                            { type: "SUBSCRIPTION_PAYMENT_FAILED" }
+                        );
+                        void trackSubscriptionEvent(redemption.userId, "subscription_payment_failed", {
+                            provider: "phonepe", error_code: payload.errorCode, attempts: newAttempts,
+                        });
+                    }
                 } else {
                     await prisma.phonePeRedemption.update({
                         where: { merchantOrderId },

@@ -117,9 +117,9 @@ model UserSubscription {
   transaction        Transaction?         @relation("TransactionUserSubscriptions", fields: [transactionId], references: [id])
   phonePeRedemptions PhonePeRedemption[]
 
+  @@unique([transactionId])
   @@index([userId, status])
   @@index([planId])
-  @@index([transactionId])
   @@index([provider])
   @@index([phonePeSubscriptionId])
 }

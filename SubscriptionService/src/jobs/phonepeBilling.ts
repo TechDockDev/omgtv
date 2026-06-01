@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { getPrisma } from "../lib/prisma";
-import { getPhonePe, isRetryablePhonePeError } from "../lib/phonepe";
+import { getPhonePe, isRetryablePhonePeError, NON_RETRYABLE_CODES } from "../lib/phonepe";
 import { NotificationClient } from "../clients/notification-client";
 import { trackSubscriptionEvent } from "../lib/analytics";
 import { invalidateEntitlementCache } from "../lib/redis";
@@ -66,18 +66,7 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
         amount: redemption.amount,
         mandateMaxAmount: redemption.mandateMaxAmount,
       });
-      await prisma.phonePeRedemption.update({
-        where: { id: redemption.id },
-        data: { status: "FAILED", lastError: "amount_exceeds_mandate_max" },
-      });
-      await prisma.userSubscription.update({
-        where: { id: redemption.userSubscriptionId },
-        data: { status: "CANCELED" },
-      });
-      await invalidateEntitlementCache(redemption.userId);
-      void notificationClient.sendPush(redemption.userId, "Payment Failed",
-        "We couldn't renew your subscription due to a configuration issue. Please resubscribe.",
-        { type: "SUBSCRIPTION_PAYMENT_FAILED" });
+      await _failRedemption(redemption, redemption.executeAttempts, "amount_exceeds_mandate_max", phonepe, log);
       void trackSubscriptionEvent(redemption.userId, "phonepe_mandate_exceeded", {
         provider: "phonepe", redemption_id: redemption.id,
       });
@@ -92,15 +81,13 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
     }
 
     try {
-      const notifyAt = Math.floor(now.getTime() / 1000);
-      const expireAt = Math.floor((now.getTime() + 72 * 60 * 60 * 1000) / 1000);
+      const expireAt = now.getTime() + 72 * 60 * 60 * 1000;
 
       await phonepe.notifyRedemption({
         userId: redemption.userId,
         merchantSubscriptionId: redemption.merchantSubscriptionId,
         merchantOrderId: redemption.merchantOrderId,
         amount: redemption.amount,
-        notifyAt,
         expireAt,
       });
 
@@ -160,9 +147,7 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
     try {
       await phonepe.executeRedemption({
         userId: redemption.userId,
-        merchantSubscriptionId: redemption.merchantSubscriptionId,
         merchantOrderId: redemption.merchantOrderId,
-        amount: redemption.amount,
       });
 
       // Execute accepted — webhook or reconciliation will confirm SUCCESS and extend sub
@@ -211,15 +196,15 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
   }
 
   // ── Pass 3: Expired windows ────────────────────────────────────────────────
-  // Safety net: any PENDING_NOTIFY or NOTIFIED rows whose 72h window has closed
-  const expired = await prisma.phonePeRedemption.findMany({
+  // NOTIFIED rows whose 72h window has closed without a successful execute
+  const expiredNotified = await prisma.phonePeRedemption.findMany({
     where: {
-      status: { in: ["PENDING_NOTIFY", "NOTIFIED"] },
+      status: "NOTIFIED",
       notifyWindowEnd: { lt: now },
     },
   });
 
-  for (const redemption of expired) {
+  for (const redemption of expiredNotified) {
     stats.pass3_expired++;
     log.error({
       msg: "phonepe_billing: notify window expired — marking FAILED",
@@ -228,6 +213,32 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
     });
     await _failRedemption(redemption, redemption.executeAttempts, "window_expired", phonepe, log);
     void trackSubscriptionEvent(redemption.userId, "phonepe_window_expired", {
+      provider: "phonepe", redemption_id: redemption.id,
+    });
+  }
+
+  // PENDING_NOTIFY rows where the subscription is no longer active — notify never succeeded
+  // notifyWindowEnd is NULL on these rows so the NOTIFIED check above never catches them
+  const orphanedNotify = await prisma.phonePeRedemption.findMany({
+    where: {
+      status: "PENDING_NOTIFY",
+      scheduledNotifyAt: { lt: new Date(now.getTime() - 72 * 60 * 60 * 1000) },
+      userSubscription: { status: { in: ["EXPIRED", "CANCELED"] } },
+    },
+  });
+
+  for (const redemption of orphanedNotify) {
+    stats.pass3_expired++;
+    log.error({
+      msg: "phonepe_billing: PENDING_NOTIFY orphaned — subscription expired before notify succeeded",
+      redemptionId: redemption.id,
+      scheduledNotifyAt: redemption.scheduledNotifyAt,
+    });
+    await prisma.phonePeRedemption.update({
+      where: { id: redemption.id },
+      data: { status: "FAILED", lastError: "notify_never_succeeded" },
+    });
+    void trackSubscriptionEvent(redemption.userId, "phonepe_notify_orphaned", {
       provider: "phonepe", redemption_id: redemption.id,
     });
   }
@@ -267,8 +278,7 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
         });
       } else if (status.state === "FAILED") {
         const attempts = redemption.executeAttempts + 1;
-        const retryable = status.errorCode ? !["TRANSACTION_NOT_PERMITTED", "SUBSCRIPTION_INVALID",
-          "SUBSCRIPTION_CANCELLED", "MANDATE_LIMIT_EXCEEDED"].includes(status.errorCode) : true;
+        const retryable = status.errorCode ? !NON_RETRYABLE_CODES.has(status.errorCode) : true;
 
         if (retryable && attempts < 3 && redemption.notifyWindowEnd && redemption.notifyWindowEnd > now) {
           await prisma.phonePeRedemption.update({
@@ -278,11 +288,33 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
         } else {
           await _failRedemption(redemption, attempts, status.errorCode ?? "execute_failed", phonepe, log);
         }
+      } else if (redemption.lastStatusCheckedAt !== null) {
+        // PhonePe returned PENDING (or unknown state) AND we have already checked once before.
+        // This means execute was either never received or is stuck >15 min — safe to reset and retry.
+        // Same merchantOrderId makes the retry idempotent on PhonePe's side.
+        if (redemption.notifyWindowEnd && redemption.notifyWindowEnd > now) {
+          log.warn({
+            msg: "phonepe_billing: EXECUTING stuck — execute likely not received, resetting to NOTIFIED",
+            redemptionId: redemption.id,
+            phonePeState: status.state,
+          });
+          await prisma.phonePeRedemption.update({
+            where: { id: redemption.id },
+            data: { status: "NOTIFIED", lastError: "execute_unconfirmed_reset" },
+          });
+        } else {
+          await _failRedemption(redemption, redemption.executeAttempts, "execute_unconfirmed_window_closed", phonepe, log);
+        }
       }
-      // PENDING = still processing at bank, leave as EXECUTING, check again next pass
+      // PENDING on first check = execute sent, give bank time to confirm
 
     } catch (err: any) {
-      log.warn({ msg: "phonepe_billing: getRedemptionStatus failed", redemptionId: redemption.id, error: err?.message });
+      const windowExpired = redemption.notifyWindowEnd && redemption.notifyWindowEnd < now;
+      if (windowExpired) {
+        log.error({ msg: "phonepe_billing: getRedemptionStatus failed AND notify window expired — EXECUTING row needs manual investigation", redemptionId: redemption.id, merchantOrderId: redemption.merchantOrderId, notifyWindowEnd: redemption.notifyWindowEnd, error: err?.message });
+      } else {
+        log.warn({ msg: "phonepe_billing: getRedemptionStatus failed", redemptionId: redemption.id, error: err?.message });
+      }
     }
   }
 
@@ -302,12 +334,14 @@ async function _handleRedemptionSuccess(
   redemption: any,
   log: JobLogger
 ): Promise<void> {
+  let didProcess = false;
   await prisma.$transaction(async (tx) => {
     const locked = await tx.phonePeRedemption.updateMany({
       where: { id: redemption.id, status: { not: "SUCCESS" } },
       data: { status: "SUCCESS" },
     });
-    if (locked.count === 0) return; // webhook already processed it
+    if (locked.count === 0) return; // already processed — return from callback only
+    didProcess = true;
 
     const sub = redemption.userSubscription;
     const durationDays = sub.plan?.durationDays ?? 30;
@@ -333,8 +367,14 @@ async function _handleRedemptionSuccess(
           status: "PENDING_NOTIFY",
         },
       });
-    } catch { /* unique constraint — next cycle already created */ }
+    } catch (err: any) {
+      if (!err?.message?.includes("Unique constraint")) {
+        log.error({ msg: "phonepe_billing: failed to create next cycle redemption — manual check needed", redemptionId: redemption.id, error: err?.message });
+      }
+    }
   });
+
+  if (!didProcess) return; // another path already handled — do not send duplicate push
 
   await invalidateEntitlementCache(redemption.userId);
 
@@ -358,15 +398,27 @@ async function _failRedemption(
   phonepe: ReturnType<typeof getPhonePe>,
   log: JobLogger
 ): Promise<void> {
-  await prisma.phonePeRedemption.update({
-    where: { id: redemption.id },
-    data: { status: "FAILED", executeAttempts: attempts, lastError: reason },
+  // Atomic + idempotent via interactive transaction:
+  // Only cancel if redemption is not already SUCCESS/FAILED.
+  // The conditional check must be INSIDE the transaction — array syntax runs all ops unconditionally.
+  let didFail = false;
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.phonePeRedemption.updateMany({
+      where: { id: redemption.id, status: { notIn: ["SUCCESS", "FAILED"] } },
+      data: { status: "FAILED", executeAttempts: attempts, lastError: reason },
+    });
+    if (result.count === 0) return; // already SUCCESS or FAILED — leave subscription alone
+    await tx.userSubscription.update({
+      where: { id: redemption.userSubscriptionId },
+      data: { status: "CANCELED" },
+    });
+    didFail = true;
   });
 
-  await prisma.userSubscription.update({
-    where: { id: redemption.userSubscriptionId },
-    data: { status: "CANCELED" },
-  });
+  if (!didFail) {
+    log.warn({ msg: "phonepe_billing: _failRedemption skipped — redemption already SUCCESS or FAILED", redemptionId: redemption.id });
+    return;
+  }
 
   try {
     await phonepe.cancelSubscription(redemption.merchantSubscriptionId, redemption.userId);
@@ -391,6 +443,9 @@ async function _failRedemption(
 
 export function startPhonePeBillingCron(log: JobLogger): void {
   if (timer) return;
+  void runPhonePeBillingPass(log).catch(err =>
+    log.error({ msg: "phonepe_billing_cron: unhandled error on startup run", err })
+  );
   timer = setInterval(() => {
     void runPhonePeBillingPass(log).catch(err =>
       log.error({ msg: "phonepe_billing_cron: unhandled error", err })

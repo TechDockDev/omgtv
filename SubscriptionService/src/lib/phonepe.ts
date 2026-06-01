@@ -7,7 +7,12 @@ const PHONEPE_BASE: Record<string, string> = {
   PROD: "https://api.phonepe.com/apis/pg",
 };
 
-const NON_RETRYABLE_CODES = new Set([
+const PHONEPE_OAUTH_URL: Record<string, string> = {
+  UAT: "https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token",
+  PROD: "https://api.phonepe.com/apis/identity-manager/v1/oauth/token",
+};
+
+export const NON_RETRYABLE_CODES = new Set([
   "TRANSACTION_NOT_PERMITTED",
   "SUBSCRIPTION_INVALID",
   "SUBSCRIPTION_CANCELLED",
@@ -74,7 +79,8 @@ class PhonePeClient {
       client_secret: config.PHONEPE_CLIENT_SECRET!,
       grant_type: "client_credentials",
     });
-    const res = await fetch(`${this.base}/v1/oauth/token`, {
+    const oauthUrl = PHONEPE_OAUTH_URL[config.PHONEPE_ENV] ?? PHONEPE_OAUTH_URL.UAT;
+    const res = await fetch(oauthUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -84,14 +90,16 @@ class PhonePeClient {
       throw new Error(`PhonePe auth failed: ${JSON.stringify(data)}`);
     }
     this.accessToken = data.access_token as string;
-    this.tokenExpiry = Date.now() + (data.expires_in as number) * 1000;
+    const expiresIn = typeof data.expires_in === "number" && data.expires_in > 0 ? data.expires_in : 1800;
+    this.tokenExpiry = Date.now() + expiresIn * 1000;
     return this.accessToken;
   }
 
   private async post<T>(
     path: string,
     body: unknown,
-    opts?: { userId?: string; merchantOrderId?: string; merchantSubscriptionId?: string; eventType?: string }
+    opts?: { userId?: string; merchantOrderId?: string; merchantSubscriptionId?: string; eventType?: string },
+    _retry = true
   ): Promise<T> {
     this.assertConfigured();
     const token = await this.getAccessToken();
@@ -101,11 +109,11 @@ class PhonePeClient {
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json", Authorization: `O-Bearer ${token}` },
         body: JSON.stringify(body),
       });
       httpStatus = res.status;
-      responseBody = await res.json();
+      responseBody = res.status === 204 ? {} : await res.json();
       await this.log({
         userId: opts?.userId,
         merchantOrderId: opts?.merchantOrderId,
@@ -121,6 +129,12 @@ class PhonePeClient {
         const err = responseBody as any;
         const code = err?.code ?? err?.errorCode ?? "UNKNOWN";
         const msg = err?.message ?? err?.userMessage ?? JSON.stringify(err);
+        // 401 = token expired mid-flight; clear cache and retry once
+        if (httpStatus === 401 && _retry) {
+          this.accessToken = null;
+          this.tokenExpiry = 0;
+          return this.post<T>(path, body, opts, false);
+        }
         const error = new PhonePeError(msg, code, httpStatus);
         throw error;
       }
@@ -144,7 +158,8 @@ class PhonePeClient {
 
   private async get<T>(
     path: string,
-    opts?: { userId?: string; merchantOrderId?: string; merchantSubscriptionId?: string; eventType?: string }
+    opts?: { userId?: string; merchantOrderId?: string; merchantSubscriptionId?: string; eventType?: string },
+    _retry = true
   ): Promise<T> {
     this.assertConfigured();
     const token = await this.getAccessToken();
@@ -154,7 +169,7 @@ class PhonePeClient {
     try {
       const res = await fetch(url, {
         method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `O-Bearer ${token}` },
       });
       httpStatus = res.status;
       responseBody = await res.json();
@@ -173,6 +188,11 @@ class PhonePeClient {
         const err = responseBody as any;
         const code = err?.code ?? err?.errorCode ?? "UNKNOWN";
         const msg = err?.message ?? err?.userMessage ?? JSON.stringify(err);
+        if (httpStatus === 401 && _retry) {
+          this.accessToken = null;
+          this.tokenExpiry = 0;
+          return this.get<T>(path, opts, false);
+        }
         throw new PhonePeError(msg, code, httpStatus);
       }
       return responseBody as T;
@@ -202,40 +222,45 @@ class PhonePeClient {
     planId: string;
     isTrial: boolean;
   }): Promise<PhonePeOrderTokenResult> {
-    const config = loadConfig();
     const body = {
-      merchantId: config.PHONEPE_MERCHANT_ID,
       merchantOrderId: params.merchantOrderId,
       amount: params.amount,
       expireAfter: 1200,
       metaInfo: { udf1: params.userId, udf2: params.planId, udf3: params.isTrial ? "trial" : "subscription" },
       paymentFlow: {
-        type: "SUBSCRIPTION_SETUP",
-        merchantSubscriptionId: params.merchantSubscriptionId,
+        type: "SUBSCRIPTION_CHECKOUT_SETUP",
         subscriptionDetails: {
+          subscriptionType: "RECURRING",
+          merchantSubscriptionId: params.merchantSubscriptionId,
           authWorkflowType: "PENNY_DROP",
           amountType: "FIXED",
           maxAmount: params.maxAmount,
           frequency: "ON_DEMAND",
+          productType: "UPI_MANDATE",
         },
       },
     };
-    const res = await this.post<any>("/v2/subscription/order/token", body, {
+    const res = await this.post<any>("/checkout/v2/pay", body, {
       userId: params.userId,
       merchantOrderId: params.merchantOrderId,
       merchantSubscriptionId: params.merchantSubscriptionId,
       eventType: "CREATE_ORDER_TOKEN",
     });
-    return res.data as PhonePeOrderTokenResult;
+    // redirectUrl is "../transact/pgv2?token=<TOKEN>" — extract the token for the Flutter SDK
+    const redirectUrl: string = res.redirectUrl ?? "";
+    const token = new URL(redirectUrl, "https://api.phonepe.com").searchParams.get("token");
+    if (!token) {
+      throw new Error(`PhonePe setup: missing token in redirectUrl — orderId=${res.orderId} redirectUrl=${redirectUrl}`);
+    }
+    return { orderId: res.orderId, token, expireAt: res.expireAt };
   }
 
   async getSubscriptionStatus(merchantSubscriptionId: string, userId?: string): Promise<PhonePeSubscriptionStatus> {
-    const config = loadConfig();
     const res = await this.get<any>(
-      `/v2/subscription/${config.PHONEPE_MERCHANT_ID}/${merchantSubscriptionId}/status`,
+      `/checkout/v2/subscriptions/${merchantSubscriptionId}/status`,
       { userId, merchantSubscriptionId, eventType: "SUBSCRIPTION_STATUS" }
     );
-    return res.data as PhonePeSubscriptionStatus;
+    return res as PhonePeSubscriptionStatus;
   }
 
   async notifyRedemption(params: {
@@ -243,23 +268,19 @@ class PhonePeClient {
     merchantSubscriptionId: string;
     merchantOrderId: string;
     amount: number;
-    notifyAt: number;
     expireAt: number;
   }): Promise<void> {
-    const config = loadConfig();
     const body = {
-      merchantId: config.PHONEPE_MERCHANT_ID,
       merchantOrderId: params.merchantOrderId,
       amount: params.amount,
       expireAt: params.expireAt,
       paymentFlow: {
-        type: "SUBSCRIPTION_REDEMPTION",
+        type: "SUBSCRIPTION_CHECKOUT_REDEMPTION",
         merchantSubscriptionId: params.merchantSubscriptionId,
-        notifyAt: params.notifyAt,
         autoDebit: false,
       },
     };
-    await this.post<any>("/v2/redemption/notify", body, {
+    await this.post<any>("/checkout/v2/subscriptions/notify", body, {
       userId: params.userId,
       merchantOrderId: params.merchantOrderId,
       merchantSubscriptionId: params.merchantSubscriptionId,
@@ -269,41 +290,33 @@ class PhonePeClient {
 
   async executeRedemption(params: {
     userId: string;
-    merchantSubscriptionId: string;
     merchantOrderId: string;
-    amount: number;
   }): Promise<void> {
-    const config = loadConfig();
-    const body = {
-      merchantId: config.PHONEPE_MERCHANT_ID,
-      merchantOrderId: params.merchantOrderId,
-      amount: params.amount,
-      paymentFlow: {
-        type: "SUBSCRIPTION_REDEMPTION",
-        merchantSubscriptionId: params.merchantSubscriptionId,
-      },
-    };
-    await this.post<any>("/v2/redemption/execute", body, {
+    await this.post<any>("/checkout/v2/subscriptions/redeem", { merchantOrderId: params.merchantOrderId }, {
       userId: params.userId,
       merchantOrderId: params.merchantOrderId,
-      merchantSubscriptionId: params.merchantSubscriptionId,
       eventType: "EXECUTE",
     });
   }
 
   async getRedemptionStatus(merchantOrderId: string, userId?: string): Promise<PhonePeRedemptionStatusResult> {
-    const config = loadConfig();
     const res = await this.get<any>(
-      `/v2/redemption/order/${config.PHONEPE_MERCHANT_ID}/${merchantOrderId}/status`,
+      `/checkout/v2/order/${merchantOrderId}/status`,
       { userId, merchantOrderId, eventType: "REDEMPTION_STATUS" }
     );
-    return res.data as PhonePeRedemptionStatusResult;
+    const latestPayment = res.paymentDetails?.[0];
+    return {
+      merchantOrderId,
+      orderId: res.orderId,
+      state: res.state,
+      amount: res.amount,
+      errorCode: latestPayment?.errorCode,
+      detailedErrorCode: latestPayment?.detailedErrorCode,
+    };
   }
 
   async cancelSubscription(merchantSubscriptionId: string, userId?: string): Promise<void> {
-    const config = loadConfig();
-    const body = { merchantId: config.PHONEPE_MERCHANT_ID, merchantSubscriptionId };
-    await this.post<any>(`/v2/subscription/${config.PHONEPE_MERCHANT_ID}/${merchantSubscriptionId}/cancel`, body, {
+    await this.post<any>(`/checkout/v2/subscriptions/${merchantSubscriptionId}/cancel`, {}, {
       userId,
       merchantSubscriptionId,
       eventType: "CANCEL",

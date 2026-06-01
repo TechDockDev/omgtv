@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { getPrisma } from "../lib/prisma";
-import { getPhonePe } from "../lib/phonepe";
+import { getPhonePe, NON_RETRYABLE_CODES } from "../lib/phonepe";
 import { NotificationClient } from "../clients/notification-client";
 import { trackSubscriptionEvent } from "../lib/analytics";
 import { invalidateEntitlementCache } from "../lib/redis";
@@ -58,8 +58,7 @@ export async function runPhonePeReconciliationPass(log: JobLogger): Promise<void
         });
       } else if (status.state === "FAILED") {
         const attempts = redemption.executeAttempts + 1;
-        const retryable = !["TRANSACTION_NOT_PERMITTED", "SUBSCRIPTION_INVALID",
-          "SUBSCRIPTION_CANCELLED", "MANDATE_LIMIT_EXCEEDED"].includes(status.errorCode ?? "");
+        const retryable = !NON_RETRYABLE_CODES.has(status.errorCode ?? "");
         const hasWindow = redemption.notifyWindowEnd && redemption.notifyWindowEnd > now;
 
         if (retryable && attempts < 3 && hasWindow) {
@@ -70,11 +69,32 @@ export async function runPhonePeReconciliationPass(log: JobLogger): Promise<void
         } else {
           await _failRedemption(redemption, attempts, status.errorCode ?? "execute_failed", phonepe, log);
         }
+      } else if (redemption.lastStatusCheckedAt !== null) {
+        // PhonePe returned PENDING (or unknown state) AND we have already checked once before.
+        // Execute was either never received or is stuck >15 min — safe to reset and retry.
+        if (redemption.notifyWindowEnd && redemption.notifyWindowEnd > now) {
+          log.warn({
+            msg: "phonepe_reconciliation: EXECUTING stuck — execute likely not received, resetting to NOTIFIED",
+            redemptionId: redemption.id,
+            phonePeState: status.state,
+          });
+          await prisma.phonePeRedemption.update({
+            where: { id: redemption.id },
+            data: { status: "NOTIFIED", lastError: "execute_unconfirmed_reset" },
+          });
+        } else {
+          await _failRedemption(redemption, redemption.executeAttempts, "execute_unconfirmed_window_closed", phonepe, log);
+        }
       }
-      // PENDING = still processing, leave as EXECUTING, check again next pass
+      // PENDING on first check = execute sent, give bank time to confirm
 
     } catch (err: any) {
-      log.warn({ msg: "phonepe_reconciliation: getRedemptionStatus failed (pass A)", redemptionId: redemption.id, error: err?.message });
+      const windowExpired = redemption.notifyWindowEnd && redemption.notifyWindowEnd < now;
+      if (windowExpired) {
+        log.error({ msg: "phonepe_reconciliation: getRedemptionStatus failed AND notify window expired — EXECUTING row needs manual investigation", redemptionId: redemption.id, merchantOrderId: redemption.merchantOrderId, notifyWindowEnd: redemption.notifyWindowEnd, error: err?.message });
+      } else {
+        log.warn({ msg: "phonepe_reconciliation: getRedemptionStatus failed (pass A)", redemptionId: redemption.id, error: err?.message });
+      }
     }
   }
 
@@ -167,12 +187,14 @@ export async function runPhonePeReconciliationPass(log: JobLogger): Promise<void
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
 async function _handleSuccess(redemption: any, log: JobLogger): Promise<void> {
+  let didProcess = false;
   await prisma.$transaction(async (tx) => {
     const locked = await tx.phonePeRedemption.updateMany({
       where: { id: redemption.id, status: { not: "SUCCESS" } },
       data: { status: "SUCCESS" },
     });
-    if (locked.count === 0) return; // webhook already processed
+    if (locked.count === 0) return;
+    didProcess = true;
 
     const sub = redemption.userSubscription;
     const durationDays = sub.plan?.durationDays ?? 30;
@@ -198,8 +220,14 @@ async function _handleSuccess(redemption: any, log: JobLogger): Promise<void> {
           status: "PENDING_NOTIFY",
         },
       });
-    } catch { /* unique constraint — next cycle already exists */ }
+    } catch (err: any) {
+      if (!err?.message?.includes("Unique constraint")) {
+        log.error({ msg: "phonepe_reconciliation: failed to create next cycle redemption — manual check needed", redemptionId: redemption.id, error: err?.message });
+      }
+    }
   });
+
+  if (!didProcess) return;
 
   await invalidateEntitlementCache(redemption.userId);
 
@@ -223,17 +251,30 @@ async function _failRedemption(
   phonepe: ReturnType<typeof getPhonePe>,
   log: JobLogger
 ): Promise<void> {
-  await prisma.phonePeRedemption.update({
-    where: { id: redemption.id },
-    data: { status: "FAILED", executeAttempts: attempts, lastError: reason },
+  let didFail = false;
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.phonePeRedemption.updateMany({
+      where: { id: redemption.id, status: { notIn: ["SUCCESS", "FAILED"] } },
+      data: { status: "FAILED", executeAttempts: attempts, lastError: reason },
+    });
+    if (result.count === 0) return;
+    await tx.userSubscription.update({
+      where: { id: redemption.userSubscriptionId },
+      data: { status: "CANCELED" },
+    });
+    didFail = true;
   });
-  await prisma.userSubscription.update({
-    where: { id: redemption.userSubscriptionId },
-    data: { status: "CANCELED" },
-  });
+
+  if (!didFail) {
+    log.warn({ msg: "phonepe_reconciliation: _failRedemption skipped — redemption already SUCCESS or FAILED", redemptionId: redemption.id });
+    return;
+  }
+
   try {
     await phonepe.cancelSubscription(redemption.merchantSubscriptionId, redemption.userId);
-  } catch {}
+  } catch (cancelErr: any) {
+    log.warn({ msg: "phonepe_reconciliation: cancelSubscription failed", error: cancelErr?.message });
+  }
 
   await invalidateEntitlementCache(redemption.userId);
 
@@ -252,6 +293,9 @@ async function _failRedemption(
 
 export function startPhonePeReconciliationCron(log: JobLogger): void {
   if (timer) return;
+  void runPhonePeReconciliationPass(log).catch(err =>
+    log.error({ msg: "phonepe_reconciliation_cron: unhandled error on startup run", err })
+  );
   timer = setInterval(() => {
     void runPhonePeReconciliationPass(log).catch(err =>
       log.error({ msg: "phonepe_reconciliation_cron: unhandled error", err })
