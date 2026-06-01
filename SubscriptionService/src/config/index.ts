@@ -29,6 +29,7 @@ const envSchema = z.object({
   RAZORPAY_WEBHOOK_SECRET: z.string().min(1, "RAZORPAY_WEBHOOK_SECRET is required"),
   PHONEPE_CLIENT_ID: z.string().optional(),
   PHONEPE_CLIENT_SECRET: z.string().optional(),
+  PHONEPE_CLIENT_VERSION: z.string().default("1"),
   PHONEPE_MERCHANT_ID: z.string().optional(),
   PHONEPE_ENV: z.enum(["UAT", "PROD"]).default("UAT"),
   PHONEPE_CALLBACK_USERNAME: z.string().optional(),

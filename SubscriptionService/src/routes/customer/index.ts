@@ -10,7 +10,7 @@ import { NotificationClient } from "../../clients/notification-client";
 import { TransactionSource, CoinTransactionType } from "@prisma/client";
 import { loadConfig } from "../../config";
 import { getRazorpay } from "../../lib/razorpay";
-import { getPhonePe, isRetryablePhonePeError } from "../../lib/phonepe";
+import { getPhonePe } from "../../lib/phonepe";
 import { trackSubscriptionEvent } from "../../lib/analytics";
 const coinService = new CoinService();
 const streakService = new StreakService();
@@ -577,8 +577,15 @@ export default async function customerRoutes(app: FastifyInstance) {
       if (!transaction) return reply.notFound("Transaction not found");
 
       // Idempotency check 1: transaction already processed (mobile retry of same request)
+      // Also handles webhook-first scenario: webhook marked transaction SUCCESS but subscription not yet created
       if (transaction.status === "SUCCESS") {
-        return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+        const alreadyCreated = await prisma.userSubscription.findFirst({
+          where: { transactionId: transaction.id, provider: "phonepe" },
+        });
+        if (alreadyCreated) {
+          return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+        }
+        // Transaction is SUCCESS (set by webhook) but subscription not created yet — continue to create it
       }
 
       // Confirm mandate is ACTIVE on PhonePe

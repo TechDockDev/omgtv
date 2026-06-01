@@ -70,6 +70,7 @@ class PhonePeClient {
     const config = loadConfig();
     const body = new URLSearchParams({
       client_id: config.PHONEPE_CLIENT_ID!,
+      client_version: config.PHONEPE_CLIENT_VERSION,
       client_secret: config.PHONEPE_CLIENT_SECRET!,
       grant_type: "client_credentials",
     });
