@@ -20,7 +20,7 @@ async function findActiveSubscription(userId: string) {
     return prisma.userSubscription.findFirst({
         where: {
             userId,
-            status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
+            status: { in: ["ACTIVE", "TRIAL", "CANCELED", "PAUSED"] },
             endsAt: { gt: new Date() },
         },
         orderBy: { startsAt: "desc" },

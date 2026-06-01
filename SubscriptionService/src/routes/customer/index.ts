@@ -10,6 +10,7 @@ import { NotificationClient } from "../../clients/notification-client";
 import { TransactionSource, CoinTransactionType } from "@prisma/client";
 import { loadConfig } from "../../config";
 import { getRazorpay } from "../../lib/razorpay";
+import { getPhonePe, isRetryablePhonePeError } from "../../lib/phonepe";
 import { trackSubscriptionEvent } from "../../lib/analytics";
 const coinService = new CoinService();
 const streakService = new StreakService();
@@ -21,6 +22,7 @@ const purchaseIntentSchema = z.object({
   planId: z.string().uuid(),
   deviceId: z.string().optional(),
   isTrial: z.boolean().optional(),
+  provider: z.enum(["razorpay", "phonepe"]).default("razorpay").optional(),
 });
 
 export default async function customerRoutes(app: FastifyInstance) {
@@ -125,7 +127,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     let subscription = await prisma.userSubscription.findFirst({
       where: {
         userId,
-        status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED", "PAUSED"] },
         endsAt: { gt: new Date() }
       },
       orderBy: { startsAt: "desc" },
@@ -221,12 +223,27 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     // If user has a trial, return trial details instead of main plan
     const isTrial = subscription?.status === "TRIAL" || !!subscription?.trialPlanId;
+
+    // Derive plan name from actual subscription duration (startsAt → endsAt)
+    // so renaming a plan in DB doesn't show wrong name to existing subscribers.
+    function derivePlanName(sub: typeof subscription): string | null {
+      if (!sub) return null;
+      const basePlan = sub.trialPlan || sub.plan;
+      if (!basePlan) return null;
+      const durationMs = sub.endsAt.getTime() - sub.startsAt.getTime();
+      const durationDays = Math.round(durationMs / (1000 * 60 * 60 * 24));
+      const months = Math.round(durationDays / 30);
+      if (months <= 1) return '1 Month Plan';
+      return `${months} Month Plan`;
+    }
+
     const data = subscription ? {
       ...subscription,
       isTrial,
       showTrialBanner: !((subscription.plan as any)?.subscriptionViaTrial ?? false),
       // During trial period, show trial plan information
-      displayPlan: subscription.trialPlan || subscription.plan
+      displayPlan: subscription.trialPlan || subscription.plan,
+      planDisplayName: derivePlanName(subscription),
     } : null;
 
     return {
@@ -271,7 +288,7 @@ export default async function customerRoutes(app: FastifyInstance) {
   app.post("/purchase/intent", {
     schema: { body: purchaseIntentSchema },
   }, async (request, reply) => {
-    const { planId, deviceId, isTrial } = request.body as z.infer<typeof purchaseIntentSchema>;
+    const { planId, deviceId, isTrial, provider = "razorpay" } = request.body as z.infer<typeof purchaseIntentSchema>;
     const userId = request.headers['x-user-id'] as string;
 
     if (!userId) {
@@ -284,12 +301,28 @@ export default async function customerRoutes(app: FastifyInstance) {
       });
     }
 
+    // Distributed lock — prevents two simultaneous intent calls creating duplicate mandates
+    const redis = getRedis();
+    const lockKey = `sub:intent:${userId}`;
+    const lockAcquired = await redis.set(lockKey, "1", "EX", 30, "NX");
+    if (!lockAcquired) {
+      return reply.code(409).send({
+        success: false,
+        statusCode: 409,
+        code: "SUBSCRIPTION_IN_PROGRESS",
+        userMessage: "A subscription attempt is already in progress. Please wait.",
+        developerMessage: "Redis lock active for userId"
+      });
+    }
+
+    try {
+
     // Block if user already has an active, trial, or canceled-but-not-expired subscription
     // Exception: Trial users CAN upgrade to a full paid subscription
     const activeSubscription = await prisma.userSubscription.findFirst({
       where: {
         userId,
-        status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED", "PAUSED"] },
         endsAt: { gt: new Date() },
       },
     });
@@ -346,6 +379,73 @@ export default async function customerRoutes(app: FastifyInstance) {
       return reply.notFound("Plan not found or inactive");
     }
 
+    // ─── PhonePe branch ───────────────────────────────────────────────────────
+    if (provider === "phonepe") {
+      const MANDATE_MAX_AMOUNT = 50000; // ₹500 ceiling covers all realistic future price changes
+      const chargeAmountCheck = trialPlan ? trialPlan.trialPricePaise : plan.pricePaise;
+      // Validate both current charge AND max future renewal amount against mandate ceiling
+      if (chargeAmountCheck > MANDATE_MAX_AMOUNT || plan.pricePaise > MANDATE_MAX_AMOUNT) {
+        return reply.badRequest("Plan price exceeds the maximum mandate amount allowed.");
+      }
+
+      // Mark stale pending PhonePe transactions as FAILED — no external cancel needed (no mandate yet)
+      await prisma.transaction.updateMany({
+        where: { userId, status: "PENDING", planId: plan.id, provider: "phonepe" },
+        data: { status: "FAILED", failureReason: "Superseded by new purchase intent" },
+      });
+
+      const merchantSubscriptionId = `OMGTV_SUB_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const merchantOrderId = `OMGTV_ORD_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const chargeAmount = trialPlan ? trialPlan.trialPricePaise : plan.pricePaise;
+
+      try {
+        const phonepe = getPhonePe();
+        const orderToken = await phonepe.createSubscriptionOrderToken({
+          userId,
+          merchantSubscriptionId,
+          merchantOrderId,
+          amount: chargeAmount,
+          maxAmount: MANDATE_MAX_AMOUNT,
+          planId: plan.id,
+          isTrial: !!trialPlan,
+        });
+
+        const transaction = await prisma.transaction.create({
+          data: {
+            userId,
+            planId: plan.id,
+            amountPaise: chargeAmount,
+            currency: plan.currency,
+            status: "PENDING",
+            provider: "phonepe",
+            subscriptionId: merchantSubscriptionId,
+            trialPlanId: trialPlan ? trialPlan.id : null,
+            metadata: { deviceId, merchantOrderId, merchantSubscriptionId },
+          },
+        });
+
+        return reply.code(201).send({
+          success: true,
+          statusCode: 201,
+          userMessage: "Purchase intent created successfully",
+          developerMessage: "PhonePe order token created",
+          data: {
+            transactionId: transaction.id,
+            provider: "phonepe",
+            orderToken: orderToken.token,
+            merchantOrderId,
+            merchantSubscriptionId,
+            amountPaise: chargeAmount,
+            currency: plan.currency,
+          },
+        });
+      } catch (error: any) {
+        request.log.error(error, "PhonePe createSubscriptionOrderToken failed");
+        return reply.internalServerError("Failed to create subscription with payment provider");
+      }
+    }
+
+    // ─── Razorpay branch (zero changes to existing logic) ────────────────────
     if (!plan.razorpayPlanId) {
       return reply.badRequest("Plan is not configured for online payments (missing Razorpay Plan ID)");
     }
@@ -355,7 +455,7 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     // Cancel any abandoned PENDING transactions for this user to prevent ghost Razorpay subscriptions
     const stalePendingTxs = await prisma.transaction.findMany({
-      where: { userId, status: "PENDING", planId: plan.id },
+      where: { userId, status: "PENDING", planId: plan.id, provider: "razorpay" },
     });
 
     for (const staleTx of stalePendingTxs) {
@@ -363,8 +463,6 @@ export default async function customerRoutes(app: FastifyInstance) {
         where: { id: staleTx.id },
         data: { status: "FAILED", failureReason: "Superseded by new purchase intent" },
       });
-
-      // Cancel the orphaned Razorpay subscription
       if (staleTx.subscriptionId) {
         try {
           await razorpay.subscriptions.cancel(staleTx.subscriptionId);
@@ -384,19 +482,14 @@ export default async function customerRoutes(app: FastifyInstance) {
         notes: {
           userId,
           planId: trialPlan ? trialPlan.id : plan.id,
-          internalPlanId: plan.id, // The actual subscription plan ID
+          internalPlanId: plan.id,
           isTrial: !!trialPlan
         }
       };
 
       if (trialPlan) {
-        // Start the paid subscription after the trial duration
-        // Current time + trial days * 24h * 60m * 60s
         const startAt = Math.floor(Date.now() / 1000) + (trialPlan.durationDays * 24 * 60 * 60);
         subscriptionOptions.start_at = startAt;
-
-        // Provide immediate access via trial
-        // If there is a trial price, we add it as an upfront charge (addon)
         if (trialPlan.trialPricePaise > 0) {
           subscriptionOptions.addons = [{
             item: {
@@ -413,12 +506,13 @@ export default async function customerRoutes(app: FastifyInstance) {
       const transaction = await prisma.transaction.create({
         data: {
           userId,
-          planId: plan.id, // Link to the target plan (SubscriptionPlan)
+          planId: plan.id,
           amountPaise: trialPlan ? trialPlan.trialPricePaise : plan.pricePaise,
           currency: plan.currency,
           subscriptionId: subscription.id,
-          razorpayPlanId: plan.razorpayPlanId, // Storing the Razorpay Plan ID for reference
+          razorpayPlanId: plan.razorpayPlanId,
           trialPlanId: trialPlan ? trialPlan.id : null,
+          provider: "razorpay",
           metadata: {
             deviceId,
             subscriptionId: subscription.id,
@@ -444,26 +538,192 @@ export default async function customerRoutes(app: FastifyInstance) {
       request.log.error(error);
       return reply.internalServerError("Failed to create subscription with payment provider");
     }
+    } finally {
+      await redis.del(lockKey);
+    }
   });
 
   const verifyPurchaseSchema = z.object({
-    paymentId: z.string(),
-    subscriptionId: z.string(),
-    signature: z.string(),
+    // Razorpay fields
+    paymentId: z.string().optional(),
+    subscriptionId: z.string().optional(),
+    signature: z.string().optional(),
+    // PhonePe fields
+    merchantOrderId: z.string().optional(),
+    merchantSubscriptionId: z.string().optional(),
+    transactionId: z.string().optional(),
+    // Router — defaults to razorpay so existing mobile callers need no change
+    provider: z.enum(["razorpay", "phonepe"]).default("razorpay").optional(),
   });
 
   app.post("/purchase/verify", {
     schema: { body: verifyPurchaseSchema },
   }, async (request, reply) => {
-    const { paymentId, subscriptionId, signature } = request.body as z.infer<typeof verifyPurchaseSchema>;
+    const body = request.body as z.infer<typeof verifyPurchaseSchema>;
+    const { provider = "razorpay" } = body;
+    const userId = request.headers["x-user-id"] as string;
+
+    // ─── PhonePe verify branch ────────────────────────────────────────────────
+    if (provider === "phonepe") {
+      const { merchantOrderId, merchantSubscriptionId, transactionId } = body;
+
+      if (!merchantOrderId || !merchantSubscriptionId || !transactionId) {
+        return reply.badRequest("merchantOrderId, merchantSubscriptionId and transactionId are required for PhonePe verify");
+      }
+
+      const transaction = await prisma.transaction.findFirst({
+        where: { id: transactionId, provider: "phonepe" },
+      });
+      if (!transaction) return reply.notFound("Transaction not found");
+
+      // Idempotency check 1: transaction already processed (mobile retry of same request)
+      if (transaction.status === "SUCCESS") {
+        return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+      }
+
+      // Confirm mandate is ACTIVE on PhonePe
+      let ppStatus: any;
+      try {
+        ppStatus = await getPhonePe().getSubscriptionStatus(merchantSubscriptionId, userId);
+      } catch (err: any) {
+        request.log.error(err, "PhonePe getSubscriptionStatus failed");
+        return reply.internalServerError("Could not verify subscription status with PhonePe");
+      }
+
+      // Idempotency check 2: another device raced and already created the subscription
+      const existingSub = await prisma.userSubscription.findFirst({
+        where: { userId: transaction.userId, provider: "phonepe", status: { in: ["ACTIVE", "TRIAL", "PAUSED"] } },
+      });
+      if (existingSub) {
+        // Cancel the losing mandate (different merchantSubscriptionId means a different device won)
+        if (existingSub.phonePeSubscriptionId !== merchantSubscriptionId) {
+          try { await getPhonePe().cancelSubscription(merchantSubscriptionId, userId) } catch {}
+        }
+        return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+      }
+
+      if (ppStatus.state !== "ACTIVE") {
+        return reply.code(400).send({
+          success: false, statusCode: 400, code: "MANDATE_NOT_ACTIVE",
+          userMessage: "Subscription mandate is not yet active. Please try again.",
+          developerMessage: `PhonePe subscription state: ${ppStatus.state}`,
+        });
+      }
+
+      // Expire existing trial if this is an upgrade
+      const existingTrialSub = await prisma.userSubscription.findFirst({
+        where: { userId: transaction.userId, status: { in: ["TRIAL", "CANCELED"] }, trialPlanId: { not: null }, endsAt: { gt: new Date() } },
+      });
+      if (existingTrialSub) {
+        await prisma.userSubscription.update({ where: { id: existingTrialSub.id }, data: { status: "EXPIRED", endsAt: new Date() } });
+        if (existingTrialSub.phonePeSubscriptionId) {
+          try { await getPhonePe().cancelSubscription(existingTrialSub.phonePeSubscriptionId, userId) } catch {}
+        }
+        // Cancel pending redemptions for old trial
+        await prisma.phonePeRedemption.updateMany({
+          where: { userSubscriptionId: existingTrialSub.id, status: { in: ["PENDING_NOTIFY", "NOTIFIED"] } },
+          data: { status: "FAILED", lastError: "Superseded by plan upgrade" },
+        });
+      }
+
+      await prisma.transaction.update({ where: { id: transaction.id }, data: { status: "SUCCESS" } });
+
+      const trialPlanId = transaction.trialPlanId;
+      let startsAt = new Date();
+      let endsAt = new Date();
+
+      if (trialPlanId) {
+        const trialPlan = await prisma.trialPlan.findUnique({ where: { id: trialPlanId } });
+        if (trialPlan) endsAt = new Date(Date.now() + trialPlan.durationDays * 24 * 60 * 60 * 1000);
+      } else {
+        const plan = await prisma.subscriptionPlan.findUnique({ where: { id: transaction.planId! } });
+        if (plan) endsAt = new Date(Date.now() + plan.durationDays * 24 * 60 * 60 * 1000);
+      }
+
+      const newSub = await prisma.userSubscription.create({
+        data: {
+          userId: transaction.userId,
+          planId: transaction.planId,
+          trialPlanId,
+          status: trialPlanId ? "TRIAL" : "ACTIVE",
+          provider: "phonepe",
+          phonePeSubscriptionId: ppStatus.subscriptionId ?? merchantSubscriptionId,
+          mandateMaxAmount: 50000,
+          razorpayOrderId: null,
+          transactionId: transaction.id,
+          startsAt,
+          endsAt,
+        },
+      });
+
+      // First payment already done by SDK — mark cycle 1 SUCCESS
+      // try/catch: concurrent verify calls would hit unique constraint on merchantOrderId
+      try { await prisma.phonePeRedemption.create({
+        data: {
+          userId: transaction.userId,
+          userSubscriptionId: newSub.id,
+          merchantSubscriptionId,
+          merchantOrderId,
+          amount: transaction.amountPaise,
+          isTrialCycle: !!trialPlanId,
+          cycleNumber: 1,
+          mandateMaxAmount: 50000,
+          scheduledNotifyAt: new Date(0), // past — already done
+          status: "SUCCESS",
+          notifiedAt: new Date(),
+          notifyWindowEnd: new Date(),
+        },
+      }); } catch { /* duplicate merchantOrderId — concurrent verify, safe to ignore */ }
+
+      // Schedule cycle 2 (first auto-renewal)
+      const plan = await prisma.subscriptionPlan.findUnique({ where: { id: transaction.planId! } });
+      if (plan) {
+        const scheduledNotifyAt = new Date(endsAt.getTime() - 49 * 60 * 60 * 1000);
+        try {
+          await prisma.phonePeRedemption.create({
+            data: {
+              userId: transaction.userId,
+              userSubscriptionId: newSub.id,
+              merchantSubscriptionId,
+              merchantOrderId: `OMGTV_ORD_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
+              amount: plan.pricePaise,
+              isTrialCycle: false,
+              cycleNumber: 2,
+              mandateMaxAmount: 50000,
+              scheduledNotifyAt,
+              status: "PENDING_NOTIFY",
+            },
+          });
+        } catch { /* unique constraint — already created, safe to ignore */ }
+      }
+
+      await invalidateEntitlementCache(transaction.userId);
+      const isTrial = !!trialPlanId;
+
+      if (isTrial) {
+        const trialDays = Math.round((endsAt.getTime() - startsAt.getTime()) / (1000 * 86400));
+        void trackSubscriptionEvent(transaction.userId, "trial_activated", { plan_id: transaction.planId ?? "", trial_days: trialDays, provider: "phonepe" });
+        await notificationClient.sendPush(transaction.userId, "Free Trial Activated!", `Your ${trialDays} day trial has been activated.`, { type: "SUBSCRIPTION_ACTIVATED" });
+      } else {
+        void trackSubscriptionEvent(transaction.userId, "subscription_activated", { plan_id: transaction.planId ?? "", provider: "phonepe" });
+        await notificationClient.sendPush(transaction.userId, "Subscription Activated", "Your subscription is now active. Enjoy unlimited content!", { type: "SUBSCRIPTION_ACTIVATED" });
+      }
+
+      return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+    }
+
+    // ─── Razorpay verify branch (zero changes) ────────────────────────────────
+    const { paymentId, subscriptionId, signature } = body;
+    if (!paymentId || !subscriptionId || !signature) {
+      return reply.badRequest("paymentId, subscriptionId and signature are required for Razorpay verify");
+    }
     const { getRazorpay } = await import("../../lib/razorpay");
 
     // Validate signature
-    const crypto = await import("crypto");
-    const config = await import("../../config").then(m => m.loadConfig());
+    const razorpayConfig = await import("../../config").then(m => m.loadConfig());
 
-    const expectedSignature = crypto.default
-      .createHmac("sha256", config.RAZORPAY_KEY_SECRET)
+    const expectedSignature = crypto
+      .createHmac("sha256", razorpayConfig.RAZORPAY_KEY_SECRET)
       .update(`${paymentId}|${subscriptionId}`)
       .digest("hex");
 
@@ -582,9 +842,10 @@ export default async function customerRoutes(app: FastifyInstance) {
         userId: transaction.userId,
         planId: transaction.planId,
         trialPlanId: trialPlanId,
-        status: trialPlanId ? "TRIAL" : "ACTIVE", // TRIAL status during trial period, ACTIVE for regular plans
+        status: trialPlanId ? "TRIAL" : "ACTIVE",
         razorpayOrderId: subscriptionId,
         transactionId: transaction.id,
+        provider: "razorpay",
         startsAt,
         endsAt
       }

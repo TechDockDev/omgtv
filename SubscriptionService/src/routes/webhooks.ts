@@ -156,6 +156,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 status: isTrial ? "TRIAL" : "ACTIVE",
                                 razorpayOrderId: subscriptionId,
                                 transactionId: transaction.id,
+                                provider: "razorpay",
                                 startsAt: subStartsAt,
                                 endsAt: subEndsAt,
                             }
@@ -270,6 +271,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                     status: "SUCCESS",
                                     subscriptionId,
                                     razorpayPaymentId: paymentId,
+                                    provider: "razorpay",
                                     createdAt: new Date(),
                                 }
                             }),
@@ -414,6 +416,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                                 status: isTrial ? "TRIAL" : "ACTIVE",
                                 razorpayOrderId: subscriptionId,
                                 transactionId: tx.id,
+                                provider: "razorpay",
                                 startsAt,
                                 endsAt,
                             }
@@ -573,6 +576,265 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 err,
                 webhookPayload: payload,
             });
+            return reply.code(500).send({ error: "Webhook processing failed" });
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PhonePe webhook handler
+    // ─────────────────────────────────────────────────────────────────────────
+    app.post("/phonepe", async (request, reply) => {
+        const { getPhonePe } = await import("../lib/phonepe");
+        const phonepe = getPhonePe();
+        const authHeader = request.headers["authorization"] as string;
+
+        if (!phonepe.verifyWebhookSignature(authHeader)) {
+            request.log.warn({ msg: "Invalid PhonePe webhook signature" });
+            return reply.code(401).send({ error: "Unauthorized" });
+        }
+
+        const body = request.body as any;
+        const event: string = body.event ?? "";
+        const payload = body.payload ?? {};
+
+        const merchantOrderId: string | undefined =
+            payload.merchantOrderId ?? payload.originalMerchantOrderId;
+        const merchantSubscriptionId: string | undefined =
+            payload.paymentFlow?.merchantSubscriptionId ?? payload.merchantSubscriptionId;
+
+        await phonepe.logInboundWebhook({
+            userId: undefined,
+            merchantOrderId,
+            merchantSubscriptionId,
+            eventType: event,
+            body,
+            success: true,
+        });
+
+        request.log.info({ msg: "PhonePe webhook received", event, merchantOrderId, merchantSubscriptionId });
+
+        try {
+            // ── Mandate setup ──────────────────────────────────────────────
+            if (event === "subscription.setup.order.completed") {
+                if (merchantSubscriptionId) {
+                    const existingSub = await prisma.userSubscription.findFirst({
+                        where: { phonePeSubscriptionId: merchantSubscriptionId, status: { in: ["ACTIVE", "TRIAL"] } },
+                    });
+                    if (existingSub) return reply.send({ success: true }); // already handled by verify
+                }
+                if (merchantOrderId) {
+                    await prisma.transaction.updateMany({
+                        where: { metadata: { path: ["merchantOrderId"], equals: merchantOrderId }, status: "PENDING" },
+                        data: { status: "SUCCESS" },
+                    });
+                }
+                return reply.send({ success: true });
+            }
+
+            if (event === "subscription.setup.order.failed") {
+                if (merchantOrderId) {
+                    await prisma.transaction.updateMany({
+                        where: { metadata: { path: ["merchantOrderId"], equals: merchantOrderId }, status: "PENDING" },
+                        data: { status: "FAILED", failureReason: payload.errorCode ?? "Setup failed" },
+                    });
+                }
+                return reply.send({ success: true });
+            }
+
+            // ── Notify ─────────────────────────────────────────────────────
+            if (event === "subscription.notification.completed") {
+                if (!merchantOrderId) return reply.send({ success: true });
+                const redemption = await prisma.phonePeRedemption.findUnique({ where: { merchantOrderId } });
+                if (!redemption || redemption.status === "SUCCESS") return reply.send({ success: true });
+                if (redemption.status !== "NOTIFIED") {
+                    const notifiedAt = new Date();
+                    await prisma.phonePeRedemption.update({
+                        where: { merchantOrderId },
+                        data: {
+                            status: "NOTIFIED",
+                            notifiedAt,
+                            notifyWindowEnd: new Date(notifiedAt.getTime() + 72 * 60 * 60 * 1000),
+                        },
+                    });
+                }
+                return reply.send({ success: true });
+            }
+
+            if (event === "subscription.notification.failed") {
+                request.log.warn({ msg: "PhonePe notify failed", merchantOrderId, errorCode: payload.errorCode });
+                return reply.send({ success: true }); // cron will retry
+            }
+
+            // ── Redemption completed ───────────────────────────────────────
+            if (event === "subscription.redemption.order.completed") {
+                if (!merchantOrderId) return reply.send({ success: true });
+                const redemption = await prisma.phonePeRedemption.findUnique({
+                    where: { merchantOrderId },
+                    include: { userSubscription: { include: { plan: true } } },
+                });
+                if (!redemption) return reply.send({ success: true });
+
+                await prisma.$transaction(async (tx) => {
+                    const locked = await tx.phonePeRedemption.updateMany({
+                        where: { merchantOrderId, status: { not: "SUCCESS" } },
+                        data: { status: "SUCCESS" },
+                    });
+                    if (locked.count === 0) return; // already processed by reconciliation
+
+                    const sub = redemption.userSubscription;
+                    const durationDays = sub.plan?.durationDays ?? 30;
+                    const newEndsAt = new Date(sub.endsAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+                    await tx.userSubscription.update({
+                        where: { id: sub.id },
+                        data: { endsAt: newEndsAt, status: "ACTIVE" },
+                    });
+
+                    try {
+                        await tx.phonePeRedemption.create({
+                            data: {
+                                userId: redemption.userId,
+                                userSubscriptionId: sub.id,
+                                merchantSubscriptionId: redemption.merchantSubscriptionId,
+                                merchantOrderId: `OMGTV_ORD_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
+                                amount: sub.plan?.pricePaise ?? redemption.amount,
+                                isTrialCycle: false,
+                                cycleNumber: redemption.cycleNumber + 1,
+                                mandateMaxAmount: redemption.mandateMaxAmount,
+                                scheduledNotifyAt: new Date(newEndsAt.getTime() - 49 * 60 * 60 * 1000),
+                                status: "PENDING_NOTIFY",
+                            },
+                        });
+                    } catch { /* unique constraint — already created */ }
+                });
+
+                await invalidateEntitlementCache(redemption.userId);
+                void notificationClient.sendPush(
+                    redemption.userId, "Subscription Renewed",
+                    "Your subscription has been renewed successfully!",
+                    { type: "SUBSCRIPTION_RENEWED" }
+                );
+                void trackSubscriptionEvent(redemption.userId, "subscription_renewed", {
+                    plan_id: redemption.userSubscription.planId ?? "",
+                    provider: "phonepe", cycle_number: redemption.cycleNumber,
+                });
+                return reply.send({ success: true });
+            }
+
+            if (event === "subscription.redemption.order.failed") {
+                if (!merchantOrderId) return reply.send({ success: true });
+                const redemption = await prisma.phonePeRedemption.findUnique({ where: { merchantOrderId } });
+                if (!redemption || redemption.status === "SUCCESS") return reply.send({ success: true });
+
+                const newAttempts = redemption.executeAttempts + 1;
+                const windowExpiring = redemption.notifyWindowEnd
+                    ? redemption.notifyWindowEnd.getTime() - Date.now() < 2 * 60 * 60 * 1000
+                    : false;
+
+                if (newAttempts >= 3 || windowExpiring) {
+                    await prisma.phonePeRedemption.update({
+                        where: { merchantOrderId },
+                        data: { status: "FAILED", executeAttempts: newAttempts, lastError: payload.errorCode },
+                    });
+                    await prisma.userSubscription.update({
+                        where: { id: redemption.userSubscriptionId },
+                        data: { status: "CANCELED" },
+                    });
+                    await invalidateEntitlementCache(redemption.userId);
+                    try { await phonepe.cancelSubscription(redemption.merchantSubscriptionId, redemption.userId) } catch {}
+                    void notificationClient.sendPush(
+                        redemption.userId, "Payment Failed",
+                        "We couldn't renew your subscription. Please resubscribe to continue watching.",
+                        { type: "SUBSCRIPTION_PAYMENT_FAILED" }
+                    );
+                    void trackSubscriptionEvent(redemption.userId, "subscription_payment_failed", {
+                        provider: "phonepe", error_code: payload.errorCode, attempts: newAttempts,
+                    });
+                } else {
+                    await prisma.phonePeRedemption.update({
+                        where: { merchantOrderId },
+                        data: { status: "NOTIFIED", executeAttempts: newAttempts, lastError: payload.errorCode },
+                    });
+                }
+                return reply.send({ success: true });
+            }
+
+            if (event === "subscription.redemption.transaction.completed") {
+                if (merchantOrderId && payload.paymentDetails?.[0]) {
+                    const detail = payload.paymentDetails[0];
+                    await prisma.phonePeRedemption.updateMany({
+                        where: { merchantOrderId },
+                        data: { metadata: { utr: detail.rail?.utr, transactionId: detail.transactionId } },
+                    });
+                }
+                return reply.send({ success: true });
+            }
+
+            if (event === "subscription.redemption.transaction.failed") {
+                request.log.warn({ msg: "PhonePe redemption transaction attempt failed", merchantOrderId });
+                return reply.send({ success: true });
+            }
+
+            // ── Lifecycle events ───────────────────────────────────────────
+            if (event === "subscription.paused") {
+                if (!merchantSubscriptionId) return reply.send({ success: true });
+                await prisma.userSubscription.updateMany({
+                    where: { phonePeSubscriptionId: merchantSubscriptionId },
+                    data: { status: "PAUSED" },
+                });
+                const sub = await prisma.userSubscription.findFirst({ where: { phonePeSubscriptionId: merchantSubscriptionId } });
+                if (sub) {
+                    await invalidateEntitlementCache(sub.userId);
+                    void notificationClient.sendPush(sub.userId, "Subscription Paused",
+                        "Your subscription mandate has been paused from your UPI app.", { type: "SUBSCRIPTION_PAUSED" });
+                }
+                return reply.send({ success: true });
+            }
+
+            if (event === "subscription.unpaused") {
+                if (!merchantSubscriptionId) return reply.send({ success: true });
+                await prisma.userSubscription.updateMany({
+                    where: { phonePeSubscriptionId: merchantSubscriptionId, status: "PAUSED" },
+                    data: { status: "ACTIVE" },
+                });
+                const unpausedSub = await prisma.userSubscription.findFirst({ where: { phonePeSubscriptionId: merchantSubscriptionId } });
+                if (unpausedSub) await invalidateEntitlementCache(unpausedSub.userId);
+                return reply.send({ success: true });
+            }
+
+            if (event === "subscription.revoked" || event === "subscription.cancelled") {
+                if (!merchantSubscriptionId) return reply.send({ success: true });
+                const sub = await prisma.userSubscription.findFirst({
+                    where: { phonePeSubscriptionId: merchantSubscriptionId },
+                });
+                if (!sub || sub.status === "CANCELED" || sub.status === "EXPIRED") {
+                    return reply.send({ success: true }); // idempotent
+                }
+                await prisma.userSubscription.update({
+                    where: { id: sub.id },
+                    data: { status: "CANCELED" },
+                });
+                await invalidateEntitlementCache(sub.userId);
+                void notificationClient.sendPush(sub.userId, "Subscription Cancelled",
+                    "Your subscription has been cancelled. You'll retain access until the end of your current period.",
+                    { type: "SUBSCRIPTION_CANCELLED" });
+                void trackSubscriptionEvent(sub.userId, "subscription_cancelled", {
+                    provider: "phonepe",
+                    reason: event === "subscription.revoked" ? "user_revoked" : "cancelled",
+                });
+                return reply.send({ success: true });
+            }
+
+            if (["pg.refund.completed", "pg.refund.accepted", "pg.refund.failed"].includes(event)) {
+                request.log.info({ msg: `PhonePe refund event: ${event}`, payload });
+                return reply.send({ success: true });
+            }
+
+            request.log.info({ msg: "PhonePe unhandled webhook event", event });
+            return reply.send({ success: true });
+
+        } catch (err) {
+            request.log.error({ msg: "PhonePe webhook processing error", event, err });
             return reply.code(500).send({ error: "Webhook processing failed" });
         }
     });

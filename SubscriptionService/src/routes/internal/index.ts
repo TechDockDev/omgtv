@@ -21,7 +21,7 @@ export default async function internalRoutes(app: FastifyInstance) {
     const subscription = await prisma.userSubscription.findFirst({
       where: {
         userId,
-        status: { in: ["ACTIVE", "TRIAL", "CANCELED"] },
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED", "PAUSED"] },
         endsAt: { gt: new Date() } // Ensure subscription hasn't expired
       },
       orderBy: { startsAt: "desc" },
@@ -734,6 +734,131 @@ export default async function internalRoutes(app: FastifyInstance) {
       request.log.error(error, "Failed to credit coins internally");
       return reply.code(500).send({ error: "Internal credit failed" });
     }
+  });
+
+  // ── PhonePe debug & analytics ─────────────────────────────────────────────
+
+  // Full debug view for a user — support investigation
+  app.get("/phonepe/debug/:userId", {
+    schema: { params: z.object({ userId: z.string() }) },
+  }, async (request) => {
+    const { userId } = request.params as { userId: string };
+
+    const [subscriptions, redemptions, eventLog] = await Promise.all([
+      prisma.userSubscription.findMany({
+        where: { userId, provider: "phonepe" },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true, status: true, provider: true,
+          phonePeSubscriptionId: true, mandateMaxAmount: true,
+          startsAt: true, endsAt: true, createdAt: true,
+          plan: { select: { name: true, pricePaise: true, durationDays: true } },
+          trialPlan: { select: { trialPricePaise: true, durationDays: true } },
+        },
+      }),
+      prisma.phonePeRedemption.findMany({
+        where: { userId },
+        orderBy: { cycleNumber: "asc" },
+        select: {
+          id: true, cycleNumber: true, amount: true, isTrialCycle: true,
+          merchantOrderId: true, merchantSubscriptionId: true,
+          status: true, executeAttempts: true, lastError: true,
+          scheduledNotifyAt: true, notifiedAt: true, notifyWindowEnd: true,
+          lastStatusCheckedAt: true, createdAt: true, updatedAt: true,
+        },
+      }),
+      prisma.phonePeEventLog.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        select: {
+          id: true, eventType: true, direction: true,
+          success: true, httpStatus: true, createdAt: true,
+          merchantOrderId: true, merchantSubscriptionId: true,
+        },
+      }),
+    ]);
+
+    return { userId, subscriptions, redemptions, eventLog };
+  });
+
+  // PhonePe cron health stats — last 24h
+  app.get("/phonepe/stats/cron", async () => {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [
+      pendingNotify, notified, executing, successLast24h, failedLast24h,
+      outboundCalls, failedOutbound,
+    ] = await Promise.all([
+      prisma.phonePeRedemption.count({ where: { status: "PENDING_NOTIFY" } }),
+      prisma.phonePeRedemption.count({ where: { status: "NOTIFIED" } }),
+      prisma.phonePeRedemption.count({ where: { status: "EXECUTING" } }),
+      prisma.phonePeRedemption.count({ where: { status: "SUCCESS", updatedAt: { gte: since } } }),
+      prisma.phonePeRedemption.count({ where: { status: "FAILED", updatedAt: { gte: since } } }),
+      prisma.phonePeEventLog.count({ where: { direction: "OUTBOUND", createdAt: { gte: since } } }),
+      prisma.phonePeEventLog.count({ where: { direction: "OUTBOUND", success: false, createdAt: { gte: since } } }),
+    ]);
+
+    const successRate = outboundCalls > 0
+      ? Number((((outboundCalls - failedOutbound) / outboundCalls) * 100).toFixed(1))
+      : 100;
+
+    return {
+      queue: { pendingNotify, notified, executing },
+      last24h: { success: successLast24h, failed: failedLast24h, apiCalls: outboundCalls, apiFailures: failedOutbound, apiSuccessRate: `${successRate}%` },
+    };
+  });
+
+  // PhonePe subscription breakdown — active mandates vs provider
+  app.get("/phonepe/stats/subscriptions", async () => {
+    const now = new Date();
+
+    const [active, trial, paused, canceled, totalRedemptions] = await Promise.all([
+      prisma.userSubscription.count({ where: { provider: "phonepe", status: "ACTIVE", endsAt: { gt: now } } }),
+      prisma.userSubscription.count({ where: { provider: "phonepe", status: "TRIAL", endsAt: { gt: now } } }),
+      prisma.userSubscription.count({ where: { provider: "phonepe", status: "PAUSED" } }),
+      prisma.userSubscription.count({ where: { provider: "phonepe", status: "CANCELED", updatedAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } } }),
+      prisma.phonePeRedemption.count({ where: { status: "SUCCESS" } }),
+    ]);
+
+    return { active, trial, paused, canceledLast30d: canceled, totalSuccessfulRenewals: totalRedemptions };
+  });
+
+  // Event log — recent PhonePe API activity (last N entries, filterable by type)
+  app.get("/phonepe/stats/events", {
+    schema: {
+      querystring: z.object({
+        limit: z.coerce.number().optional().default(100),
+        eventType: z.string().optional(),
+        success: z.enum(["true", "false"]).optional(),
+      }),
+    },
+  }, async (request) => {
+    const { limit, eventType, success } = request.query as { limit: number; eventType?: string; success?: string };
+
+    const where: any = {};
+    if (eventType) where.eventType = eventType;
+    if (success !== undefined) where.success = success === "true";
+
+    const events = await prisma.phonePeEventLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: {
+        id: true, eventType: true, direction: true, success: true,
+        httpStatus: true, merchantOrderId: true, merchantSubscriptionId: true,
+        userId: true, createdAt: true,
+      },
+    });
+
+    return { total: events.length, events };
+  });
+
+  // Nightly event log retention cleanup — called by a scheduled job or manually
+  app.post("/phonepe/maintenance/purge-old-events", async () => {
+    const cutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
+    const result = await prisma.phonePeEventLog.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    return { deleted: result.count, cutoffDate: cutoff.toISOString() };
   });
 }
 

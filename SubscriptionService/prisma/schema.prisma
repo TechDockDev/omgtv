@@ -14,6 +14,15 @@ enum SubscriptionStatus {
   EXPIRED
   CANCELED
   TRIAL
+  PAUSED
+}
+
+enum PhonePeRedemptionStatus {
+  PENDING_NOTIFY
+  NOTIFIED
+  EXECUTING
+  SUCCESS
+  FAILED
 }
 
 enum TransactionStatus {
@@ -88,25 +97,31 @@ model FreePlanConfig {
 }
 
 model UserSubscription {
-  id                String              @id @default(uuid())
-  userId            String
-  planId            String?
-  trialPlanId       String?
-  status            SubscriptionStatus  @default(PENDING)
-  startsAt          DateTime
-  endsAt            DateTime
-  razorpayOrderId   String?
-  transactionId     String?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
+  id                    String              @id @default(uuid())
+  userId                String
+  planId                String?
+  trialPlanId           String?
+  status                SubscriptionStatus  @default(PENDING)
+  startsAt              DateTime
+  endsAt                DateTime
+  razorpayOrderId       String?
+  transactionId         String?
+  provider              String              @default("razorpay")
+  phonePeSubscriptionId String?
+  mandateMaxAmount      Int?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
-  plan        SubscriptionPlan? @relation(fields: [planId], references: [id])
-  trialPlan   TrialPlan?        @relation(fields: [trialPlanId], references: [id])
-  transaction Transaction?      @relation("TransactionUserSubscriptions", fields: [transactionId], references: [id])
+  plan               SubscriptionPlan?    @relation(fields: [planId], references: [id])
+  trialPlan          TrialPlan?           @relation(fields: [trialPlanId], references: [id])
+  transaction        Transaction?         @relation("TransactionUserSubscriptions", fields: [transactionId], references: [id])
+  phonePeRedemptions PhonePeRedemption[]
 
   @@index([userId, status])
   @@index([planId])
   @@index([transactionId])
+  @@index([provider])
+  @@index([phonePeSubscriptionId])
 }
 
 model Transaction {
@@ -120,20 +135,75 @@ model Transaction {
   razorpayPaymentId  String?
   razorpaySignature  String?
   subscriptionId     String?
-  trialPlanId        String?  // New field to filter trial transactions
+  trialPlanId        String?
   failureReason      String?
   metadata           Json?
+  provider           String             @default("razorpay")
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
-  plan           SubscriptionPlan? @relation(fields: [planId], references: [id])
-  trialPlan      TrialPlan?        @relation(fields: [trialPlanId], references: [id])
-  subscriptions UserSubscription[] @relation("TransactionUserSubscriptions")
+  plan          SubscriptionPlan?   @relation(fields: [planId], references: [id])
+  trialPlan     TrialPlan?          @relation(fields: [trialPlanId], references: [id])
+  subscriptions UserSubscription[]  @relation("TransactionUserSubscriptions")
 
   @@index([userId, status])
   @@index([razorpayPlanId])
   @@index([subscriptionId])
   @@index([razorpayPaymentId])
+  @@index([provider])
+}
+
+model PhonePeRedemption {
+  id                     String                   @id @default(uuid())
+  userId                 String
+  userSubscriptionId     String
+  merchantSubscriptionId String
+  merchantOrderId        String                   @unique
+  amount                 Int
+  isTrialCycle           Boolean                  @default(false)
+  cycleNumber            Int
+  mandateMaxAmount       Int                      @default(50000)
+  scheduledNotifyAt      DateTime
+  status                 PhonePeRedemptionStatus  @default(PENDING_NOTIFY)
+  notifiedAt             DateTime?
+  notifyWindowEnd        DateTime?
+  executeAttempts        Int                      @default(0)
+  lastError              String?
+  lastStatusCheckedAt    DateTime?
+  metadata               Json?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  userSubscription UserSubscription @relation(fields: [userSubscriptionId], references: [id])
+
+  @@unique([userSubscriptionId, cycleNumber])
+  @@unique([userSubscriptionId, scheduledNotifyAt])
+  @@index([userId])
+  @@index([userSubscriptionId])
+  @@index([status, scheduledNotifyAt])
+  @@index([status, notifiedAt])
+  @@index([status, updatedAt])
+}
+
+model PhonePeEventLog {
+  id                     String   @id @default(uuid())
+  userId                 String?
+  merchantOrderId        String?
+  merchantSubscriptionId String?
+  eventType              String
+  direction              String
+  request                Json?
+  response               Json?
+  httpStatus             Int?
+  success                Boolean
+  createdAt              DateTime @default(now())
+
+  @@index([merchantOrderId])
+  @@index([merchantSubscriptionId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([eventType])
+  @@index([createdAt, eventType])
 }
 
 model SubscriptionGlobalConfig {

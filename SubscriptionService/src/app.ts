@@ -46,7 +46,7 @@ export async function buildApp() {
   // Custom parser to capture raw body for Razorpay webhooks (required for signature verification)
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
     try {
-      if (request.url.includes("/webhooks/razorpay")) {
+      if (request.url.includes("/webhooks/razorpay") || request.url.includes("/webhooks/phonepe")) {
         // Store raw body for signature verification
         (request as any).rawBody = body;
       }

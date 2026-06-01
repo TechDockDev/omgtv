@@ -27,6 +27,12 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().min(1, "RAZORPAY_KEY_ID is required"),
   RAZORPAY_KEY_SECRET: z.string().min(1, "RAZORPAY_KEY_SECRET is required"),
   RAZORPAY_WEBHOOK_SECRET: z.string().min(1, "RAZORPAY_WEBHOOK_SECRET is required"),
+  PHONEPE_CLIENT_ID: z.string().optional(),
+  PHONEPE_CLIENT_SECRET: z.string().optional(),
+  PHONEPE_MERCHANT_ID: z.string().optional(),
+  PHONEPE_ENV: z.enum(["UAT", "PROD"]).default("UAT"),
+  PHONEPE_CALLBACK_USERNAME: z.string().optional(),
+  PHONEPE_CALLBACK_PASSWORD: z.string().optional(),
   OTEL_SERVICE_NAME: z.string().default("subscription-service"),
   OTEL_TRACES_ENDPOINT: z
     .string()
