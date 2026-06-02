@@ -240,6 +240,7 @@ export default async function customerRoutes(app: FastifyInstance) {
     const data = subscription ? {
       ...subscription,
       isTrial,
+      planCancelled: subscription.status === "CANCELED",
       showTrialBanner: !((subscription.plan as any)?.subscriptionViaTrial ?? false),
       // During trial period, show trial plan information
       displayPlan: subscription.trialPlan || subscription.plan,
@@ -951,6 +952,95 @@ export default async function customerRoutes(app: FastifyInstance) {
       userMessage: "Payment verified successfully",
       developerMessage: "Payment verified and subscription activated",
       data: { status: "active" }
+    });
+  });
+
+  // ─── Cancel subscription ────────────────────────────────────────────────────
+  app.post("/me/cancel", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+
+    const sub = await prisma.userSubscription.findFirst({
+      where: {
+        userId,
+        status: { in: ["ACTIVE", "TRIAL"] },
+        endsAt: { gt: new Date() },
+      },
+      orderBy: { startsAt: "desc" },
+    });
+
+    if (!sub) {
+      return reply.code(404).send({
+        success: false,
+        statusCode: 404,
+        code: "NO_ACTIVE_SUBSCRIPTION",
+        userMessage: "You don't have an active subscription to cancel.",
+      });
+    }
+
+    // Mark CANCELED — user retains access until endsAt (end of billing period)
+    await prisma.userSubscription.update({
+      where: { id: sub.id },
+      data: { status: "CANCELED" },
+    });
+
+    await invalidateEntitlementCache(userId);
+
+    const isTrial = !!sub.trialPlanId;
+
+    // ── Provider-side cancellation (best-effort — DB is already CANCELED) ──────
+    if (sub.provider === "razorpay" && sub.razorpayOrderId) {
+      try {
+        const { getRazorpay } = await import("../../lib/razorpay");
+        await getRazorpay().subscriptions.cancel(sub.razorpayOrderId);
+        request.log.info({ msg: "Razorpay subscription cancelled", subId: sub.id, razorpayOrderId: sub.razorpayOrderId });
+      } catch (err: any) {
+        // Webhook will arrive regardless — DB is already CANCELED, so this is safe to swallow
+        request.log.warn({ err, subId: sub.id }, "Failed to cancel Razorpay subscription (webhook will reconcile)");
+      }
+    }
+
+    if (sub.provider === "phonepe" && sub.phonePeSubscriptionId) {
+      // Cancel pending redemptions so billing cron doesn't charge after cancellation
+      try {
+        await prisma.phonePeRedemption.updateMany({
+          where: {
+            userSubscriptionId: sub.id,
+            status: { in: ["PENDING_NOTIFY", "NOTIFIED"] },
+          },
+          data: { status: "FAILED", lastError: "Cancelled by user" },
+        });
+      } catch (err: any) {
+        request.log.warn({ err, subId: sub.id }, "Failed to cancel PhonePe pending redemptions — billing cron will skip CANCELED sub");
+      }
+
+      try {
+        await getPhonePe().cancelSubscription(sub.phonePeSubscriptionId, userId);
+        request.log.info({ msg: "PhonePe mandate cancelled", subId: sub.id, phonePeSubscriptionId: sub.phonePeSubscriptionId });
+      } catch (err: any) {
+        request.log.warn({ err, subId: sub.id }, "Failed to cancel PhonePe mandate (webhook will reconcile)");
+      }
+    }
+
+    // Fire analytics here (user intent). Razorpay/PhonePe webhooks will also fire
+    // subscription_cancelled with reason="cancelled"/"user_revoked" — that's the provider
+    // confirmation. Both are useful signals; dedup in dashboard by filtering reason="user_requested".
+    const daysActive = Math.floor((Date.now() - sub.startsAt.getTime()) / (1000 * 86400));
+    void trackSubscriptionEvent(userId, isTrial ? "trial_cancelled" : "subscription_cancelled", {
+      provider: sub.provider,
+      plan_id: sub.planId ?? "",
+      days_active: daysActive,
+      reason: "user_requested",
+    });
+
+    const endsAtFormatted = sub.endsAt.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+    return reply.send({
+      success: true,
+      statusCode: 200,
+      userMessage: isTrial
+        ? `Your trial has been cancelled. You'll retain access until ${endsAtFormatted}.`
+        : `Your subscription has been cancelled. You'll retain access until ${endsAtFormatted}.`,
+      data: { status: "canceled", endsAt: sub.endsAt },
     });
   });
 
