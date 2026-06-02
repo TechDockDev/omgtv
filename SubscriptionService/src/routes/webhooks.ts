@@ -522,6 +522,9 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                             "We couldn't process your subscription payment. Please update your payment method to continue.",
                             { type: "SUBSCRIPTION_PAYMENT_FAILED" }
                         );
+                        void trackSubscriptionEvent(existingSub.userId, "subscription_payment_failed", {
+                            provider: "razorpay", plan_id: existingSub.planId ?? "", reason: "halted",
+                        });
                     }
                 }
             } else if (event === "payment.captured" || event === "order.paid") {
@@ -865,8 +868,10 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                 void notificationClient.sendPush(sub.userId, "Subscription Cancelled",
                     "Your subscription has been cancelled. You'll retain access until the end of your current period.",
                     { type: "SUBSCRIPTION_CANCELLED" });
-                void trackSubscriptionEvent(sub.userId, "subscription_cancelled", {
+                const isCancelledTrial = !!sub.trialPlanId;
+                void trackSubscriptionEvent(sub.userId, isCancelledTrial ? "trial_cancelled" : "subscription_cancelled", {
                     provider: "phonepe",
+                    plan_id: sub.planId ?? "",
                     reason: event === "subscription.revoked" ? "user_revoked" : "cancelled",
                 });
                 return reply.send({ success: true });

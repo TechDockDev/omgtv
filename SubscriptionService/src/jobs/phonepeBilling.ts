@@ -50,7 +50,7 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
     where: {
       status: "PENDING_NOTIFY",
       scheduledNotifyAt: { lte: now },
-      userSubscription: { status: "ACTIVE" },
+      userSubscription: { status: { in: ["ACTIVE", "TRIAL"] } },
     },
     include: { userSubscription: true },
   });
@@ -126,7 +126,7 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
       status: "NOTIFIED",
       notifiedAt: { lte: coolingEnd },
       notifyWindowEnd: { gt: windowBuffer },
-      userSubscription: { status: "ACTIVE" },
+      userSubscription: { status: { in: ["ACTIVE", "TRIAL"] } },
     },
     include: { userSubscription: { include: { plan: true } } },
   });

@@ -381,7 +381,7 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     // ─── PhonePe branch ───────────────────────────────────────────────────────
     if (provider === "phonepe") {
-      const MANDATE_MAX_AMOUNT = 50000; // ₹500 ceiling covers all realistic future price changes
+      const MANDATE_MAX_AMOUNT = 1000000; // ₹10,000 ceiling — headroom for all future plan pricing
       const chargeAmountCheck = trialPlan ? trialPlan.trialPricePaise : plan.pricePaise;
       // Validate both current charge AND max future renewal amount against mandate ceiling
       if (chargeAmountCheck > MANDATE_MAX_AMOUNT || plan.pricePaise > MANDATE_MAX_AMOUNT) {
@@ -567,6 +567,7 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     // ─── PhonePe verify branch ────────────────────────────────────────────────
     if (provider === "phonepe") {
+      const MANDATE_MAX_AMOUNT = 1000000; // ₹10,000 — must match what was sent at mandate setup
       const { merchantOrderId, merchantSubscriptionId, transactionId } = body;
 
       if (!merchantOrderId || !merchantSubscriptionId || !transactionId) {
@@ -590,13 +591,58 @@ export default async function customerRoutes(app: FastifyInstance) {
         // Transaction is SUCCESS (set by webhook) but subscription not created yet — continue to create it
       }
 
-      // Confirm mandate is ACTIVE on PhonePe
+      // Step 1: Verify the setup ORDER (penny drop) completed — this is the payment confirmation.
+      // The subscription mandate may still be ACTIVATION_IN_PROGRESS at this point (async on PhonePe's side).
+      let orderStatus: any;
+      try {
+        orderStatus = await getPhonePe().getRedemptionStatus(merchantOrderId!, userId);
+      } catch (err: any) {
+        request.log.error({ err, merchantOrderId }, "PhonePe getOrderStatus failed");
+        // If the transaction was already marked SUCCESS by webhook, proceed without order check
+        if (transaction.status !== "SUCCESS") {
+          return reply.internalServerError("Could not verify payment status with PhonePe");
+        }
+      }
+
+      if (orderStatus) {
+        if (orderStatus.state === "FAILED") {
+          await prisma.transaction.update({
+            where: { id: transaction.id },
+            data: { status: "FAILED", failureReason: orderStatus.errorCode ?? "Setup order failed" },
+          });
+          return reply.code(400).send({
+            success: false, statusCode: 400, code: "PAYMENT_FAILED",
+            userMessage: "Payment failed. Please try again.",
+            developerMessage: `PhonePe order state: FAILED, errorCode: ${orderStatus.errorCode}`,
+          });
+        }
+        if (orderStatus.state === "PENDING") {
+          return reply.code(400).send({
+            success: false, statusCode: 400, code: "PAYMENT_PENDING",
+            userMessage: "Payment is still being processed. Please wait a moment and try again.",
+            developerMessage: "PhonePe order state: PENDING",
+          });
+        }
+        // orderStatus.state === "COMPLETED" → payment confirmed, continue
+      }
+
+      // Step 2: Fetch subscription status best-effort (to get PhonePe's internal subscription ID).
+      // Mandate may be ACTIVATION_IN_PROGRESS — that's fine, payment is already confirmed by the order.
       let ppStatus: any;
+      let phonePeSubscriptionId = merchantSubscriptionId;
       try {
         ppStatus = await getPhonePe().getSubscriptionStatus(merchantSubscriptionId, userId);
+        phonePeSubscriptionId = ppStatus.subscriptionId ?? merchantSubscriptionId;
+        if (ppStatus.state === "FAILED" || ppStatus.state === "CANCELLED") {
+          return reply.code(400).send({
+            success: false, statusCode: 400, code: "MANDATE_FAILED",
+            userMessage: "Subscription mandate failed. Please try again.",
+            developerMessage: `PhonePe subscription state: ${ppStatus.state}`,
+          });
+        }
       } catch (err: any) {
-        request.log.error(err, "PhonePe getSubscriptionStatus failed");
-        return reply.internalServerError("Could not verify subscription status with PhonePe");
+        // Subscription status check is best-effort — the order confirmation above is authoritative.
+        request.log.warn({ err, merchantSubscriptionId }, "PhonePe getSubscriptionStatus failed — proceeding on order confirmation");
       }
 
       // Idempotency check 2: another device raced and already created the subscription
@@ -609,14 +655,6 @@ export default async function customerRoutes(app: FastifyInstance) {
           try { await getPhonePe().cancelSubscription(merchantSubscriptionId, userId) } catch {}
         }
         return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
-      }
-
-      if (ppStatus.state !== "ACTIVE") {
-        return reply.code(400).send({
-          success: false, statusCode: 400, code: "MANDATE_NOT_ACTIVE",
-          userMessage: "Subscription mandate is not yet active. Please try again.",
-          developerMessage: `PhonePe subscription state: ${ppStatus.state}`,
-        });
       }
 
       // Expire existing trial if this is an upgrade
@@ -649,21 +687,31 @@ export default async function customerRoutes(app: FastifyInstance) {
         if (plan) endsAt = new Date(Date.now() + plan.durationDays * 24 * 60 * 60 * 1000);
       }
 
-      const newSub = await prisma.userSubscription.create({
-        data: {
-          userId: transaction.userId,
-          planId: transaction.planId,
-          trialPlanId,
-          status: trialPlanId ? "TRIAL" : "ACTIVE",
-          provider: "phonepe",
-          phonePeSubscriptionId: ppStatus.subscriptionId ?? merchantSubscriptionId,
-          mandateMaxAmount: 50000,
-          razorpayOrderId: null,
-          transactionId: transaction.id,
-          startsAt,
-          endsAt,
-        },
-      });
+      let newSub;
+      try {
+        newSub = await prisma.userSubscription.create({
+          data: {
+            userId: transaction.userId,
+            planId: transaction.planId,
+            trialPlanId,
+            status: trialPlanId ? "TRIAL" : "ACTIVE",
+            provider: "phonepe",
+            phonePeSubscriptionId,
+            mandateMaxAmount: MANDATE_MAX_AMOUNT,
+            razorpayOrderId: null,
+            transactionId: transaction.id,
+            startsAt,
+            endsAt,
+          },
+        });
+      } catch (err: any) {
+        if (err?.code === "P2002") {
+          // Concurrent verify call won the race — subscription already created, return success
+          await invalidateEntitlementCache(transaction.userId);
+          return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+        }
+        throw err;
+      }
 
       // First payment already done by SDK — mark cycle 1 SUCCESS
       // try/catch: concurrent verify calls would hit unique constraint on merchantOrderId
@@ -698,7 +746,7 @@ export default async function customerRoutes(app: FastifyInstance) {
               amount: plan.pricePaise,
               isTrialCycle: false,
               cycleNumber: 2,
-              mandateMaxAmount: 50000,
+              mandateMaxAmount: MANDATE_MAX_AMOUNT,
               scheduledNotifyAt,
               status: "PENDING_NOTIFY",
             },

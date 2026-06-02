@@ -1,4 +1,5 @@
 import { getPrisma } from "../lib/prisma";
+import { trackSubscriptionEvent } from "../lib/analytics";
 
 interface JobLogger {
     info(obj: object | string, msg?: string): void;
@@ -12,18 +13,32 @@ const prisma = getPrisma();
 
 async function runSubscriptionExpiry(log: JobLogger) {
     try {
-        const result = await prisma.userSubscription.updateMany({
-            where: {
-                status: { in: ['ACTIVE', 'TRIAL', 'CANCELED'] },
-                endsAt: { lt: new Date() }
-            },
-            data: {
-                status: 'EXPIRED',
-                updatedAt: new Date()
-            }
+        const now = new Date();
+        const expiring = await prisma.userSubscription.findMany({
+            where: { status: { in: ['ACTIVE', 'TRIAL', 'CANCELED'] }, endsAt: { lt: now } },
+            select: { id: true, userId: true, planId: true, provider: true, trialPlanId: true, status: true },
         });
-        if (result.count > 0) {
-            log.info({ count: result.count }, "expireSubscriptions job: expired stale subscriptions");
+
+        if (expiring.length === 0) return;
+
+        await prisma.userSubscription.updateMany({
+            where: {
+                id: { in: expiring.map(s => s.id) },
+                status: { in: ['ACTIVE', 'TRIAL', 'CANCELED'] }, // guard: skip any renewed between SELECT and UPDATE
+                endsAt: { lt: now },
+            },
+            data: { status: 'EXPIRED', updatedAt: now },
+        });
+
+        log.info({ count: expiring.length }, "expireSubscriptions job: expired stale subscriptions");
+
+        for (const sub of expiring) {
+            const isTrial = !!sub.trialPlanId;
+            void trackSubscriptionEvent(sub.userId, isTrial ? "trial_expired" : "subscription_expired", {
+                provider: sub.provider,
+                plan_id: sub.planId ?? "",
+                prior_status: sub.status,
+            });
         }
     } catch (err) {
         log.error({ err }, "expireSubscriptions job failed");

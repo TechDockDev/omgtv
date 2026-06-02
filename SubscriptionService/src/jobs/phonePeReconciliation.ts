@@ -151,7 +151,7 @@ export async function runPhonePeReconciliationPass(log: JobLogger): Promise<void
     where: {
       status: "PENDING_NOTIFY",
       scheduledNotifyAt: { lt: overdueThreshold },
-      userSubscription: { status: "ACTIVE" },
+      userSubscription: { status: { in: ["ACTIVE", "TRIAL"] } },
     },
   });
 
