@@ -767,6 +767,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     limit: z.coerce.number().min(1).max(100).default(20),
     type: emptyToUndefined.pipe(z.enum(["subscription", "coin_purchase"]).optional()).optional(),
     status: emptyToUndefined.pipe(z.enum(["SUCCESS", "PENDING", "FAILED", "CREATED"]).optional()).optional(),
+    provider: emptyToUndefined.pipe(z.enum(["razorpay", "phonepe"]).optional()).optional(),
     search: emptyToUndefined.optional(),
     startDate: emptyToUndefined.optional(),
     endDate: emptyToUndefined.optional(),
@@ -776,7 +777,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     "/all-transactions",
     { schema: { querystring: allTxQuerySchema } },
     async (request) => {
-      const { page, limit, type, status, search, startDate, endDate } = request.query as z.infer<typeof allTxQuerySchema>;
+      const { page, limit, type, status, provider, search, startDate, endDate } = request.query as z.infer<typeof allTxQuerySchema>;
       const skip = (page - 1) * limit;
 
       // Date range — start of startDate day to end of endDate day
@@ -789,6 +790,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       // 1. Build DB-level filters for each table
       const subWhere: any = {};
       if (status && ["SUCCESS", "PENDING", "FAILED"].includes(status)) subWhere.status = status;
+      if (provider) subWhere.provider = provider;
       if (search) subWhere.userId = { contains: search };
       if (dateFilter) subWhere.createdAt = dateFilter;
 
@@ -852,6 +854,7 @@ export default async function adminRoutes(app: FastifyInstance) {
             userId: tx.userId,
             id: tx.id,
             type: "subscription",
+            provider: tx.provider,
             subscriptionKind: isTrial ? "trial" : "premium",
             status: tx.status,
             amountPaise: tx.amountPaise,
@@ -2193,5 +2196,568 @@ export default async function adminRoutes(app: FastifyInstance) {
     }));
 
     return { success: true, data };
+  });
+
+  // ── PhonePe: manual notify for a specific user ──────────────────────────────
+  // POST /admin/phonepe/users/:userId/notify
+  // Manually fires notifyRedemption for the user's current PENDING_NOTIFY cycle
+  app.post("/phonepe/users/:userId/notify", async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    const { getPhonePe } = await import("../../lib/phonepe");
+
+    const redemption = await prisma.phonePeRedemption.findFirst({
+      where: {
+        userId,
+        status: "PENDING_NOTIFY",
+        userSubscription: { status: { in: ["ACTIVE", "TRIAL"] } },
+      },
+      orderBy: { cycleNumber: "asc" },
+      include: { userSubscription: { select: { status: true, endsAt: true } } },
+    });
+
+    if (!redemption) {
+      return reply.code(404).send({
+        success: false,
+        code: "NO_PENDING_NOTIFY",
+        message: "No PENDING_NOTIFY redemption found for this user with an active subscription.",
+      });
+    }
+
+    const expireAt = Date.now() + 72 * 60 * 60 * 1000;
+    let phonePeError: string | null = null;
+    let dbError: string | null = null;
+
+    // Step 1: Call PhonePe notify
+    try {
+      await getPhonePe().notifyRedemption({
+        userId: redemption.userId,
+        merchantSubscriptionId: redemption.merchantSubscriptionId,
+        merchantOrderId: redemption.merchantOrderId,
+        amount: redemption.amount,
+        expireAt,
+      });
+    } catch (err: any) {
+      phonePeError = err?.message ?? String(err);
+    }
+
+    // Step 2: If PhonePe accepted, update DB — separate catch so PhonePe result is preserved
+    if (!phonePeError) {
+      try {
+        const notifiedAt = new Date();
+        await prisma.phonePeRedemption.update({
+          where: { id: redemption.id },
+          data: {
+            status: "NOTIFIED",
+            notifiedAt,
+            notifyWindowEnd: new Date(notifiedAt.getTime() + 72 * 60 * 60 * 1000),
+          },
+        });
+      } catch (err: any) {
+        dbError = err?.message ?? String(err);
+        // PhonePe was notified but DB update failed — cron will reconcile on next run
+      }
+    }
+
+    return reply.send({
+      success: !phonePeError,
+      redemption: {
+        id: redemption.id,
+        cycleNumber: redemption.cycleNumber,
+        amountRupees: redemption.amount / 100,
+        merchantOrderId: redemption.merchantOrderId,
+        merchantSubscriptionId: redemption.merchantSubscriptionId,
+        subscriptionStatus: redemption.userSubscription?.status,
+      },
+      result: phonePeError ? "phonepe_failed" : dbError ? "notified_db_update_failed" : "notified",
+      phonePeError,
+      dbError,
+    });
+  });
+
+  // ── PhonePe Cron Health Dashboard ───────────────────────────────────────────
+  // GET /admin/phonepe/cron-health
+  // Single read-only view: pipeline state, upcoming fires, overdue, at-risk, stuck
+  app.get("/phonepe/cron-health", async (_request, reply) => {
+    const now = new Date();
+    const in4h = new Date(now.getTime() + 4 * 60 * 60 * 1000);
+    const in7d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const staleThreshold = new Date(now.getTime() - 10 * 60 * 1000);
+    const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [
+      // Pipeline counts by status
+      pipeline,
+
+      // Overdue — should have been notified but haven't (cron missed or down)
+      overdue,
+
+      // Upcoming in next 7 days — scheduled but not yet due
+      upcoming,
+
+      // At-risk — NOTIFIED rows whose 72h window closes in < 4h
+      atRisk,
+
+      // Stuck executing — execute sent >10 min ago, no webhook yet
+      stuckExecuting,
+
+      // Recent failures (last 7 days)
+      recentFailed,
+
+      // Last 7 days billing summary
+      last7dSuccess,
+      last7dFailed,
+
+      // Next scheduled notify across all users
+      nextFire,
+    ] = await Promise.all([
+      // Pipeline
+      prisma.phonePeRedemption.groupBy({
+        by: ["status"],
+        _count: { id: true },
+      }),
+
+      // Overdue PENDING_NOTIFY
+      prisma.phonePeRedemption.findMany({
+        where: {
+          status: "PENDING_NOTIFY",
+          scheduledNotifyAt: { lt: now },
+          userSubscription: { status: { in: ["ACTIVE", "TRIAL"] } },
+        },
+        orderBy: { scheduledNotifyAt: "asc" },
+        take: 20,
+        select: {
+          id: true,
+          userId: true,
+          merchantSubscriptionId: true,
+          amount: true,
+          cycleNumber: true,
+          scheduledNotifyAt: true,
+          userSubscription: { select: { status: true, endsAt: true } },
+        },
+      }),
+
+      // Upcoming next 7 days
+      prisma.phonePeRedemption.findMany({
+        where: {
+          status: "PENDING_NOTIFY",
+          scheduledNotifyAt: { gte: now, lte: in7d },
+          userSubscription: { status: { in: ["ACTIVE", "TRIAL"] } },
+        },
+        orderBy: { scheduledNotifyAt: "asc" },
+        take: 50,
+        select: {
+          id: true,
+          userId: true,
+          merchantSubscriptionId: true,
+          amount: true,
+          cycleNumber: true,
+          isTrialCycle: true,
+          scheduledNotifyAt: true,
+          userSubscription: { select: { status: true, endsAt: true } },
+        },
+      }),
+
+      // At-risk (window closing < 4h)
+      prisma.phonePeRedemption.findMany({
+        where: {
+          status: "NOTIFIED",
+          notifyWindowEnd: { gt: now, lte: in4h },
+        },
+        orderBy: { notifyWindowEnd: "asc" },
+        take: 20,
+        select: {
+          id: true,
+          userId: true,
+          merchantSubscriptionId: true,
+          amount: true,
+          cycleNumber: true,
+          notifiedAt: true,
+          notifyWindowEnd: true,
+          executeAttempts: true,
+          lastError: true,
+        },
+      }),
+
+      // Stuck executing
+      prisma.phonePeRedemption.findMany({
+        where: {
+          status: "EXECUTING",
+          updatedAt: { lt: staleThreshold },
+        },
+        orderBy: { updatedAt: "asc" },
+        take: 20,
+        select: {
+          id: true,
+          userId: true,
+          merchantOrderId: true,
+          amount: true,
+          cycleNumber: true,
+          updatedAt: true,
+          notifyWindowEnd: true,
+          lastStatusCheckedAt: true,
+        },
+      }),
+
+      // Recent failures
+      prisma.phonePeRedemption.findMany({
+        where: {
+          status: "FAILED",
+          updatedAt: { gte: last7d },
+        },
+        orderBy: { updatedAt: "desc" },
+        take: 30,
+        select: {
+          id: true,
+          userId: true,
+          merchantSubscriptionId: true,
+          amount: true,
+          cycleNumber: true,
+          lastError: true,
+          executeAttempts: true,
+          updatedAt: true,
+        },
+      }),
+
+      // Last 7d success count
+      prisma.phonePeRedemption.count({
+        where: { status: "SUCCESS", updatedAt: { gte: last7d } },
+      }),
+
+      // Last 7d failed count
+      prisma.phonePeRedemption.count({
+        where: { status: "FAILED", updatedAt: { gte: last7d } },
+      }),
+
+      // Next fire — earliest upcoming PENDING_NOTIFY
+      prisma.phonePeRedemption.findFirst({
+        where: {
+          status: "PENDING_NOTIFY",
+          scheduledNotifyAt: { gte: now },
+          userSubscription: { status: { in: ["ACTIVE", "TRIAL"] } },
+        },
+        orderBy: { scheduledNotifyAt: "asc" },
+        select: { scheduledNotifyAt: true, userId: true, amount: true },
+      }),
+    ]);
+
+    const pipelineMap = Object.fromEntries(
+      pipeline.map(p => [p.status, p._count.id])
+    );
+
+    const totalLast7d = last7dSuccess + last7dFailed;
+    const successRateLast7d = totalLast7d > 0
+      ? Math.round((last7dSuccess / totalLast7d) * 100 * 10) / 10
+      : null;
+
+    const hoursUntilNextFire = nextFire
+      ? Math.round((nextFire.scheduledNotifyAt.getTime() - now.getTime()) / (1000 * 60 * 60) * 10) / 10
+      : null;
+
+    return reply.send({
+      success: true,
+      asOf: now.toISOString(),
+      data: {
+        cronInfo: {
+          billingCronInterval: "every 15 minutes",
+          reconciliationCronInterval: "every 15 minutes",
+          expiryCronInterval: "every 1 hour",
+          nextScheduledNotifyAt: nextFire?.scheduledNotifyAt ?? null,
+          hoursUntilNextFire,
+          nextFireAmountRupees: nextFire ? nextFire.amount / 100 : null,
+        },
+
+        pipeline: {
+          pendingNotify: pipelineMap["PENDING_NOTIFY"] ?? 0,
+          notified: pipelineMap["NOTIFIED"] ?? 0,
+          executing: pipelineMap["EXECUTING"] ?? 0,
+          success: pipelineMap["SUCCESS"] ?? 0,
+          failed: pipelineMap["FAILED"] ?? 0,
+        },
+
+        alerts: {
+          overdueCount: overdue.length,
+          atRiskCount: atRisk.length,
+          stuckExecutingCount: stuckExecuting.length,
+          overdue: overdue.map(r => ({
+            id: r.id,
+            userId: r.userId,
+            amountRupees: r.amount / 100,
+            cycleNumber: r.cycleNumber,
+            scheduledNotifyAt: r.scheduledNotifyAt,
+            hoursOverdue: Math.round((now.getTime() - r.scheduledNotifyAt.getTime()) / (1000 * 60 * 60) * 10) / 10,
+            subscriptionStatus: r.userSubscription?.status,
+            endsAt: r.userSubscription?.endsAt,
+          })),
+          atRisk: atRisk.map(r => ({
+            id: r.id,
+            userId: r.userId,
+            amountRupees: r.amount / 100,
+            cycleNumber: r.cycleNumber,
+            notifiedAt: r.notifiedAt,
+            windowClosesAt: r.notifyWindowEnd,
+            hoursLeft: r.notifyWindowEnd
+              ? Math.round((r.notifyWindowEnd.getTime() - now.getTime()) / (1000 * 60 * 60) * 10) / 10
+              : null,
+            executeAttempts: r.executeAttempts,
+            lastError: r.lastError,
+          })),
+          stuckExecuting: stuckExecuting.map(r => ({
+            id: r.id,
+            userId: r.userId,
+            merchantOrderId: r.merchantOrderId,
+            amountRupees: r.amount / 100,
+            stuckSinceMinutes: Math.round((now.getTime() - r.updatedAt.getTime()) / (1000 * 60)),
+            windowClosesAt: r.notifyWindowEnd,
+            lastCheckedAt: r.lastStatusCheckedAt,
+          })),
+        },
+
+        upcoming7Days: upcoming.map(r => ({
+          id: r.id,
+          userId: r.userId,
+          amountRupees: r.amount / 100,
+          cycleNumber: r.cycleNumber,
+          isTrialCycle: r.isTrialCycle,
+          firesAt: r.scheduledNotifyAt,
+          hoursFromNow: Math.round((r.scheduledNotifyAt.getTime() - now.getTime()) / (1000 * 60 * 60) * 10) / 10,
+          subscriptionEndsAt: r.userSubscription?.endsAt,
+        })),
+
+        last7Days: {
+          successCount: last7dSuccess,
+          failedCount: last7dFailed,
+          successRatePct: successRateLast7d,
+          recentFailures: recentFailed.map(r => ({
+            id: r.id,
+            userId: r.userId,
+            amountRupees: r.amount / 100,
+            cycleNumber: r.cycleNumber,
+            lastError: r.lastError,
+            executeAttempts: r.executeAttempts,
+            failedAt: r.updatedAt,
+          })),
+        },
+      },
+    });
+  });
+
+  // ── Per-user unified cron status ────────────────────────────────────────────
+  // GET /admin/users/:userId/cron-status
+  // Shows every scheduled/fired cron that affects this user:
+  //   1. Subscription expiry cron (1h)
+  //   2. PhonePe billing cron (15min) — cycles as execution log
+  //   3. At-risk reminder cron (EXPIRY_7D/3D/1D, INACTIVE)
+  //   4. Coin expiry reminder cron (30min)
+  //   5. Streak reminder cron (30min)
+  app.get("/users/:userId/cron-status", async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    const now = new Date();
+    const notificationClient = new NotificationClient();
+
+    const [subscription, phonePeCycles, expiringCoins, streak] = await Promise.all([
+      prisma.userSubscription.findFirst({
+        where: { userId, status: { in: ["ACTIVE", "TRIAL", "CANCELED", "PAUSED"] }, endsAt: { gt: now } },
+        orderBy: { createdAt: "desc" },
+        include: {
+          plan: { select: { name: true, durationDays: true } },
+          trialPlan: { select: { durationDays: true } },
+        },
+      }),
+      prisma.phonePeRedemption.findMany({
+        where: { userId },
+        orderBy: { cycleNumber: "asc" },
+      }),
+      prisma.coinTransaction.findMany({
+        where: { userId, remainingAmount: { gt: 0 }, expiryAt: { not: null, gt: now } },
+        orderBy: { expiryAt: "asc" },
+        take: 10,
+        select: { id: true, remainingAmount: true, expiryAt: true, source: true, reminderSentAt: true },
+      }).catch(() => [] as any[]),
+      prisma.userStreak.findUnique({
+        where: { userId },
+        select: { status: true, currentDay: true, lastClaimedAt: true, streakReminderSentAt: true, cyclesCompleted: true },
+      }).catch(() => null),
+    ]);
+
+    // ── 1. Subscription expiry cron ───────────────────────────────────────────
+    const hoursUntilExpiry = subscription
+      ? Math.round((subscription.endsAt.getTime() - now.getTime()) / (1000 * 60 * 60) * 10) / 10
+      : null;
+
+    const expiryCron = {
+      name: "Subscription Expiry",
+      interval: "every 1 hour",
+      applicable: !!subscription,
+      willMarkExpiredAt: subscription?.endsAt ?? null,
+      hoursUntilExpiry,
+      status: !subscription ? "not_applicable"
+        : hoursUntilExpiry! <= 0 ? "overdue"
+        : "pending",
+    };
+
+    // ── 2. PhonePe billing cron ───────────────────────────────────────────────
+    const billingCron = {
+      name: "PhonePe Billing",
+      interval: "every 15 minutes",
+      applicable: phonePeCycles.length > 0,
+      cycles: phonePeCycles.map(c => {
+        const isOverdue = c.status === "PENDING_NOTIFY" && c.scheduledNotifyAt < now;
+        const hoursUntilFire = c.status === "PENDING_NOTIFY" && c.scheduledNotifyAt >= now
+          ? Math.round((c.scheduledNotifyAt.getTime() - now.getTime()) / (1000 * 60 * 60) * 10) / 10
+          : null;
+
+        const timeline: { at: string; event: string }[] = [
+          { at: c.createdAt.toISOString(), event: `Scheduled — notify due at ${c.scheduledNotifyAt.toISOString()}` },
+        ];
+        if (c.notifiedAt) timeline.push({ at: c.notifiedAt.toISOString(), event: "Cron: notify sent to PhonePe" });
+        if (c.executeAttempts > 0) timeline.push({ at: c.updatedAt.toISOString(), event: `Cron: execute attempted ${c.executeAttempts} time(s)${c.lastError ? ` — error: ${c.lastError}` : ""}` });
+        if (c.lastStatusCheckedAt) timeline.push({ at: c.lastStatusCheckedAt.toISOString(), event: "Reconciliation cron: status checked" });
+        if (c.status === "SUCCESS") timeline.push({ at: c.updatedAt.toISOString(), event: "Payment confirmed — subscription extended" });
+        if (c.status === "FAILED") timeline.push({ at: c.updatedAt.toISOString(), event: `Permanently failed — ${c.lastError ?? "unknown"}` });
+
+        return {
+          cycleNumber: c.cycleNumber,
+          isTrialCycle: c.isTrialCycle,
+          amountRupees: c.amount / 100,
+          status: c.status,
+          isOverdue,
+          scheduledNotifyAt: c.scheduledNotifyAt,
+          hoursUntilFire,
+          notifiedAt: c.notifiedAt ?? null,
+          notifyWindowEnd: c.notifyWindowEnd ?? null,
+          executeAttempts: c.executeAttempts,
+          lastError: c.lastError ?? null,
+          timeline,
+        };
+      }),
+    };
+
+    // ── 3. At-risk reminder cron ──────────────────────────────────────────────
+    const reminderDefs = [
+      { key: "EXPIRY_7D", days: 7, desc: "Push 7 days before subscription ends (CANCELED users only)" },
+      { key: "EXPIRY_3D", days: 3, desc: "Push 3 days before subscription ends" },
+      { key: "EXPIRY_1D", days: 1, desc: "Push 1 day before subscription ends" },
+      { key: "INACTIVE_7D", days: null, desc: "Push if no watch activity for 7 days" },
+      { key: "INACTIVE_14D", days: null, desc: "Push if no watch activity for 14 days" },
+    ];
+
+    let notifHistory: Record<string, { lastSentAt: string | null; count: number }> = {};
+    try {
+      const results = await Promise.all(
+        reminderDefs.map(r => notificationClient.getBulkHistory([userId], r.key).then(h => ({ key: r.key, data: h[userId] ?? null })))
+      );
+      for (const { key, data } of results) notifHistory[key] = data ?? { lastSentAt: null, count: 0 };
+    } catch { /* NotificationService unavailable — history shown as unknown */ }
+
+    const atRiskCron = {
+      name: "At-Risk Reminder",
+      interval: "runs on trigger windows (continuous)",
+      applicable: !!subscription,
+      reminders: reminderDefs.map(r => {
+        const scheduledAt = (subscription && r.days !== null)
+          ? new Date(subscription.endsAt.getTime() - r.days * 24 * 60 * 60 * 1000)
+          : null;
+        const history = notifHistory[r.key];
+        const sentAt = history?.lastSentAt ?? null;
+        const shouldHaveFired = scheduledAt ? scheduledAt <= now : false;
+        return {
+          key: r.key,
+          description: r.desc,
+          scheduledAt,
+          sentAt,
+          sentCount: history?.count ?? 0,
+          status: sentAt ? "sent"
+            : shouldHaveFired ? "overdue"
+            : scheduledAt ? "pending"
+            : "not_applicable",
+        };
+      }),
+    };
+
+    // ── 4. Coin expiry reminder cron ──────────────────────────────────────────
+    const COIN_REMINDER_HOURS = 6;
+    const coinReminderCron = {
+      name: "Coin Expiry Reminder",
+      interval: "every 30 minutes — reminds 6h before coin expiry",
+      applicable: expiringCoins.length > 0,
+      coins: (expiringCoins as any[]).map(c => {
+        const expiresAt = new Date(c.expiryAt);
+        const reminderDueAt = new Date(expiresAt.getTime() - COIN_REMINDER_HOURS * 60 * 60 * 1000);
+        const hoursLeft = Math.round((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60) * 10) / 10;
+        return {
+          coinTransactionId: c.id,
+          coins: c.remainingAmount,
+          source: c.source,
+          expiresAt: c.expiryAt,
+          hoursLeft,
+          reminderDueAt,
+          reminderSentAt: c.reminderSentAt ?? null,
+          status: c.reminderSentAt ? "sent"
+            : reminderDueAt <= now ? "due_now"
+            : "pending",
+        };
+      }),
+    };
+
+    // ── 5. Streak reminder cron ───────────────────────────────────────────────
+    const STREAK_BREAK_HOURS = 48;
+    const STREAK_REMINDER_HOURS = 42;
+    let streakCron: Record<string, any> = { name: "Streak Reminder", interval: "every 30 minutes", applicable: false };
+
+    if (streak) {
+      const breakAt = streak.lastClaimedAt
+        ? new Date(streak.lastClaimedAt.getTime() + STREAK_BREAK_HOURS * 60 * 60 * 1000)
+        : null;
+      const reminderDueAt = streak.lastClaimedAt
+        ? new Date(streak.lastClaimedAt.getTime() + STREAK_REMINDER_HOURS * 60 * 60 * 1000)
+        : null;
+      const hoursUntilBreak = breakAt
+        ? Math.round((breakAt.getTime() - now.getTime()) / (1000 * 60 * 60) * 10) / 10
+        : null;
+
+      streakCron = {
+        name: "Streak Reminder",
+        interval: "every 30 minutes — reminds 6h before 48h break",
+        applicable: true,
+        streakStatus: streak.status,
+        currentDay: streak.currentDay,
+        cyclesCompleted: streak.cyclesCompleted,
+        lastClaimedAt: streak.lastClaimedAt ?? null,
+        streakBreaksAt: breakAt,
+        hoursUntilBreak,
+        reminderDueAt,
+        reminderSentAt: streak.streakReminderSentAt ?? null,
+        status: streak.status === "BROKEN" ? "streak_broken"
+          : !streak.lastClaimedAt ? "never_claimed"
+          : streak.streakReminderSentAt ? "reminder_sent"
+          : reminderDueAt && reminderDueAt <= now ? "reminder_due_now"
+          : "pending",
+      };
+    }
+
+    return reply.send({
+      success: true,
+      asOf: now.toISOString(),
+      userId,
+      data: {
+        subscription: subscription ? {
+          id: subscription.id,
+          status: subscription.status,
+          provider: subscription.provider,
+          isTrial: !!subscription.trialPlanId,
+          plan: subscription.plan?.name ?? null,
+          startsAt: subscription.startsAt,
+          endsAt: subscription.endsAt,
+        } : null,
+
+        crons: {
+          subscriptionExpiry: expiryCron,
+          phonePeBilling: billingCron,
+          atRiskReminders: atRiskCron,
+          coinExpiryReminder: coinReminderCron,
+          streakReminder: streakCron,
+        },
+      },
+    });
   });
 }

@@ -225,32 +225,31 @@ class PhonePeClient {
     const body = {
       merchantOrderId: params.merchantOrderId,
       amount: params.amount,
-      expireAfter: 1200,
+      expireAfter: 900,
       metaInfo: { udf1: params.userId, udf2: params.planId, udf3: params.isTrial ? "trial" : "subscription" },
       paymentFlow: {
         type: "SUBSCRIPTION_CHECKOUT_SETUP",
         subscriptionDetails: {
           subscriptionType: "RECURRING",
           merchantSubscriptionId: params.merchantSubscriptionId,
-          authWorkflowType: "PENNY_DROP",
-          amountType: "FIXED",
+          authWorkflowType: "TRANSACTION",
+          amountType: "VARIABLE",
           maxAmount: params.maxAmount,
           frequency: "ON_DEMAND",
           productType: "UPI_MANDATE",
         },
       },
     };
-    const res = await this.post<any>("/checkout/v2/pay", body, {
+    const res = await this.post<any>("/checkout/v2/sdk/order", body, {
       userId: params.userId,
       merchantOrderId: params.merchantOrderId,
       merchantSubscriptionId: params.merchantSubscriptionId,
       eventType: "CREATE_ORDER_TOKEN",
     });
-    // redirectUrl is "../transact/pgv2?token=<TOKEN>" — extract the token for the Flutter SDK
-    const redirectUrl: string = res.redirectUrl ?? "";
-    const token = new URL(redirectUrl, "https://api.phonepe.com").searchParams.get("token");
+    // New API returns token directly in response body
+    const token: string = res.token ?? "";
     if (!token) {
-      throw new Error(`PhonePe setup: missing token in redirectUrl — orderId=${res.orderId} redirectUrl=${redirectUrl}`);
+      throw new Error(`PhonePe setup: missing token in response — orderId=${res.orderId}`);
     }
     return { orderId: res.orderId, token, expireAt: res.expireAt };
   }
@@ -274,10 +273,11 @@ class PhonePeClient {
       merchantOrderId: params.merchantOrderId,
       amount: params.amount,
       expireAt: params.expireAt,
+      redemptionRetryStrategy: "STANDARD",
       paymentFlow: {
         type: "SUBSCRIPTION_CHECKOUT_REDEMPTION",
         merchantSubscriptionId: params.merchantSubscriptionId,
-        autoDebit: false,
+        autoDebit: true,
       },
     };
     await this.post<any>("/checkout/v2/subscriptions/notify", body, {

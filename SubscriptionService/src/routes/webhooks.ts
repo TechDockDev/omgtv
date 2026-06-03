@@ -657,10 +657,21 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
             if (event === "subscription.setup.order.failed") {
                 if (merchantOrderId) {
+                    const failedTx = await prisma.transaction.findFirst({
+                        where: { metadata: { path: ["merchantOrderId"], equals: merchantOrderId } },
+                    });
                     await prisma.transaction.updateMany({
                         where: { metadata: { path: ["merchantOrderId"], equals: merchantOrderId }, status: "PENDING" },
                         data: { status: "FAILED", failureReason: payload.errorCode ?? "Setup failed" },
                     });
+                    if (failedTx) {
+                        void trackSubscriptionEvent(failedTx.userId, "phonepe_setup_failed", {
+                            provider: "phonepe",
+                            plan_id: failedTx.planId ?? "",
+                            is_trial: !!failedTx.trialPlanId,
+                            error_code: payload.errorCode,
+                        });
+                    }
                 }
                 return reply.send({ success: true });
             }

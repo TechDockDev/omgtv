@@ -425,6 +425,13 @@ export default async function customerRoutes(app: FastifyInstance) {
           },
         });
 
+        void trackSubscriptionEvent(userId, "phonepe_purchase_started", {
+          provider: "phonepe",
+          plan_id: plan.id,
+          is_trial: !!trialPlan,
+          amount_rupees: chargeAmount / 100,
+        });
+
         return reply.code(201).send({
           success: true,
           statusCode: 201,
@@ -611,6 +618,13 @@ export default async function customerRoutes(app: FastifyInstance) {
             where: { id: transaction.id },
             data: { status: "FAILED", failureReason: orderStatus.errorCode ?? "Setup order failed" },
           });
+          void trackSubscriptionEvent(userId, "phonepe_payment_failed", {
+            provider: "phonepe",
+            plan_id: transaction.planId ?? "",
+            is_trial: !!transaction.trialPlanId,
+            error_code: orderStatus.errorCode,
+            stage: "setup_order",
+          });
           return reply.code(400).send({
             success: false, statusCode: 400, code: "PAYMENT_FAILED",
             userMessage: "Payment failed. Please try again.",
@@ -765,9 +779,13 @@ export default async function customerRoutes(app: FastifyInstance) {
       if (isTrial) {
         const trialDays = Math.round((endsAt.getTime() - startsAt.getTime()) / (1000 * 86400));
         void trackSubscriptionEvent(transaction.userId, "trial_activated", { plan_id: transaction.planId ?? "", trial_days: trialDays, provider: "phonepe" });
+        const priorTrials = await prisma.userSubscription.count({ where: { userId: transaction.userId, trialPlanId: { not: null }, id: { not: newSub.id } } });
+        if (priorTrials === 0) void trackSubscriptionEvent(transaction.userId, "first_trial_purchased", { plan_id: transaction.planId ?? "", trial_days: trialDays, provider: "phonepe" });
         await notificationClient.sendPush(transaction.userId, "Free Trial Activated!", `Your ${trialDays} day trial has been activated.`, { type: "SUBSCRIPTION_ACTIVATED" });
       } else {
         void trackSubscriptionEvent(transaction.userId, "subscription_activated", { plan_id: transaction.planId ?? "", provider: "phonepe" });
+        const priorPaidSubs = await prisma.userSubscription.count({ where: { userId: transaction.userId, trialPlanId: null, id: { not: newSub.id } } });
+        if (priorPaidSubs === 0) void trackSubscriptionEvent(transaction.userId, "first_subscription_purchased", { plan_id: transaction.planId ?? "", provider: "phonepe" });
         await notificationClient.sendPush(transaction.userId, "Subscription Activated", "Your subscription is now active. Enjoy unlimited content!", { type: "SUBSCRIPTION_ACTIVATED" });
       }
 

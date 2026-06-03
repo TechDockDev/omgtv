@@ -117,7 +117,10 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
   }
 
   // ── Pass 2: Execute debit ──────────────────────────────────────────────────
-  // 24h cooling period elapsed, window still open, subscription active
+  // autoDebit=true on notify means PhonePe auto-executes the debit — no manual execute needed.
+  // Pass 2 is kept as a safety net ONLY for rows stuck in NOTIFIED after window is 90% elapsed
+  // (i.e. PhonePe's auto-debit failed silently and no webhook arrived).
+  // Normal path: webhook fires subscription.redemption.order.completed → sets SUCCESS → Pass 2 skips it.
   const coolingEnd = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const windowBuffer = new Date(now.getTime() + 2 * 60 * 60 * 1000); // need 2h buffer
 
