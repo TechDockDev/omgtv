@@ -2268,6 +2268,17 @@ export default async function adminRoutes(app: FastifyInstance) {
         merchantSubscriptionId: redemption.merchantSubscriptionId,
         subscriptionStatus: redemption.userSubscription?.status,
       },
+      requestSentToPhonePe: {
+        merchantOrderId: redemption.merchantOrderId,
+        amountPaise: redemption.amount,
+        expireAt,
+        redemptionRetryStrategy: "STANDARD",
+        paymentFlow: {
+          type: "SUBSCRIPTION_CHECKOUT_REDEMPTION",
+          merchantSubscriptionId: redemption.merchantSubscriptionId,
+          autoDebit: true,
+        },
+      },
       result: phonePeError ? "phonepe_failed" : dbError ? "notified_db_update_failed" : "notified",
       phonePeError,
       dbError,
