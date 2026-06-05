@@ -2270,12 +2270,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       },
       requestSentToPhonePe: {
         merchantOrderId: redemption.merchantOrderId,
-        amountPaise: redemption.amount,
+        amount: redemption.amount,
         expireAt,
         redemptionRetryStrategy: "STANDARD",
         paymentFlow: {
           type: "SUBSCRIPTION_CHECKOUT_REDEMPTION",
           merchantSubscriptionId: redemption.merchantSubscriptionId,
+          redemptionRetryStrategy: "STANDARD",
           autoDebit: true,
         },
       },
