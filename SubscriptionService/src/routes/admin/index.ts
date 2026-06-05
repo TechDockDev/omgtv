@@ -2198,6 +2198,102 @@ export default async function adminRoutes(app: FastifyInstance) {
     return { success: true, data };
   });
 
+  // ── PhonePe: manual cancel for a specific user ──────────────────────────────
+  // POST /admin/phonepe/users/:userId/cancel
+  // Cancels the PhonePe mandate for a user and marks subscription CANCELED in DB.
+  // Returns full PhonePe response for debugging.
+  app.post("/phonepe/users/:userId/cancel", async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    const { getPhonePe } = await import("../../lib/phonepe");
+
+    const sub = await prisma.userSubscription.findFirst({
+      where: {
+        userId,
+        provider: "phonepe",
+        status: { in: ["ACTIVE", "TRIAL", "CANCELED", "PAUSED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      include: { plan: { select: { name: true, pricePaise: true } } },
+    });
+
+    if (!sub) {
+      return reply.code(404).send({
+        success: false,
+        code: "NOT_FOUND",
+        message: "No PhonePe subscription found for this user.",
+      });
+    }
+
+    if (!sub.phonePeSubscriptionId) {
+      return reply.code(400).send({
+        success: false,
+        code: "NO_MANDATE_ID",
+        message: "Subscription has no phonePeSubscriptionId.",
+      });
+    }
+
+    // Step 1: Cancel pending redemptions in DB
+    const cancelledRedemptions = await prisma.phonePeRedemption.updateMany({
+      where: {
+        userSubscriptionId: sub.id,
+        status: { in: ["PENDING_NOTIFY", "NOTIFIED"] },
+      },
+      data: { status: "FAILED", lastError: "Cancelled by admin" },
+    }).catch(() => ({ count: 0 }));
+
+    // Step 2: Mark subscription CANCELED in DB
+    let dbCancelled = false;
+    let dbError: string | null = null;
+    try {
+      await prisma.userSubscription.update({
+        where: { id: sub.id },
+        data: { status: "CANCELED" },
+      });
+      dbCancelled = true;
+    } catch (err: any) {
+      dbError = err?.message ?? String(err);
+    }
+
+    // Step 3: Call PhonePe cancel API — capture full response
+    let phonePeSuccess = false;
+    let phonePeError: string | null = null;
+
+    try {
+      await getPhonePe().cancelSubscription(sub.phonePeSubscriptionId, userId);
+      phonePeSuccess = true;
+    } catch (err: any) {
+      phonePeError = err?.message ?? String(err);
+    }
+
+    return reply.send({
+      success: dbCancelled,
+      subscription: {
+        id: sub.id,
+        previousStatus: sub.status,
+        currentStatus: dbCancelled ? "CANCELED" : sub.status,
+        plan: sub.plan?.name ?? null,
+        planPriceRupees: (sub.plan?.pricePaise ?? 0) / 100,
+        phonePeSubscriptionId: sub.phonePeSubscriptionId,
+        endsAt: sub.endsAt,
+      },
+      cancelledPendingRedemptions: cancelledRedemptions.count,
+      dbResult: dbCancelled ? "cancelled" : "failed",
+      dbError,
+      requestSentToPhonePe: {
+        url: `/checkout/v2/subscriptions/${sub.phonePeSubscriptionId}/cancel`,
+        method: "POST",
+        body: {},
+      },
+      phonePeResult: phonePeSuccess ? "cancelled" : "failed",
+      phonePeError,
+      note: !dbCancelled
+        ? "DB update failed — subscription NOT cancelled."
+        : phonePeError
+        ? "DB cancelled. PhonePe mandate cancel failed — billing cron will not charge since redemptions are FAILED."
+        : "DB and PhonePe mandate both cancelled successfully.",
+    });
+  });
+
   // ── PhonePe: manual notify for a specific user ──────────────────────────────
   // POST /admin/phonepe/users/:userId/notify
   // Manually fires notifyRedemption for the user's current PENDING_NOTIFY cycle
@@ -2551,6 +2647,88 @@ export default async function adminRoutes(app: FastifyInstance) {
         },
       },
     });
+  });
+
+  // ── PhonePe integration probe ───────────────────────────────────────────────
+  // GET /admin/phonepe/probe?userId=<id>
+  // Calls three read-only PhonePe APIs for the user's active subscription and
+  // returns the live responses. Used to demonstrate/verify integration to PhonePe.
+  // Safe — read-only, never cancels or charges anything.
+  app.get("/phonepe/probe", async (request, reply) => {
+    const { userId } = request.query as { userId?: string };
+    if (!userId) return reply.badRequest("userId query param is required");
+
+    const { getPhonePe } = await import("../../lib/phonepe");
+    const phonepe = getPhonePe();
+
+    // Find the user's most recent PhonePe subscription
+    const sub = await prisma.userSubscription.findFirst({
+      where: { userId, provider: "phonepe" },
+      orderBy: { createdAt: "desc" },
+      include: { plan: { select: { name: true } } },
+    });
+
+    const latestRedemption = sub
+      ? await prisma.phonePeRedemption.findFirst({
+          where: { userSubscriptionId: sub.id },
+          orderBy: { cycleNumber: "desc" },
+        })
+      : null;
+
+    const results: Record<string, any> = {
+      environment: (await import("../../config")).loadConfig().PHONEPE_ENV,
+      userId,
+      subscriptionFound: !!sub,
+      subscriptionStatus: sub?.status ?? null,
+      planName: sub?.plan?.name ?? null,
+      phonePeSubscriptionId: sub?.phonePeSubscriptionId ?? null,
+    };
+
+    // 1. Order Status API — the integration PhonePe is asking about
+    if (latestRedemption) {
+      try {
+        const orderStatus = await phonepe.getRedemptionStatus(latestRedemption.merchantOrderId, userId);
+        results.orderStatusApi = {
+          endpoint: `GET /checkout/v2/order/${latestRedemption.merchantOrderId}/status`,
+          merchantOrderId: latestRedemption.merchantOrderId,
+          cycleNumber: latestRedemption.cycleNumber,
+          response: orderStatus,
+          status: "success",
+        };
+      } catch (err: any) {
+        results.orderStatusApi = { status: "error", error: err?.message, code: err?.code };
+      }
+    } else {
+      results.orderStatusApi = { status: "skipped", reason: "no redemption record found for this user" };
+    }
+
+    // 2. Subscription Status API — shows mandate health
+    if (sub?.phonePeSubscriptionId) {
+      try {
+        const subStatus = await phonepe.getSubscriptionStatus(sub.phonePeSubscriptionId, userId);
+        results.subscriptionStatusApi = {
+          endpoint: `GET /checkout/v2/subscriptions/${sub.phonePeSubscriptionId}/status`,
+          merchantSubscriptionId: sub.phonePeSubscriptionId,
+          response: subStatus,
+          status: "success",
+        };
+      } catch (err: any) {
+        results.subscriptionStatusApi = { status: "error", error: err?.message, code: err?.code };
+      }
+    } else {
+      results.subscriptionStatusApi = { status: "skipped", reason: "no phonePeSubscriptionId on record" };
+    }
+
+    // 3. Auth token — proves OAuth credentials work (already done implicitly by calls above,
+    //    but we surface the expiry here so it's visible)
+    try {
+      await phonepe.getAccessToken();
+      results.oauthToken = { status: "success", note: "Bearer token issued — credentials are valid" };
+    } catch (err: any) {
+      results.oauthToken = { status: "error", error: err?.message };
+    }
+
+    return reply.send({ success: true, probe: results });
   });
 
   // ── Per-user unified cron status ────────────────────────────────────────────

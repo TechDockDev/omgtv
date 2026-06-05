@@ -281,7 +281,7 @@ class PhonePeClient {
         autoDebit: true,
       },
     };
-    await this.post<any>("/subscriptions/v2/notify", body, {
+    await this.post<any>("/checkout/v2/subscriptions/notify", body, {
       userId: params.userId,
       merchantOrderId: params.merchantOrderId,
       merchantSubscriptionId: params.merchantSubscriptionId,

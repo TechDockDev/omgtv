@@ -205,6 +205,26 @@ async function _handleSuccess(redemption: any, log: JobLogger): Promise<void> {
       data: { endsAt: newEndsAt, status: "ACTIVE" },
     });
 
+    // Record renewal as a Transaction so it shows in /all-transactions
+    try {
+      await tx.transaction.create({
+        data: {
+          userId: redemption.userId,
+          planId: sub.planId,
+          amountPaise: redemption.amount,
+          currency: "INR",
+          status: "SUCCESS",
+          provider: "phonepe",
+          subscriptionId: redemption.merchantSubscriptionId,
+          metadata: {
+            cycleNumber: redemption.cycleNumber,
+            merchantOrderId: redemption.merchantOrderId,
+            source: "renewal_reconciliation",
+          },
+        },
+      });
+    } catch { /* non-fatal */ }
+
     try {
       await tx.phonePeRedemption.create({
         data: {
@@ -262,6 +282,27 @@ async function _failRedemption(
       where: { id: redemption.userSubscriptionId },
       data: { status: "CANCELED" },
     });
+    // Record failure as a Transaction so it shows in /all-transactions
+    try {
+      await tx.transaction.create({
+        data: {
+          userId: redemption.userId,
+          planId: redemption.userSubscription?.planId ?? null,
+          amountPaise: redemption.amount,
+          currency: "INR",
+          status: "FAILED",
+          provider: "phonepe",
+          subscriptionId: redemption.merchantSubscriptionId,
+          failureReason: reason,
+          metadata: {
+            cycleNumber: redemption.cycleNumber,
+            merchantOrderId: redemption.merchantOrderId,
+            attempts,
+            source: "renewal_reconciliation",
+          },
+        },
+      });
+    } catch { /* non-fatal */ }
     didFail = true;
   });
 

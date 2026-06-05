@@ -10,6 +10,7 @@ import { startReminderCron, stopReminderCron } from "./jobs/coinReminders";
 import { startSubscriptionExpiryCron, stopSubscriptionExpiryCron } from "./jobs/expireSubscriptions";
 import { runPhonePeBillingPass, startPhonePeBillingCron, stopPhonePeBillingCron } from "./jobs/phonepeBilling";
 import { runPhonePeReconciliationPass, startPhonePeReconciliationCron, stopPhonePeReconciliationCron } from "./jobs/phonePeReconciliation";
+import { runPhonePeSetupReconciliationPass, startPhonePeSetupReconciliationCron, stopPhonePeSetupReconciliationCron } from "./jobs/phonePeSetupReconciliation";
 
 async function main() {
   const config = loadConfig();
@@ -30,9 +31,11 @@ async function main() {
     // PhonePe: catch-up pass on startup (recovers anything missed during deploy/restart)
     await runPhonePeBillingPass(app.log);
     await runPhonePeReconciliationPass(app.log);
+    await runPhonePeSetupReconciliationPass(app.log);
     // Then start recurring crons
     startPhonePeBillingCron(app.log);
     startPhonePeReconciliationCron(app.log);
+    startPhonePeSetupReconciliationCron(app.log);
 
     app.log.info(
       { version: packageJson.version, http: `${config.HTTP_HOST}:${config.HTTP_PORT}` },
@@ -54,6 +57,7 @@ async function main() {
       stopSubscriptionExpiryCron();
       stopPhonePeBillingCron();
       stopPhonePeReconciliationCron();
+      stopPhonePeSetupReconciliationCron();
       await disconnectPrisma();
       await shutdownRedis();
       await shutdownObservability();

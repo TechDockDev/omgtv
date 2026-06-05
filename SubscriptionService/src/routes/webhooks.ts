@@ -609,6 +609,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
     // ─────────────────────────────────────────────────────────────────────────
     app.post("/phonepe", async (request, reply) => {
         const { getPhonePe } = await import("../lib/phonepe");
+        const { activatePhonePeSetupOrder } = await import("../services/phonePeActivation");
         const phonepe = getPhonePe();
         const authHeader = request.headers["authorization"] as string;
 
@@ -640,17 +641,48 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
         try {
             // ── Mandate setup ──────────────────────────────────────────────
             if (event === "subscription.setup.order.completed") {
+                // Fast path: subscription already provisioned by /purchase/verify
                 if (merchantSubscriptionId) {
                     const existingSub = await prisma.userSubscription.findFirst({
                         where: { phonePeSubscriptionId: merchantSubscriptionId, status: { in: ["ACTIVE", "TRIAL"] } },
                     });
                     if (existingSub) return reply.send({ success: true }); // already handled by verify
                 }
+
+                // Provision the subscription ourselves so a missed /purchase/verify can't orphan a
+                // paid order. activatePhonePeSetupOrder is idempotent — if verify wins the race it
+                // returns already_active. This is the same logic the setup reconciliation cron uses.
                 if (merchantOrderId) {
-                    await prisma.transaction.updateMany({
-                        where: { metadata: { path: ["merchantOrderId"], equals: merchantOrderId }, status: "PENDING" },
-                        data: { status: "SUCCESS" },
+                    const tx = await prisma.transaction.findFirst({
+                        where: { metadata: { path: ["merchantOrderId"], equals: merchantOrderId }, provider: "phonepe" },
                     });
+                    if (tx) {
+                        const meta = (tx.metadata ?? {}) as Record<string, unknown>;
+                        const resolvedSubId =
+                            merchantSubscriptionId ??
+                            (typeof meta.merchantSubscriptionId === "string" ? meta.merchantSubscriptionId : undefined) ??
+                            tx.subscriptionId ??
+                            undefined;
+
+                        if (resolvedSubId) {
+                            const result = await activatePhonePeSetupOrder({
+                                transaction: tx,
+                                merchantOrderId,
+                                merchantSubscriptionId: resolvedSubId,
+                                log: request.log,
+                            });
+                            if (result.kind === "mandate_failed") {
+                                request.log.warn({ msg: "phonepe setup webhook: mandate not active, left transaction PENDING for retry", merchantOrderId, state: result.state });
+                            }
+                        } else {
+                            // Can't resolve the mandate ID — fall back to the original behaviour
+                            request.log.warn({ msg: "phonepe setup webhook: could not resolve merchantSubscriptionId — marking transaction SUCCESS only", merchantOrderId });
+                            await prisma.transaction.updateMany({
+                                where: { metadata: { path: ["merchantOrderId"], equals: merchantOrderId }, status: "PENDING" },
+                                data: { status: "SUCCESS" },
+                            });
+                        }
+                    }
                 }
                 return reply.send({ success: true });
             }
@@ -729,6 +761,26 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
                         where: { id: sub.id },
                         data: { endsAt: newEndsAt, status: "ACTIVE" },
                     });
+
+                    // Record renewal as a Transaction so it shows in /all-transactions
+                    try {
+                        await tx.transaction.create({
+                            data: {
+                                userId: redemption.userId,
+                                planId: sub.planId,
+                                amountPaise: redemption.amount,
+                                currency: "INR",
+                                status: "SUCCESS",
+                                provider: "phonepe",
+                                subscriptionId: redemption.merchantSubscriptionId,
+                                metadata: {
+                                    cycleNumber: redemption.cycleNumber,
+                                    merchantOrderId: redemption.merchantOrderId,
+                                    source: "renewal_webhook",
+                                },
+                            },
+                        });
+                    } catch { /* non-fatal — redemption already marked SUCCESS */ }
 
                     try {
                         await tx.phonePeRedemption.create({
