@@ -80,6 +80,25 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
       log.warn({ msg: "phonepe_billing: overdue PENDING_NOTIFY", redemptionId: redemption.id, overdueHours });
     }
 
+    // PhonePe requirement: confirm subscription is ACTIVE on PhonePe's side before notifying.
+    // Guards against notifying for cancelled/paused mandates that our DB hasn't caught yet.
+    try {
+      const subStatus = await phonepe.getSubscriptionStatus(redemption.merchantSubscriptionId, redemption.userId);
+      if (subStatus.state === "CANCELLED" || subStatus.state === "FAILED" || subStatus.state === "EXPIRED") {
+        log.warn({
+          msg: "phonepe_billing: subscription not ACTIVE on PhonePe — skipping notify",
+          redemptionId: redemption.id,
+          phonePeState: subStatus.state,
+        });
+        await _failRedemption(redemption, redemption.executeAttempts, `mandate_${subStatus.state.toLowerCase()}`, phonepe, log);
+        stats.pass1_failed++;
+        continue;
+      }
+    } catch (err: any) {
+      // If status check fails, proceed with notify — PhonePe will reject it if mandate is invalid.
+      log.warn({ msg: "phonepe_billing: getSubscriptionStatus failed — proceeding with notify", redemptionId: redemption.id, error: err?.message });
+    }
+
     try {
       const expireAt = now.getTime() + 72 * 60 * 60 * 1000;
 

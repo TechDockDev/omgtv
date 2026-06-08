@@ -68,7 +68,7 @@ class PhonePeClient {
   }
 
   async getAccessToken(): Promise<string> {
-    if (this.accessToken && Date.now() < this.tokenExpiry - 60_000) {
+    if (this.accessToken && Date.now() < this.tokenExpiry - 5 * 60_000) {
       return this.accessToken;
     }
     this.assertConfigured();
@@ -274,6 +274,11 @@ class PhonePeClient {
       amount: params.amount,
       expireAt: params.expireAt,
       redemptionRetryStrategy: "STANDARD",
+      metaInfo: {
+        udf1: params.userId,
+        udf2: params.merchantSubscriptionId,
+        udf3: "redemption",
+      },
       paymentFlow: {
         type: "SUBSCRIPTION_CHECKOUT_REDEMPTION",
         merchantSubscriptionId: params.merchantSubscriptionId,
