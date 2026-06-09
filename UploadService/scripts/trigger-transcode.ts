@@ -5,9 +5,9 @@ import { randomUUID } from "crypto";
 // Load environment variables
 dotenv.config();
 
-const projectId = process.env.GCP_PROJECT_ID || "pocketlol-68ca6";
+const projectId = process.env.GCP_PROJECT_ID || "omg-tv-497110";
 const topicName = process.env.MEDIA_UPLOADED_TOPIC || "uploaded-media";
-const bucketName = process.env.UPLOAD_BUCKET || "videos-bucket-pocketlol";
+const bucketName = process.env.UPLOAD_BUCKET || "videos-bucket-omgtv-prod";
 
 // Get arguments
 const args = process.argv.slice(2);

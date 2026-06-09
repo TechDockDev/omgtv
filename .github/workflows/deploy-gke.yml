@@ -24,13 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Prefer repo variables, then secrets, then known defaults for this repo.
-      PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID || 'pocketlol-68ca6' }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID || 'omg-tv-497110' }}
       REGION: ${{ vars.GCP_REGION || secrets.GCP_REGION || 'asia-south1' }}
       CLUSTER_NAME: ${{ vars.GKE_CLUSTER || secrets.GKE_CLUSTER || 'pocketlol' }}
       AR_REPO: ${{ vars.ARTIFACT_REPO || secrets.ARTIFACT_REPO || 'pocketlol' }}
       # Prefer secrets for auth, then vars, then known defaults for this repo.
-      GCP_WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER || 'projects/912340818228/locations/global/workloadIdentityPools/github-pool/providers/github-provider' }}
-      GCP_DEPLOY_SA: ${{ secrets.GCP_SERVICE_ACCOUNT || vars.GCP_SERVICE_ACCOUNT || 'github-deployer@pocketlol-68ca6.iam.gserviceaccount.com' }}
+      GCP_WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER || 'projects/290402369772/locations/global/workloadIdentityPools/github-pool/providers/github-provider' }}
+      GCP_DEPLOY_SA: ${{ secrets.GCP_SERVICE_ACCOUNT || vars.GCP_SERVICE_ACCOUNT || 'github-deployer@omg-tv-497110.iam.gserviceaccount.com' }}
       ENVIRONMENT: dev
       TAG: sha-${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "ENVIRONMENT=prod" >> "$GITHUB_ENV"
-          echo "CLUSTER_NAME=pocketlol-prod" >> "$GITHUB_ENV"
+          echo "CLUSTER_NAME=omgtv-prod" >> "$GITHUB_ENV"
 
       - name: Validate deploy configuration
         run: |

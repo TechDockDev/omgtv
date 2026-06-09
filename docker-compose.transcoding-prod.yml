@@ -4,19 +4,19 @@ services:
     command:
       - "--address=0.0.0.0"
       - "--port=5432"
-      - "pocketlol-68ca6:asia-south1:pocketlol-pg-prod"
+      - "omg-tv-497110:asia-south1:omgtv-pg-prod"
     restart: always
 
   transcoding-worker:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/transcoding-worker:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/transcoding-worker:latest
     restart: always
     environment:
       - NODE_ENV=production
-      - GCP_PROJECT_ID=pocketlol-68ca6
+      - GCP_PROJECT_ID=omg-tv-497110
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_content?schema=public
-      - GCS_UPLOADS_BUCKET=videos-bucket-pocketlol-prod
-      - GCS_STREAMING_BUCKET=videos-bucket-pocketlol-prod
-      - PUBSUB_SUBSCRIPTION=projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-prod
+      - GCS_UPLOADS_BUCKET=videos-bucket-omgtv-prod
+      - GCS_STREAMING_BUCKET=videos-bucket-omgtv-prod
+      - PUBSUB_SUBSCRIPTION=projects/omg-tv-497110/subscriptions/transcoding-requests-sub-prod
       - PUBSUB_READY_TOPIC=streaming-audit-prod
       - PREVIEW_GENERATION_TOPIC=media.preview.requested-prod
       - MEDIA_PROCESSED_TOPIC=media.processed-prod

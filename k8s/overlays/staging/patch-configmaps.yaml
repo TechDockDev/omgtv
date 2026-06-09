@@ -3,4 +3,4 @@ kind: ConfigMap
 metadata:
   name: engagement-service-config
 data:
-  REDIS_URL: "redis://10.117.209.35:6379"
+  REDIS_URL: "redis://10.235.43.227:6379"

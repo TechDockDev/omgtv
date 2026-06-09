@@ -9,7 +9,7 @@ services:
     command:
       - "--address=0.0.0.0" 
       - "--port=5432"
-      - "pocketlol-68ca6:asia-south1:pocketlol-pg" # <--- VERIFY THIS CONNECTION NAME
+      - "omg-tv-497110:asia-south1:pocketlol-pg" # <--- VERIFY THIS CONNECTION NAME
     ports:
       - "127.0.0.1:5432:5432" # Expose to host so other containers can reach via host.docker.internal or network
     restart: always
@@ -33,14 +33,14 @@ services:
   # =========================================
   
   apigw:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/apigw:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/apigw:latest
     restart: always
     ports:
       - "0.0.0.0:3000:3000" # Expose on all interfaces (for dev access)
     environment:
       - NODE_ENV=production
       - SERVER_PORT=3000
-      - REDIS_URL=redis://10.117.209.35:6379
+      - REDIS_URL=redis://10.235.43.227:6379
       - AUTH_JWKS_URL=http://auth-service:4000/.well-known/jwks.json
       - CONTENT_SERVICE_URL=http://content-service:4600
       - AUTH_SERVICE_URL=http://auth-service:4000
@@ -59,12 +59,12 @@ services:
       - user-service
 
   auth-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/auth-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/auth-service:latest
     restart: always
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_auth?schema=public
-      - REDIS_URL=redis://10.117.209.35:6379
+      - REDIS_URL=redis://10.235.43.227:6379
       - AUTH_JWT_PRIVATE_KEY=${AUTH_JWT_PRIVATE_KEY}
       - AUTH_JWT_PUBLIC_KEY=${AUTH_JWT_PUBLIC_KEY}
       - AUTH_JWT_KEY_ID=${AUTH_JWT_KEY_ID}
@@ -79,7 +79,7 @@ services:
       - cloud-sql-proxy
 
   user-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/user-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/user-service:latest
     restart: always
     environment:
       - NODE_ENV=production
@@ -94,12 +94,12 @@ services:
       - cloud-sql-proxy
 
   content-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/content-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/content-service:latest
     restart: always
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_content?schema=public
-      - REDIS_URL=redis://10.117.209.35:6379
+      - REDIS_URL=redis://10.235.43.227:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - ENGAGEMENT_SERVICE_URL=http://engagement-service:4700
       - SUBSCRIPTION_SERVICE_URL=http://subscription-service:5100
@@ -108,24 +108,24 @@ services:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - UPLOAD_BUCKET=videos-bucket-pocketlol-dev
       - TRANSCODING_REQUESTS_TOPIC=transcoding-requests-dev
-      - MEDIA_READY_SUBSCRIPTION=projects/pocketlol-68ca6/subscriptions/streaming-audit-sub-dev
+      - MEDIA_READY_SUBSCRIPTION=projects/omg-tv-497110/subscriptions/streaming-audit-sub-dev
     depends_on:
       - cloud-sql-proxy
 
   engagement-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/engagement-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/engagement-service:latest
     restart: always
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_engagement?schema=public
-      - REDIS_URL=redis://10.117.209.35:6379
+      - REDIS_URL=redis://10.235.43.227:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - CONTENT_SERVICE_URL=http://content-service:4600
     depends_on:
       - cloud-sql-proxy
 
   search-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/search-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/search-service:latest
     restart: always
     environment:
       - NODE_ENV=production
@@ -136,7 +136,7 @@ services:
       - meilisearch
 
   streaming-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/streaming-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/streaming-service:latest
     restart: always
     environment:
       - NODE_ENV=production
@@ -145,12 +145,12 @@ services:
       - SIGNED_URL_TTL_SECONDS=300
 
   upload-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/upload-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/upload-service:latest
     restart: always
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_uploads?schema=public
-      - REDIS_URL=redis://10.117.209.35:6379
+      - REDIS_URL=redis://10.235.43.227:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - CONTENT_SERVICE_URL=http://content-service:4600
       - UPLOAD_BUCKET=videos-bucket-pocketlol-dev
@@ -160,12 +160,12 @@ services:
       - cloud-sql-proxy
 
   subscription-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/subscription-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/subscription-service:latest
     restart: always
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_subscription?schema=public
-      - REDIS_URL=redis://10.117.209.35:6379
+      - REDIS_URL=redis://10.235.43.227:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - HTTP_PORT=5100
       - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
@@ -177,7 +177,7 @@ services:
       - cloud-sql-proxy
 
   transcoding-worker:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/transcoding-worker:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/transcoding-worker:latest
     restart: always
     environment:
       - NODE_ENV=production
@@ -186,7 +186,7 @@ services:
       - GCS_STREAMING_BUCKET=videos-bucket-pocketlol-dev
       - PREVIEW_GENERATION_TOPIC=media.preview.requested-dev
       - MEDIA_PROCESSED_TOPIC=media.processed-dev
-      - PUBSUB_SUBSCRIPTION=projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-dev
+      - PUBSUB_SUBSCRIPTION=projects/omg-tv-497110/subscriptions/transcoding-requests-sub-dev
       - PUBSUB_READY_TOPIC=streaming-audit-dev
       - CDN_BASE_URL=https://media.omgtv.in
       # Worker needs direct DB access to Content DB
@@ -195,12 +195,12 @@ services:
       - cloud-sql-proxy
 
   notification-service:
-    image: asia-south1-docker.pkg.dev/pocketlol-68ca6/pocketlol/notification-service:latest
+    image: asia-south1-docker.pkg.dev/omg-tv-497110/pocketlol/notification-service:latest
     restart: always
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_notification?schema=public
-      - REDIS_URL=redis://10.117.209.35:6379
+      - REDIS_URL=redis://10.235.43.227:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - HTTP_PORT=5200
       - FIREBASE_SERVICE_ACCOUNT_PATH=/app/secrets/firebase/notification-service-account.json

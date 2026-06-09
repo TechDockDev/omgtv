@@ -14,11 +14,11 @@ spec:
                   name: content-service-secrets
                   key: DATABASE_URL
             - name: GCS_UPLOADS_BUCKET
-              value: "videos-bucket-pocketlol-prod"
+              value: "videos-bucket-omgtv-prod"
             - name: GCS_STREAMING_BUCKET
-              value: "videos-bucket-pocketlol-prod"
+              value: "videos-bucket-omgtv-prod"
             - name: PUBSUB_SUBSCRIPTION
-              value: "projects/pocketlol-68ca6/subscriptions/transcoding-requests-sub-prod"
+              value: "projects/omg-tv-497110/subscriptions/transcoding-requests-sub-prod"
             - name: PUBSUB_READY_TOPIC
               value: "streaming-audit-prod"
             - name: MEDIA_PROCESSED_TOPIC

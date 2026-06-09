@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PROJECT_ID: "pocketlol-68ca6"
+  PROJECT_ID: "omg-tv-497110"
   REGION: "asia-south1"
   AR_REPO: "pocketlol"
 
@@ -35,8 +35,8 @@ jobs:
       - name: Auth to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: "projects/912340818228/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
-          service_account: "github-deployer@pocketlol-68ca6.iam.gserviceaccount.com"
+          workload_identity_provider: "projects/290402369772/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-deployer@omg-tv-497110.iam.gserviceaccount.com"
 
       - name: Configure Docker auth
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
