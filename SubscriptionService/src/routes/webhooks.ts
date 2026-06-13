@@ -18,6 +18,10 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
     const prisma = getPrisma();
     const razorpay = getRazorpay();
 
+    app.get("/razorpay", async (_request, reply) => {
+        return reply.send({ status: "ok" });
+    });
+
     app.post("/razorpay", async (request, reply) => {
         const signature = request.headers["x-razorpay-signature"] as string;
         const body = request.body as any;

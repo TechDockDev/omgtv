@@ -1,4 +1,5 @@
 import Fastify, { type FastifyError } from "fastify";
+import { Readable } from "node:stream";
 import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import replyFrom from "@fastify/reply-from";
@@ -56,14 +57,32 @@ export async function createApp(): Promise<FastifyInstance> {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  // Allow empty JSON bodies to pass through to downstream services
-  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
-    if (typeof body === 'string' && body.trim() === '') {
+  // Parse JSON as a buffer so webhook routes can forward the ORIGINAL raw bytes
+  // untouched. @fastify/reply-from re-serializes any non-stream request.body via
+  // JSON.stringify for application/json (hardcoded — cannot be disabled), which
+  // changes the bytes (escaped "\/", "\uXXXX", etc. get normalized) and breaks
+  // HMAC signature verification in downstream webhook handlers (Razorpay/PhonePe).
+  // A Stream body, however, is forwarded as-is — so for webhook routes we wrap the
+  // raw buffer in a Readable stream to preserve the exact payload the provider signed.
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
+    const buf = body as Buffer;
+    if (request.url?.includes("/webhooks/")) {
+      // Emit the raw buffer as a single binary chunk. NOTE: do NOT use
+      // Readable.from(buf) — that yields an object-mode stream of byte-integers,
+      // which undici (reply-from's HTTP client) cannot send as a request body.
+      const stream = new Readable({ read() {} });
+      stream.push(buf);
+      stream.push(null);
+      done(null, stream);
+      return;
+    }
+    const str = buf.toString("utf8");
+    if (str.trim() === '') {
       done(null, {});
       return;
     }
     try {
-      const json = JSON.parse(body as string);
+      const json = JSON.parse(str);
       done(null, json);
     } catch (err: any) {
       err.statusCode = 400;
