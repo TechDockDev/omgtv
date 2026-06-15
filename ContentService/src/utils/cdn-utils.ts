@@ -14,9 +14,15 @@ export function ensureCdnUrl(url?: string | null): string | null {
     return url;
   }
 
+  // Normalize any old bucket names to the current bucket first
+  const normalized = url
+    .replace(/https:\/\/storage\.googleapis\.com\/videos-bucket-pocketlol-prod\//g,
+      "https://storage.googleapis.com/videos-bucket-omgtv-prod/")
+    .replace(/https:\/\/storage\.googleapis\.com\/videos-bucket-pocketlol\//g,
+      "https://storage.googleapis.com/videos-bucket-omgtv-prod/");
+
   // Replace GCS storage domain with our production CDN domain
-  // Supports both production and development bucket variants
-  return url.replace(
+  return normalized.replace(
     /https:\/\/storage\.googleapis\.com\/videos-bucket-omgtv-prod/g,
     "https://media.omgtv.in"
   );
