@@ -8,8 +8,8 @@ import { NotificationClient } from "../clients/notification-client";
 
 const notificationClient = new NotificationClient();
 
-// ₹1,000 ceiling — must match what was sent at mandate setup
-const MANDATE_MAX_AMOUNT = 100000;
+// ₹300 ceiling — shown to user in UPI app during autopay setup. Must be >= highest plan price.
+const MANDATE_MAX_AMOUNT = 30000;
 
 interface Logger {
   info(obj: object | string, msg?: string): void;
@@ -140,7 +140,7 @@ export async function activatePhonePeSetupOrder(params: {
         amount: transaction.amountPaise,
         isTrialCycle: !!trialPlanId,
         cycleNumber: 1,
-        mandateMaxAmount: 50000,
+        mandateMaxAmount: MANDATE_MAX_AMOUNT,
         scheduledNotifyAt: new Date(0), // past — already done
         status: "SUCCESS",
         notifiedAt: new Date(),

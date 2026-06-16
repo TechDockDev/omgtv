@@ -86,6 +86,4 @@ metadata:
 data:
   REDIS_URL: "redis://10.61.1.195:6379"
   CONTENT_SERVICE_URL: "http://content-service:4600"
-  PHONEPE_ENV: "UAT"
-  # Use secrets for Razorpay in prod as well
-  # Switch PHONEPE_ENV to "PROD" when ready for production
+  PHONEPE_ENV: "PROD"

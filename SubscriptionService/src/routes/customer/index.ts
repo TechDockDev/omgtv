@@ -382,7 +382,7 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     // ─── PhonePe branch ───────────────────────────────────────────────────────
     if (provider === "phonepe") {
-      const MANDATE_MAX_AMOUNT = 100000; // ₹1,000 ceiling
+      const MANDATE_MAX_AMOUNT = 30000; // ₹300 ceiling — shown to user in UPI app during autopay setup
       const chargeAmountCheck = trialPlan ? trialPlan.trialPricePaise : plan.pricePaise;
       // Validate both current charge AND max future renewal amount against mandate ceiling
       if (chargeAmountCheck > MANDATE_MAX_AMOUNT || plan.pricePaise > MANDATE_MAX_AMOUNT) {
@@ -575,7 +575,7 @@ export default async function customerRoutes(app: FastifyInstance) {
 
     // ─── PhonePe verify branch ────────────────────────────────────────────────
     if (provider === "phonepe") {
-      const MANDATE_MAX_AMOUNT = 100000; // ₹1,000 — must match what was sent at mandate setup
+      const MANDATE_MAX_AMOUNT = 30000; // ₹300 ceiling — must match what was sent at mandate setup
       const { merchantOrderId, merchantSubscriptionId, transactionId } = body;
 
       if (!merchantOrderId || !merchantSubscriptionId || !transactionId) {
@@ -739,7 +739,7 @@ export default async function customerRoutes(app: FastifyInstance) {
           amount: transaction.amountPaise,
           isTrialCycle: !!trialPlanId,
           cycleNumber: 1,
-          mandateMaxAmount: 50000,
+          mandateMaxAmount: MANDATE_MAX_AMOUNT,
           scheduledNotifyAt: new Date(0), // past — already done
           status: "SUCCESS",
           notifiedAt: new Date(),
