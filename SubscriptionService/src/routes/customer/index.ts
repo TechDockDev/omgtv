@@ -12,6 +12,7 @@ import { loadConfig } from "../../config";
 import { getRazorpay } from "../../lib/razorpay";
 import { getPhonePe } from "../../lib/phonepe";
 import { trackSubscriptionEvent } from "../../lib/analytics";
+import { evaluatePhonePeIntentGuard } from "../../services/phonePeIntentGuard";
 const coinService = new CoinService();
 const streakService = new StreakService();
 const contentClient = new ContentClient();
@@ -389,11 +390,60 @@ export default async function customerRoutes(app: FastifyInstance) {
         return reply.badRequest("Plan price exceeds the maximum mandate amount allowed.");
       }
 
-      // Mark stale pending PhonePe transactions as FAILED — no external cancel needed (no mandate yet)
-      await prisma.transaction.updateMany({
-        where: { userId, status: "PENDING", planId: plan.id, provider: "phonepe" },
-        data: { status: "FAILED", failureReason: "Superseded by new purchase intent" },
+      // NOTE: We intentionally do NOT mark old PENDING PhonePe transactions as FAILED here.
+      // Doing so previously caused a real payment to be lost: if a user paid on the first
+      // attempt but the confirmation (verify/webhook) was slow, then tapped Subscribe again,
+      // we marked the (actually-paid) first transaction FAILED before the confirmation landed —
+      // and the webhook only updated PENDING rows, so the success was dropped.
+      // Instead we leave old PENDING transactions untouched; the setup-reconciliation cron
+      // resolves each one against PhonePe's live Order Status API (COMPLETED -> activate,
+      // genuinely abandoned/expired -> FAILED). PhonePe is the source of truth, never our guess.
+
+      // ── Double-charge guard ───────────────────────────────────────────────────
+      // Never mint a SECOND payable order while one for the SAME offer is already in flight
+      // or already paid. The "already has an active subscription" case (incl. trial→paid
+      // upgrade) is handled by the top-level check above — we deliberately do NOT re-check it
+      // here so upgrades aren't broken. The server is the only thing that can issue a PhonePe
+      // order token, so refusing to issue a second one for the same offer is a complete
+      // guarantee against double charges. Gated on PhonePe's live status. See phonePeIntentGuard.ts.
+      const guard = await evaluatePhonePeIntentGuard({
+        userId,
+        planId: plan.id,
+        trialPlanId: trialPlan ? trialPlan.id : null,
+        log: request.log,
       });
+
+      if (guard.kind === "already_paid") {
+        return reply.code(409).send({
+          success: false,
+          statusCode: 409,
+          code: "ALREADY_PAID",
+          userMessage: "Your previous payment was successful and your subscription is active. Please restart the app to continue.",
+          developerMessage: "In-flight order already COMPLETED on PhonePe; subscription activated",
+        });
+      }
+
+      if (guard.kind === "resume") {
+        // Hand back the SAME token so the user resumes the same checkout (no 2nd mandate).
+        return reply.code(200).send({
+          success: true,
+          statusCode: 200,
+          userMessage: "Resuming your pending payment",
+          developerMessage: "Returned existing in-flight PhonePe order token",
+          data: {
+            transactionId: guard.transactionId,
+            provider: "phonepe",
+            orderToken: guard.orderToken,
+            phonePeOrderId: guard.phonePeOrderId,
+            phonePeMerchantId: loadConfig().PHONEPE_MERCHANT_ID,
+            merchantOrderId: guard.merchantOrderId,
+            merchantSubscriptionId: guard.merchantSubscriptionId,
+            amountPaise: guard.amountPaise,
+            currency: guard.currency,
+          },
+        });
+      }
+      // guard.kind === "mint_new" → proceed to create a fresh order below.
 
       const merchantSubscriptionId = `OMGTV_SUB_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
       const merchantOrderId = `OMGTV_ORD_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -421,7 +471,16 @@ export default async function customerRoutes(app: FastifyInstance) {
             provider: "phonepe",
             subscriptionId: merchantSubscriptionId,
             trialPlanId: trialPlan ? trialPlan.id : null,
-            metadata: { deviceId, merchantOrderId, merchantSubscriptionId },
+            // Store the order token + PhonePe order id so a repeat /purchase/intent can
+            // RESUME this same checkout instead of minting a second order (double-charge guard).
+            metadata: {
+              deviceId,
+              merchantOrderId,
+              merchantSubscriptionId,
+              orderToken: orderToken.token,
+              phonePeOrderId: orderToken.orderId,
+              orderExpireAt: orderToken.expireAt,
+            },
           },
         });
 

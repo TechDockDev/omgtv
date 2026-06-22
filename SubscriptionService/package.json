@@ -11,6 +11,7 @@
         "migrate:dev": "prisma migrate dev",
         "migrate:deploy": "prisma migrate deploy",
         "typecheck": "tsc --noEmit",
+        "test": "vitest run",
         "lint": "eslint . --ext .ts",
         "format": "prettier --write ."
     },
@@ -52,6 +53,7 @@
         "prisma": "^5.10.2",
         "ts-node": "^10.9.2",
         "tsx": "^4.7.1",
-        "typescript": "^5.3.3"
+        "typescript": "^5.3.3",
+        "vitest": "^2.1.9"
     }
 }

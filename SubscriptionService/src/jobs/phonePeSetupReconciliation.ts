@@ -22,15 +22,22 @@ const MIN_AGE_MS = 5 * 60 * 1000; // 5 minutes old before first poll
 const EXPIRY_MS = 20 * 60 * 1000; // 20 minutes (15 min window + buffer)
 // Safety scan floor — don't sweep ancient rows on every run.
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Layer 2: how far back to re-check FAILED "superseded" transactions against PhonePe.
+// These are the false-negative case — our system marked them FAILED but the user may
+// actually have paid. Bounded window keeps the API-call volume tiny (supersede is rare).
+const FAILED_RECOVERY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const SUPERSEDED_REASON = "Superseded by new purchase intent";
 
 /**
- * Recovers PhonePe SETUP orders (first purchase / mandate creation) when BOTH the
- * app's /purchase/verify call AND the setup webhook were missed — e.g. the server was
- * down or the app crashed right after payment.
+ * Recovers PhonePe SETUP orders (first purchase / mandate creation) so that no paid
+ * order can ever be left without a subscription. Two scans, both gated entirely on
+ * PhonePe's live Order Status API (PhonePe is the source of truth — never our guess):
  *
- * A PENDING phonepe Transaction is always a setup order: renewals are created already
- * SUCCESS/FAILED, and coin purchases use a separate model. So the filter is simply
- * provider=phonepe + status=PENDING.
+ *   Scan 1 (PENDING):  transactions still awaiting confirmation. COMPLETED -> activate,
+ *                      expired/abandoned -> FAILED.
+ *   Scan 2 (FAILED):   transactions our system wrongly marked FAILED (the old "supersede"
+ *                      case) but the user actually paid. Recovered ONLY if PhonePe says
+ *                      COMPLETED — a genuine failure stays FAILED.
  */
 export async function runPhonePeSetupReconciliationPass(log: JobLogger): Promise<void> {
   const phonepe = getPhonePe();
@@ -50,6 +57,7 @@ export async function runPhonePeSetupReconciliationPass(log: JobLogger): Promise
   let failed = 0;
   let stillPending = 0;
   let expired = 0;
+  let recoveredFromFailed = 0;
 
   for (const tx of pending) {
     const meta = (tx.metadata ?? {}) as Record<string, unknown>;
@@ -111,6 +119,60 @@ export async function runPhonePeSetupReconciliationPass(log: JobLogger): Promise
     }
   }
 
+  // ── Layer 2: recover FAILED-but-actually-paid orders ────────────────────────
+  // Safety net for the false-negative case: a transaction our system marked FAILED
+  // (e.g. the old "supersede" bug) where the user actually completed payment.
+  // SAFETY: we recover ONLY when PhonePe's live Order Status API returns COMPLETED.
+  // A genuinely failed payment (wrong PIN, insufficient funds, abandoned) returns
+  // FAILED/PENDING from PhonePe and is left untouched — this can never turn a real
+  // failure into a success.
+  const failedRecoveryFloor = new Date(now.getTime() - FAILED_RECOVERY_WINDOW_MS);
+  const wronglyFailed = await prisma.transaction.findMany({
+    where: {
+      provider: "phonepe",
+      status: "FAILED",
+      failureReason: SUPERSEDED_REASON,
+      createdAt: { gt: failedRecoveryFloor },
+    },
+  });
+
+  for (const tx of wronglyFailed) {
+    // Skip if the user already has an active subscription (already recovered, or they
+    // retried successfully) — avoids redundant PhonePe calls and any chance of churn.
+    const existingSub = await prisma.userSubscription.findFirst({
+      where: { userId: tx.userId, provider: "phonepe", status: { in: ["ACTIVE", "TRIAL", "PAUSED"] } },
+    });
+    if (existingSub) continue;
+
+    const meta = (tx.metadata ?? {}) as Record<string, unknown>;
+    const merchantOrderId = typeof meta.merchantOrderId === "string" ? meta.merchantOrderId : undefined;
+    const merchantSubscriptionId =
+      (typeof meta.merchantSubscriptionId === "string" ? meta.merchantSubscriptionId : undefined) ??
+      tx.subscriptionId ??
+      undefined;
+
+    if (!merchantOrderId || !merchantSubscriptionId) continue;
+
+    try {
+      const status = await phonepe.getRedemptionStatus(merchantOrderId, tx.userId);
+
+      // ONLY a live COMPLETED from PhonePe triggers recovery. Anything else = leave FAILED.
+      if (status.state === "COMPLETED") {
+        const result = await activatePhonePeSetupOrder({ transaction: tx, merchantOrderId, merchantSubscriptionId, log });
+        if (result.kind !== "mandate_failed") {
+          recoveredFromFailed++;
+          log.warn({ msg: "phonepe_setup_recon: recovered FAILED-but-paid order", txId: tx.id, merchantOrderId });
+          void trackSubscriptionEvent(tx.userId, "phonepe_failed_order_recovery", {
+            provider: "phonepe", transaction_id: tx.id, result: result.kind,
+          });
+        }
+      }
+      // status.state FAILED or PENDING → genuine non-payment → do nothing, leave FAILED.
+    } catch (err: any) {
+      log.warn({ msg: "phonepe_setup_recon: getOrderStatus failed (failed-recovery scan)", txId: tx.id, merchantOrderId, error: err?.message });
+    }
+  }
+
   log.info({
     msg: "phonepe_setup_reconciliation_run",
     checked: pending.length,
@@ -118,6 +180,8 @@ export async function runPhonePeSetupReconciliationPass(log: JobLogger): Promise
     failed,
     expired,
     still_pending: stillPending,
+    failed_rechecked: wronglyFailed.length,
+    recovered_from_failed: recoveredFromFailed,
   });
 }
 
