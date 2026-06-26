@@ -12,6 +12,7 @@ import type { FirebaseAuthIntegration } from "../plugins/firebase";
 import type { AccessTokenPayload } from "../plugins/jwt";
 import type { UserServiceIntegration } from "../types/user-service";
 import { hashPassword, verifyPassword } from "../utils/password";
+import { trackAuthEvent } from "../utils/analytics";
 import type { Redis } from "ioredis";
 
 const config = loadConfig();
@@ -213,7 +214,7 @@ async function upsertCustomerSubjectByPhone(params: {
   prisma: PrismaClient;
   phoneNumber: string;
   customerId: string;
-}): Promise<{ subjectId: string; customerId: string; phoneNumber: string }> {
+}): Promise<{ subjectId: string; customerId: string; phoneNumber: string; isNewUser: boolean }> {
   const { prisma, phoneNumber, customerId } = params;
 
   return prisma.$transaction(async (tx) => {
@@ -230,6 +231,7 @@ async function upsertCustomerSubjectByPhone(params: {
         subjectId: updated.subjectId,
         customerId: updated.customerId,
         phoneNumber: updated.phoneNumber!,
+        isNewUser: false, // identity already existed — this is a returning login
       };
     }
 
@@ -254,6 +256,7 @@ async function upsertCustomerSubjectByPhone(params: {
       subjectId: subject.id,
       customerId: subject.customer.customerId,
       phoneNumber: subject.customer.phoneNumber!,
+      isNewUser: true, // identity created in this request — first-ever registration
     };
   });
 }
@@ -286,6 +289,16 @@ export async function authenticateCustomerDlt(params: {
     phoneNumber,
     customerId: ensureResult.customerId,
   });
+
+  // Fires ONLY on a user's first-ever registration (identity created in this verify).
+  // A returning user logging in again finds the existing identity → isNewUser is false → no event.
+  if (identity.isNewUser) {
+    trackAuthEvent(identity.customerId, "first_time_register", {
+      auth_provider: "DLT",
+      phone: phoneNumber,
+      $set: { phone: phoneNumber },
+    });
+  }
 
   if (ensureResult.guestProfileId) {
     const guestIdentity = await prisma.guestIdentity.findUnique({

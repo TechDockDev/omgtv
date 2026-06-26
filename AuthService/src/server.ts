@@ -1,6 +1,7 @@
 import { buildApp } from "./app";
 import { loadConfig } from "./config";
 import { startGrpcServer, stopGrpcServer } from "./grpc/server";
+import { shutdownPostHog } from "./utils/posthog";
 
 async function main() {
   const app = await buildApp();
@@ -26,6 +27,7 @@ async function main() {
       if (grpcServer) {
         await stopGrpcServer(grpcServer);
       }
+      await shutdownPostHog();
       await app.close();
       process.exit(0);
     } catch (error) {

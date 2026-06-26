@@ -59,8 +59,14 @@ export default async function internalRoutes(app: FastifyInstance) {
     },
   }, async (request) => {
     const { startDate, endDate, granularity = "daily" } = request.query as { startDate?: string; endDate?: string; granularity?: string };
-    const start = startDate ? new Date(startDate) : new Date(0);
-    const end = endDate ? new Date(endDate) : new Date();
+    const parseIST = (dateStr: string, isEnd: boolean): Date => {
+        if (dateStr.includes("T")) return new Date(dateStr);
+        return isEnd
+            ? new Date(`${dateStr}T23:59:59.999+05:30`)
+            : new Date(`${dateStr}T00:00:00.000+05:30`);
+    };
+    const start = startDate ? parseIST(startDate, false) : new Date(0);
+    const end = endDate ? parseIST(endDate, true) : new Date();
 
     const [stats, trend] = await Promise.all([
       prisma.transaction.aggregate({

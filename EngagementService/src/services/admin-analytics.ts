@@ -416,10 +416,20 @@ export async function getGeneralDashboardStats(params: {
     granularity?: "daily" | "monthly" | "yearly";
 }): Promise<GeneralDashboardStats> {
     const { prisma, startDate, endDate, granularity = "daily" } = params;
-    const currentEnd = endDate ? new Date(endDate) : new Date();
+
+    // Parse plain date strings (YYYY-MM-DD from frontend) with IST boundaries.
+    // ISO strings (already have T+offset) pass through new Date() unchanged.
+    const parseIST = (dateStr: string, isEnd: boolean): Date => {
+        if (dateStr.includes("T")) return new Date(dateStr);
+        return isEnd
+            ? new Date(`${dateStr}T23:59:59.999+05:30`)
+            : new Date(`${dateStr}T00:00:00.000+05:30`);
+    };
+
+    const currentEnd = endDate ? parseIST(endDate, true) : new Date();
     let currentStart: Date;
     if (startDate) {
-        currentStart = new Date(startDate);
+        currentStart = parseIST(startDate, false);
     } else {
         const offset = granularity === "yearly"
             ? 3 * 365 * 24 * 60 * 60 * 1000 // 3 years
