@@ -59,6 +59,7 @@ import {
 } from "../services/collection-engagement";
 import { loadConfig } from "../config";
 import { Prisma } from "@prisma/client";
+import { getAudioTrendingThisWeek } from "../services/audio-trending";
 
 function requireUserId(headers: Record<string, unknown>) {
   const value = headers["x-user-id"];
@@ -1330,6 +1331,17 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       }
 
       return { activity };
+    },
+  });
+
+  // Used by ContentService's audio admin "Trending This Week" module and the
+  // audio-home mobile endpoint. Auto-ranking only — admin pin/exclude overrides are
+  // stored and merged in ContentService, not here.
+  fastify.get("/analytics/audio-trending", {
+    handler: async () => {
+      if (!prisma) throw fastify.httpErrors.serviceUnavailable("Database not available");
+      const series = await getAudioTrendingThisWeek({ prisma });
+      return { series };
     },
   });
 }

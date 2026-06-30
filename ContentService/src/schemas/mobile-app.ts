@@ -116,6 +116,39 @@ export const mobileAudioSeriesDataSchema = z.object({
   pagination: paginationSchema,
 });
 
+const audioSeriesCardSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  title: z.string(),
+  synopsis: z.string().nullable(),
+  heroImageUrl: z.string().nullable(),
+  bannerImageUrl: z.string().nullable(),
+  isFree: z.boolean(),
+  totalEpisodes: z.number().int().nonnegative(),
+  totalDurationSeconds: z.number().int().nonnegative(),
+  rating: z.number().nullable(),
+  engagement: engagementSchema.nullable().optional(),
+  is_audio_series: z.literal(true),
+});
+
+const audioTrendingCardSchema = audioSeriesCardSchema.extend({
+  source: z.enum(["auto", "pinned"]),
+});
+
+const audioCategorySectionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  items: z.array(audioSeriesCardSchema),
+});
+
+export const mobileAudioHomeDataSchema = z.object({
+  carousel: z.array(audioSeriesCardSchema),
+  trendingThisWeek: z.array(audioTrendingCardSchema),
+  top10: z.array(audioSeriesCardSchema),
+  "continue watch": z.array(continueWatchItemSchema),
+  categories: z.array(audioCategorySectionSchema),
+});
+
 export const mobileTagsResponseSchema = z.object({
   tags: z.array(
     z.object({
@@ -263,6 +296,9 @@ export const mobileHomeEnvelopeSchema = responseEnvelope(mobileHomeDataSchema);
 export const mobileAudioSeriesEnvelopeSchema = responseEnvelope(
   mobileAudioSeriesDataSchema
 );
+export const mobileAudioHomeEnvelopeSchema = responseEnvelope(
+  mobileAudioHomeDataSchema
+);
 export const mobileSeriesEnvelopeSchema = responseEnvelope(
   mobileSeriesDataSchema
 );
@@ -314,5 +350,7 @@ export type MobileAudioSeriesData = z.infer<typeof mobileAudioSeriesDataSchema>;
 export type MobileAudioSeriesEnvelope = z.infer<
   typeof mobileAudioSeriesEnvelopeSchema
 >;
+export type MobileAudioHomeData = z.infer<typeof mobileAudioHomeDataSchema>;
+export type MobileAudioHomeEnvelope = z.infer<typeof mobileAudioHomeEnvelopeSchema>;
 export type MobileSeriesEnvelope = z.infer<typeof mobileSeriesEnvelopeSchema>;
 export type MobileReelsEnvelope = z.infer<typeof mobileReelsEnvelopeSchema>;

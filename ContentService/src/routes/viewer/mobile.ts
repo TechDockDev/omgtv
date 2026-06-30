@@ -21,6 +21,7 @@ import {
   mobileSeriesParamsSchema,
   mobileSeriesQuerySchema,
   mobileAudioSeriesEnvelopeSchema,
+  mobileAudioHomeEnvelopeSchema,
   mobileTagsEnvelopeSchema,
   mobileTagsQuerySchema,
 } from "../../schemas/mobile-app";
@@ -206,6 +207,46 @@ export default async function mobileAppRoutes(fastify: FastifyInstance) {
       } catch (error) {
         if (error instanceof CatalogConsistencyError) {
           request.log.error({ err: error }, "Mobile audio experience failed");
+          throw fastify.httpErrors.internalServerError(
+            `Catalog data quality issue: ${error.message}`
+          );
+        }
+        throw error;
+      }
+    },
+  });
+
+  fastify.get("/audio-home", {
+    config: { metricsId: "/mobile/audio-home" },
+    preHandler: verifyRequest,
+    schema: {
+      querystring: mobileHomeQuerySchema,
+      response: {
+        200: mobileAudioHomeEnvelopeSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const query = mobileHomeQuerySchema.parse(request.query);
+      const context = buildRequestContext(request);
+      try {
+        const result = await mobileApp.getAudioHomeExperience(query, {
+          context,
+          logger: request.log,
+        });
+        reply.header(
+          "cache-control",
+          `public, max-age=${config.FEED_CACHE_TTL_SECONDS}`
+        );
+        return {
+          success: true,
+          statusCode: 200,
+          userMessage: "Audio home loaded successfully",
+          developerMessage: "Audio home data fetched",
+          data: result.data,
+        } as const;
+      } catch (error) {
+        if (error instanceof CatalogConsistencyError) {
+          request.log.error({ err: error }, "Mobile audio home experience failed");
           throw fastify.httpErrors.internalServerError(
             `Catalog data quality issue: ${error.message}`
           );

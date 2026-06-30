@@ -41,8 +41,18 @@ import {
   type MobileTagsQuery,
   type MobileTagsResponse,
   mobileAudioSeriesDataSchema,
+  mobileAudioHomeDataSchema,
+  type MobileAudioHomeData,
 } from "../schemas/mobile-app";
 import { ensureCdnUrl } from "../utils/cdn-utils";
+import {
+  listAudioCarousel,
+  getPublicAudioTopTen,
+  getMergedAudioTrending,
+  getPublicAudioCategorySections,
+  type AudioSeriesSummary,
+  type AudioTrendingItem,
+} from "./audio-catalog-service";
 
 
 type LoggerLike = Pick<FastifyBaseLogger, "error" | "warn">;
@@ -410,6 +420,165 @@ export class MobileAppService {
     return {
       data: mobileHomeDataSchema.parse(data),
       fromCache: seriesFeed.fromCache,
+    };
+  }
+
+  /**
+   * Audio "home" aggregator: carousel + trending-this-week + top-10 + continue-watch
+   * + category sections, all audio-only. Mirrors getHomeExperience()'s shape/pattern
+   * but reads from the dedicated Audio* tables (audio-catalog-service.ts) instead of
+   * the video CarouselEntry/TopTenSeries/Category tables.
+   */
+  async getAudioHomeExperience(
+    query: MobileHomeQuery,
+    options?: MobileRequestOptions
+  ): Promise<{ data: MobileAudioHomeData; fromCache: boolean }> {
+    const prisma = getPrisma();
+    const userId = options?.context?.userId;
+
+    const [carouselEntries, topTenEntries, trendingItems, categorySections] = await Promise.all([
+      listAudioCarousel(prisma),
+      getPublicAudioTopTen(prisma),
+      this.deps.engagementClient
+        ? getMergedAudioTrending(prisma, this.deps.engagementClient).catch((err) => {
+            options?.logger?.error({ err }, "Failed to load audio trending");
+            return [] as AudioTrendingItem[];
+          })
+        : Promise.resolve([] as AudioTrendingItem[]),
+      getPublicAudioCategorySections(prisma),
+    ]);
+
+    // Continue Watching — audio episodes only (unlike getHomeExperience, which applies
+    // no audio/video filter on this list at all).
+    let continueWatchEpisodes: ViewerFeedItem[] = [];
+    const progressMap = new Map<string, ContinueWatchEntry>();
+
+    if (userId && this.deps.engagementClient) {
+      try {
+        const fetchLimit = (this.deps.config.continueWatchLimit || 10) * 5;
+        const progressList = await this.deps.engagementClient.getUserProgressList({
+          userId,
+          limit: fetchLimit,
+        });
+
+        const episodeIds = progressList.map((p) => p.episode_id);
+        if (episodeIds.length > 0) {
+          const rawEpisodes = await this.deps.viewerCatalog.getEpisodesBatch(episodeIds);
+          const episodeMap = new Map(rawEpisodes.map((e) => [e.id, e]));
+
+          const uniqueSeriesIds = new Set<string>();
+          const deduped: ViewerFeedItem[] = [];
+
+          for (const progress of progressList) {
+            const ep = episodeMap.get(progress.episode_id);
+            if (!ep || !ep.series?.id || !ep.series.isAudioSeries) continue;
+            if (uniqueSeriesIds.has(ep.series.id)) continue;
+
+            uniqueSeriesIds.add(ep.series.id);
+            deduped.push(ep);
+            progressMap.set(progress.episode_id, progress);
+
+            if (deduped.length >= (this.deps.config.continueWatchLimit || 10)) break;
+          }
+
+          continueWatchEpisodes = deduped;
+        }
+      } catch (err) {
+        options?.logger?.error({ err }, "Failed to load audio continue watching list");
+      }
+    }
+
+    const entitlements = await this.resolveEntitlements(options);
+
+    // One batched engagement call across every series ID in every module.
+    const allSeriesIds = new Set<string>();
+    carouselEntries.forEach((e) => e.series && allSeriesIds.add(e.series.id));
+    topTenEntries.forEach((e) => e.series && allSeriesIds.add(e.series.id));
+    trendingItems.forEach((e) => e.series && allSeriesIds.add(e.series.id));
+    categorySections.forEach((c) => c.series.forEach((s) => allSeriesIds.add(s.id)));
+    continueWatchEpisodes.forEach((ep) => ep.series?.id && allSeriesIds.add(ep.series.id));
+
+    const engagementItems = Array.from(allSeriesIds).map((id) => ({ id, contentType: "series" as const }));
+    const engagementStates = await this.loadEngagementStates(engagementItems, options);
+
+    const toCard = (s: AudioSeriesSummary | null) => {
+      if (!s) return null;
+      const engagement = engagementStates.get(s.id);
+      return {
+        id: s.id,
+        slug: s.slug,
+        title: s.title,
+        synopsis: s.synopsis,
+        heroImageUrl: s.heroImageUrl,
+        bannerImageUrl: s.bannerImageUrl,
+        isFree: s.isFree,
+        totalEpisodes: s.totalEpisodes,
+        totalDurationSeconds: s.totalDurationSeconds,
+        rating: engagement?.averageRating ?? null,
+        engagement: engagement ?? DEFAULT_ENGAGEMENT,
+        is_audio_series: true as const,
+      };
+    };
+
+    const carousel = carouselEntries
+      .map((e) => toCard(e.series))
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+
+    const top10 = topTenEntries
+      .map((e) => toCard(e.series))
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+
+    const trendingThisWeek = trendingItems
+      .map((item) => {
+        const card = toCard(item.series);
+        if (!card) return null;
+        return { ...card, source: item.source };
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+
+    const categories = categorySections.map((c) => ({
+      id: c.id,
+      name: c.name,
+      items: c.series
+        .map((s) => toCard(s))
+        .filter((x): x is NonNullable<typeof x> => x !== null),
+    }));
+
+    const continueWatch = continueWatchEpisodes
+      .filter((item) => {
+        const isFullySubscribed = entitlements.episode.planPurchased && !entitlements.episode.isTrial;
+        const isTrialUser = entitlements.episode.isTrial;
+        const episodeIsFree = item.isFree;
+        const episodeIsTrial = item.isTrial;
+
+        return (
+          episodeIsFree ||
+          isFullySubscribed ||
+          (episodeIsTrial && (isTrialUser || isFullySubscribed))
+        );
+      })
+      .slice(0, this.deps.config.continueWatchLimit)
+      .map((item) => {
+        const seriesId = item.series?.id;
+        const engagement = seriesId ? engagementStates.get(seriesId) : null;
+
+        return {
+          ...this.toContinueWatchItem(item, entitlements.episode, progressMap.get(item.id)),
+          engagement: engagement ?? DEFAULT_ENGAGEMENT,
+        };
+      });
+
+    const data: MobileAudioHomeData = {
+      carousel,
+      trendingThisWeek,
+      top10,
+      "continue watch": continueWatch,
+      categories,
+    };
+
+    return {
+      data: mobileAudioHomeDataSchema.parse(data),
+      fromCache: false,
     };
   }
 

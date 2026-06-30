@@ -7,10 +7,12 @@ import {
     getCustomAdAnalytics,
 } from "../services/admin-analytics";
 import { getReviews, deleteReview } from "../services/collection-engagement";
+import { getSeriesAnalyticsReport, seriesAnalyticsToCsv } from "../services/series-analytics";
 import { getPrismaOptional } from "../lib/prisma";
 import { getRedisOptional } from "../lib/redis";
 import { userContentStatsResponseSchema } from "../schemas/admin-analytics";
 import { reviewsResponseSchema, getReviewsQuerySchema } from "../schemas/review";
+import { resolveIstDateRange } from "../utils/date-range";
 
 const userIdParamsSchema = z.object({
     userId: z.string().min(1),
@@ -219,6 +221,40 @@ export default async function adminRoutes(fastify: FastifyInstance) {
             }
             const { startDate, endDate } = request.query as any;
             return await getCustomAdAnalytics({ prisma, startDate, endDate });
+        },
+    });
+
+    // Series-level analytics report (watch hours, completions, likes/saves, ratings)
+    // with a date-range filter. Page views and ratings are all-time — see series-analytics.ts.
+    const seriesReportQuerySchema = z.object({
+        startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        format: z.enum(["json", "csv"]).optional().default("json"),
+    });
+
+    fastify.get("/analytics/series-report", {
+        schema: { querystring: seriesReportQuerySchema },
+        handler: async (request, reply) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+            const { startDate, endDate, format } = seriesReportQuerySchema.parse(request.query);
+            const { start, end } = resolveIstDateRange(startDate, endDate);
+            const rows = await getSeriesAnalyticsReport({ prisma, start, end });
+
+            if (format === "csv") {
+                reply.header("Content-Type", "text/csv");
+                reply.header(
+                    "Content-Disposition",
+                    `attachment; filename="series-analytics-${startDate ?? "last30d"}-to-${endDate ?? "now"}.csv"`
+                );
+                return seriesAnalyticsToCsv(rows);
+            }
+
+            return {
+                range: { startDate: start.toISOString(), endDate: end.toISOString() },
+                series: rows,
+            };
         },
     });
 

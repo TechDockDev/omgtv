@@ -74,6 +74,8 @@ import {
   type SaveProgressBody,
   type ProgressResponse,
 } from "../schemas/engagement.schema";
+import "@fastify/reply-from";
+import { loadConfig, resolveServiceUrl } from "../config";
 
 export default async function engagementRoutes(fastify: FastifyInstance) {
   const authenticatedConfig = {
@@ -183,6 +185,50 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
         request.user!,
         request.telemetrySpan
       );
+    },
+  });
+
+  // Admin: Series-level analytics report (date-range watch hours/completions/likes/saves).
+  // Raw passthrough (reply.from) instead of performServiceRequest, because that helper
+  // always does response.body.json() and would break on format=csv.
+  fastify.route({
+    method: "GET",
+    url: "/admin/analytics/series-report",
+    schema: {
+      querystring: z.object({
+        startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        format: z.enum(["json", "csv"]).optional(),
+      }),
+      response: {
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "admin" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request, reply) {
+      const config = loadConfig();
+      const baseUrl = resolveServiceUrl("engagement");
+      const target = new URL("/admin/analytics/series-report", baseUrl);
+      const query = request.query as { startDate?: string; endDate?: string; format?: string };
+      if (query.startDate) target.searchParams.set("startDate", query.startDate);
+      if (query.endDate) target.searchParams.set("endDate", query.endDate);
+      if (query.format) target.searchParams.set("format", query.format);
+
+      await reply.from(target.toString(), {
+        rewriteRequestHeaders: (_req, headers) => ({
+          ...headers,
+          "x-user-id": request.user!.id,
+          "x-user-roles": request.user!.roles.join(","),
+          "x-service-token": config.SERVICE_AUTH_TOKEN || "",
+          authorization: `Bearer ${config.SERVICE_AUTH_TOKEN || ""}`,
+        }),
+      });
     },
   });
 

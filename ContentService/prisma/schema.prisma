@@ -76,6 +76,7 @@ model Series {
   releaseDate      DateTime?
   ownerId          String
   categoryId       String?
+  audioCategoryId  String?
   createdByAdminId String?
   updatedByAdminId String?
   createdAt        DateTime          @default(now())
@@ -83,6 +84,7 @@ model Series {
   deletedAt        DateTime?
 
   category Category? @relation(fields: [categoryId], references: [id])
+  audioCategory AudioCategory? @relation(fields: [audioCategoryId], references: [id])
   seasons  Season[]
   episodes Episode[]
   reels    Reel[]
@@ -91,8 +93,11 @@ model Series {
   mediaAssets MediaAsset[]
   imageAssets ImageAsset[]
   topTenEntry TopTenSeries?
+  audioCarouselEntries AudioCarouselEntry[]
+  audioTopTenEntry     AudioTopTenSeries?
 
   @@index([categoryId])
+  @@index([audioCategoryId])
   @@index([status, visibility])
 }
 
@@ -350,4 +355,66 @@ model AppConfig {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+// --- Audio-specific curation (separate from video Carousel/TopTenSeries/Category
+// to avoid colliding with their position-uniqueness constraints) ---
+
+model AudioCarouselEntry {
+  id               String   @id @default(uuid())
+  position         Int
+  seriesId         String
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  series Series @relation(fields: [seriesId], references: [id])
+
+  @@index([position])
+  @@index([seriesId])
+}
+
+model AudioTopTenSeries {
+  id        String   @id @default(uuid())
+  seriesId  String
+  position  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  series Series @relation(fields: [seriesId], references: [id])
+
+  @@unique([seriesId])
+  @@unique([position])
+}
+
+model AudioCategory {
+  id               String    @id @default(uuid())
+  slug             String    @unique
+  name             String
+  description      String?
+  displayOrder     Int?
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  series Series[]
+}
+
+enum AudioTrendingOverrideMode {
+  PINNED
+  EXCLUDED
+}
+
+model AudioTrendingOverride {
+  id               String                    @id @default(uuid())
+  seriesId         String                    @unique
+  mode             AudioTrendingOverrideMode
+  pinnedPosition   Int? // required when mode = PINNED, 1-10
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
 }

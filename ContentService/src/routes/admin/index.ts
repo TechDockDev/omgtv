@@ -13,6 +13,10 @@ import adminTopTenRoutes from "./top-ten";
 import adminAdRoutes from "./ads";
 import adminTrailerRoutes from "./trailers";
 import adminAppConfigRoutes from "./app-config";
+import adminAudioCarouselRoutes from "./audio/carousel";
+import adminAudioTopTenRoutes from "./audio/top-ten";
+import adminAudioTrendingRoutes from "./audio/trending";
+import adminAudioCategoriesRoutes from "./audio/categories";
 
 export default async function adminRoutes(fastify: FastifyInstance) {
   fastify.addHook("preHandler", async (request, reply) => {
@@ -86,4 +90,9 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   await fastify.register(adminAdRoutes, { prefix: "/catalog/ads" });
   await fastify.register(adminTrailerRoutes, { prefix: "/catalog/series" });
   await fastify.register(adminAppConfigRoutes, { prefix: "/app-config" });
+
+  await fastify.register(adminAudioCarouselRoutes, { prefix: "/catalog/audio/carousel" });
+  await fastify.register(adminAudioTopTenRoutes, { prefix: "/catalog/audio/top-10" });
+  await fastify.register(adminAudioTrendingRoutes, { prefix: "/catalog/audio/trending" });
+  await fastify.register(adminAudioCategoriesRoutes, { prefix: "/catalog/audio/categories" });
 }

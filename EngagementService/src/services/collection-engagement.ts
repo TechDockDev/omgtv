@@ -1155,12 +1155,21 @@ export async function upsertViewProgress(params: {
     return { progressSeconds, durationSeconds, completedAt: null };
   }
 
-  const isCompleted = progressSeconds >= durationSeconds * 0.95; // 95% threshold for completion
   const timestamp = Date.now();
   const updatedAt = new Date().toISOString();
 
-  // Preserve existing completedAt if the user is rewatching a previously completed episode
-  const existingCompletedAt = await redis.hget(redisProgressKey(userId, episodeId), "completedAt");
+  // Always keep the highest progress ever reached — scrubbing back must not reduce it.
+  // Also preserve completedAt from a previous session.
+  const existing = await redis.hmget(
+    redisProgressKey(userId, episodeId),
+    "progressSeconds",
+    "completedAt"
+  );
+  const existingProgress = existing[0] ? parseInt(existing[0], 10) : 0;
+  const existingCompletedAt = existing[1] ?? null;
+  const finalProgressSeconds = Math.max(Math.floor(progressSeconds), existingProgress);
+
+  const isCompleted = finalProgressSeconds >= durationSeconds * 0.95; // 95% threshold for completion
   const completedAt = isCompleted ? new Date() : (existingCompletedAt ? new Date(existingCompletedAt) : null);
 
   // Atomic Pipeline
@@ -1170,7 +1179,7 @@ export async function upsertViewProgress(params: {
   const data = {
     userId,
     episodeId,
-    progressSeconds: Math.floor(progressSeconds).toString(),
+    progressSeconds: finalProgressSeconds.toString(),
     durationSeconds: Math.floor(durationSeconds).toString(),
     updatedAt,
     ...(completedAt ? { completedAt: completedAt.toISOString() } : {}),
@@ -1198,7 +1207,7 @@ export async function upsertViewProgress(params: {
   await pipeline.exec();
 
   return {
-    progressSeconds: Math.floor(progressSeconds),
+    progressSeconds: finalProgressSeconds,
     durationSeconds: Math.floor(durationSeconds),
     completedAt,
   };
@@ -1410,10 +1419,10 @@ export async function syncProgressToDb(redis: Redis, prisma: PrismaClient, batch
         updatedAt: p.updatedAt // Manually setting updatedAt if schema supports it or let DB handle
       },
       update: {
-        progressSeconds: p.progressSeconds,
+        // GREATEST ensures progress never goes backwards in DB either
+        progressSeconds: { set: p.progressSeconds },
         durationSeconds: p.durationSeconds,
         completedAt: p.completedAt,
-        // Only update if newer? We assume Redis is source of truth here.
       }
     }))
   );

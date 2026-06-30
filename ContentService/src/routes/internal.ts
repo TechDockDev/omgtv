@@ -20,6 +20,7 @@ import { getRedis } from "../lib/redis";
 import { TrendingService } from "../services/trending-service";
 import { RedisCatalogEventsPublisher } from "../services/catalog-events";
 import { DataQualityMonitor } from "../services/data-quality-monitor";
+import { getPrisma } from "../lib/prisma";
 
 export default async function internalRoutes(fastify: FastifyInstance) {
   const config = loadConfig();
@@ -281,13 +282,13 @@ export default async function internalRoutes(fastify: FastifyInstance) {
       const { limit, cursor } = request.query as { limit: number; cursor?: string };
       // Use getHomeSeries or similar. getFeed returns episodes. getHomeSeries returns series?
       // Step 422 shows getHomeSeries returns ViewerFeedResponse (items, nextCursor).
-      // We need series list. getHomeSeries populates "Series" sections? 
+      // We need series list. getHomeSeries populates "Series" sections?
       // Actually viewerCatalog.listCategories exists.
       // But search proxy expects ITEMS to be SearchResult.
       // If getHomeSeries returns ViewerFeedItem (episodes? or series?).
       // ViewerFeedItem has type 'series' wrapper?
       // Let's check ViewerCatalogService.getHomeSeries logic in Step 422 (truncated).
-      // I'll assume getHomeSeries is what we want for browsing. 
+      // I'll assume getHomeSeries is what we want for browsing.
       // If not, I might need listSeries.
       const feed = await viewerCatalog.getHomeSeries({
         limit,
@@ -297,4 +298,34 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     },
   });
 
+  // Used by EngagementService to build the series-level analytics report and the
+  // audio "Trending This Week" ranking: gives it the series/episode catalog
+  // structure it has no DB access to.
+  fastify.get("/series/analytics-base", {
+    handler: async () => {
+      const prisma = getPrisma();
+      const series = await prisma.series.findMany({
+        where: { deletedAt: null },
+        select: {
+          id: true,
+          title: true,
+          isAudioSeries: true,
+          episodes: {
+            where: { deletedAt: null },
+            select: { id: true },
+          },
+        },
+      });
+
+      return {
+        series: series.map((s) => ({
+          id: s.id,
+          title: s.title,
+          isAudioSeries: s.isAudioSeries,
+          totalEpisodes: s.episodes.length,
+          episodeIds: s.episodes.map((e) => e.id),
+        })),
+      };
+    },
+  });
 }

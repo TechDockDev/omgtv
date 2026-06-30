@@ -363,6 +363,41 @@ export class EngagementClient {
     return results;
   }
 
+  /**
+   * Audio series ranked by view activity over the trailing 7 days. Auto-ranking only —
+   * pin/exclude overrides are applied by the caller (audio-catalog-service.ts), not here.
+   */
+  async getAudioTrending(): Promise<
+    Array<{ seriesId: string; seriesName: string; totalEpisodes: number; viewCount: number; watchSeconds: number }>
+  > {
+    const response: ServiceRequestResult<unknown> = await performServiceRequest({
+      serviceName: "engagement",
+      baseUrl: this.options.baseUrl,
+      path: "/internal/analytics/audio-trending",
+      method: "GET",
+      timeoutMs: this.options.timeoutMs,
+      spanName: "client:engagement:getAudioTrending",
+    });
+
+    const audioTrendingRowSchema = z.object({
+      seriesId: z.string(),
+      seriesName: z.string(),
+      totalEpisodes: z.number().int().nonnegative(),
+      viewCount: z.number().int().nonnegative(),
+      watchSeconds: z.number().int().nonnegative(),
+    });
+    const audioTrendingResponseSchema = z.object({
+      series: z.array(audioTrendingRowSchema),
+    });
+
+    const data = (response.payload as any)?.data ?? response.payload;
+    const parsed = audioTrendingResponseSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new Error("Invalid response from EngagementService (audio-trending)");
+    }
+    return parsed.data.series;
+  }
+
   async notifyVisibilityChange(params: {
     contentType: "reel" | "series" | "episode";
     contentId: string;
