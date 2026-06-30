@@ -34,8 +34,14 @@ async function fetchSeriesBase(): Promise<AnalyticsBaseSeries[]> {
   if (!res.ok) {
     throw new Error(`ContentService analytics-base call failed: ${res.status}`);
   }
-  const body = (await res.json()) as { series: AnalyticsBaseSeries[] };
-  return body.series;
+  // ContentService's global-response.ts onSend hook wraps every JSON response in
+  // {success, statusCode, ..., data: {...}} — unwrap it the same way EngagementClient does.
+  const raw = (await res.json()) as { data?: { series: AnalyticsBaseSeries[] }; series?: AnalyticsBaseSeries[] };
+  const series = raw.data?.series ?? raw.series;
+  if (!series) {
+    throw new Error("ContentService analytics-base response missing series array");
+  }
+  return series;
 }
 
 export async function getSeriesAnalyticsReport(params: {

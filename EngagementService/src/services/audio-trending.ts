@@ -38,8 +38,14 @@ export async function getAudioTrendingThisWeek(params: {
   if (!res.ok) {
     throw new Error(`ContentService analytics-base call failed: ${res.status}`);
   }
-  const body = (await res.json()) as { series: AnalyticsBaseSeries[] };
-  const audioSeries = body.series.filter((s) => s.isAudioSeries);
+  // ContentService's global-response.ts onSend hook wraps every JSON response in
+  // {success, statusCode, ..., data: {...}} — unwrap it the same way EngagementClient does.
+  const raw = (await res.json()) as { data?: { series: AnalyticsBaseSeries[] }; series?: AnalyticsBaseSeries[] };
+  const allSeries = raw.data?.series ?? raw.series;
+  if (!allSeries) {
+    throw new Error("ContentService analytics-base response missing series array");
+  }
+  const audioSeries = allSeries.filter((s) => s.isAudioSeries);
   if (audioSeries.length === 0) return [];
 
   const episodeToSeries = new Map<string, string>();
