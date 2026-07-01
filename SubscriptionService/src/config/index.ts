@@ -20,6 +20,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value && value.trim().length > 0 ? value : undefined)),
+  AUTH_SERVICE_URL: z.string().url().default("http://localhost:4000"),
   USER_SERVICE_URL: z.string().url().default("http://localhost:4500"),
   CONTENT_SERVICE_URL: z.string().url().default("http://localhost:4200"),
   NOTIFICATION_SERVICE_URL: z.string().url().default("http://localhost:5200"),

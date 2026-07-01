@@ -1274,6 +1274,87 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
     handler: storeSyncHandler,
   });
 
+  // Admin: Platform Engagement by OS / App Version
+  fastify.route({
+    method: "GET",
+    url: "/admin/analytics/platform-engagement",
+    schema: {
+      querystring: z.object({
+        startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        period: z.enum(["daily", "monthly"]).optional(),
+        platform: z.enum(["all", "android", "ios"]).optional(),
+      }),
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "admin" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request, reply) {
+      const config = loadConfig();
+      const baseUrl = resolveServiceUrl("engagement");
+      const query = request.query as {
+        startDate?: string;
+        endDate?: string;
+        period?: string;
+        platform?: string;
+      };
+      const target = new URL("/admin/analytics/platform-engagement", baseUrl);
+      if (query.startDate) target.searchParams.set("startDate", query.startDate);
+      if (query.endDate) target.searchParams.set("endDate", query.endDate);
+      if (query.period) target.searchParams.set("period", query.period);
+      if (query.platform) target.searchParams.set("platform", query.platform);
+
+      await reply.from(target.toString(), {
+        rewriteRequestHeaders: (_req, headers) => ({
+          ...headers,
+          "x-user-id": request.user!.id,
+          "x-user-roles": request.user!.roles.join(","),
+          "x-service-token": config.SERVICE_AUTH_TOKEN || "",
+          authorization: `Bearer ${config.SERVICE_AUTH_TOKEN || ""}`,
+        }),
+      });
+    },
+  });
+
+  // Admin: Episode-level retention breakdown for a series
+  fastify.route({
+    method: "GET",
+    url: "/admin/analytics/series/:seriesId/episodes",
+    schema: {
+      params: z.object({ seriesId: z.string().uuid() }),
+      querystring: z.object({
+        startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      }),
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "admin" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request, reply) {
+      const config = loadConfig();
+      const baseUrl = resolveServiceUrl("engagement");
+      const { seriesId } = request.params as { seriesId: string };
+      const query = request.query as { startDate?: string; endDate?: string };
+      const target = new URL(`/admin/analytics/series/${seriesId}/episodes`, baseUrl);
+      if (query.startDate) target.searchParams.set("startDate", query.startDate);
+      if (query.endDate) target.searchParams.set("endDate", query.endDate);
+
+      await reply.from(target.toString(), {
+        rewriteRequestHeaders: (_req, headers) => ({
+          ...headers,
+          "x-user-id": request.user!.id,
+          "x-user-roles": request.user!.roles.join(","),
+          "x-service-token": config.SERVICE_AUTH_TOKEN || "",
+          authorization: `Bearer ${config.SERVICE_AUTH_TOKEN || ""}`,
+        }),
+      });
+    },
+  });
+
   // Logging to confirm registration
   fastify.log.info("Engagement Routes registered successfully");
 }

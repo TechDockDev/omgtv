@@ -301,6 +301,39 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   // Used by EngagementService to build the series-level analytics report and the
   // audio "Trending This Week" ranking: gives it the series/episode catalog
   // structure it has no DB access to.
+  /**
+   * GET /internal/series/:seriesId/episodes-for-analytics
+   * Returns ordered episode metadata for a series, used by EngagementService
+   * to build the episode-level retention breakdown.
+   */
+  fastify.get("/series/:seriesId/episodes-for-analytics", {
+    schema: { params: z.object({ seriesId: z.string().uuid() }) },
+    handler: async (request) => {
+      const { seriesId } = request.params as { seriesId: string };
+      const prisma = getPrisma();
+
+      const [series, episodes] = await Promise.all([
+        prisma.series.findUnique({
+          where: { id: seriesId },
+          select: { id: true, title: true },
+        }),
+        prisma.episode.findMany({
+          where: { seriesId, deletedAt: null },
+          select: {
+            id: true,
+            title: true,
+            episodeNumber: true,
+            displayOrder: true,
+            durationSeconds: true,
+          },
+          orderBy: [{ displayOrder: "asc" }, { episodeNumber: "asc" }],
+        }),
+      ]);
+
+      return { series, episodes };
+    },
+  });
+
   fastify.get("/series/analytics-base", {
     handler: async () => {
       const prisma = getPrisma();

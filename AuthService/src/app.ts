@@ -20,6 +20,7 @@ import emailUpdateRoutes from "./routes/email-update";
 import adminSettingsRoutes from "./routes/admin-settings";
 import adminSecurityRoutes from "./routes/admin-security";
 import internalAdminRoutes from "./routes/internal-admin";
+import internalAnalyticsRoutes from "./routes/internal-analytics";
 import { buildJwks } from "./utils/jwks";
 import formbody from "@fastify/formbody";
 
@@ -64,6 +65,7 @@ export async function buildApp() {
   await fastify.register(adminSecurityRoutes);
   await fastify.register(adminSettingsRoutes, { prefix: "/api/v1/auth/admin" });
   await fastify.register(internalAdminRoutes);
+  await fastify.register(internalAnalyticsRoutes);
 
   fastify.get("/health", async () => ({ status: "ok" }));
 

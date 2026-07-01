@@ -10,6 +10,7 @@ import cors from "@fastify/cors";
 import { loadConfig } from "./config";
 import serviceAuthPlugin from "./plugins/service-auth";
 import adminRoutes from "./routes/admin";
+import analyticsAdminRoutes from "./routes/admin/analytics";
 import customerRoutes from "./routes/customer";
 import internalRoutes from "./routes/internal";
 import { startAtRiskNotifier } from "./jobs/at-risk-notifier";
@@ -69,6 +70,7 @@ export async function buildApp() {
 
   const externalBase = "/api/v1/subscription";
   await app.register(adminRoutes, { prefix: `${externalBase}/admin` });
+  await app.register(analyticsAdminRoutes, { prefix: `${externalBase}/admin` });
   await app.register(customerRoutes, { prefix: externalBase });
 
   // Register webhooks

@@ -282,4 +282,103 @@ export default async function internalRoutes(app: FastifyInstance) {
         const tokens = await customerService.getFcmTokensByAuthIds(authIds);
         return { tokens };
     });
+
+    /**
+     * POST /internal/analytics/device-metadata
+     * Returns os + appVersion for a list of deviceIds.
+     * Used by EngagementService to join AppEvent.deviceId with device info.
+     */
+    app.post("/analytics/device-metadata", {
+        schema: {
+            body: z.object({
+                deviceIds: z.array(z.string()).min(1).max(50000),
+            }),
+        },
+    }, async (request) => {
+        const { deviceIds } = request.body as { deviceIds: string[] };
+        const devices = await app.prisma.deviceIdentity.findMany({
+            where: { deviceId: { in: deviceIds } },
+            select: { deviceId: true, os: true, appVersion: true },
+        });
+        return { devices };
+    });
+
+    /**
+     * POST /internal/analytics/customer-ids-to-auth-ids
+     * Converts CustomerProfile.id (SubscriptionService userId space) to AuthSubject.id
+     * (EngagementService AppEvent.userId space) via CustomerIdentity in AuthDB.
+     */
+    app.post("/analytics/customer-ids-to-auth-ids", {
+        schema: {
+            body: z.object({
+                customerIds: z.array(z.string()).min(1).max(50000),
+            }),
+        },
+    }, async (request) => {
+        const { customerIds } = request.body as { customerIds: string[] };
+        const rows = await authPrisma.$queryRaw<{ customerId: string; authId: string }[]>(
+            Prisma.sql`
+                SELECT c."customerId", c."subjectId" AS "authId"
+                FROM "CustomerIdentity" c
+                WHERE c."customerId" = ANY(${customerIds})
+            `
+        );
+        return { mapping: rows };
+    });
+
+    /**
+     * POST /internal/analytics/filter-by-platform
+     * Given a list of authIds (AuthSubject.id values) and a platform OS string,
+     * returns only those authIds whose earliest registered device matches the platform.
+     * Used by the analytics lifecycle endpoint to apply the platform cohort filter.
+     */
+    app.post("/analytics/filter-by-platform", {
+        schema: {
+            body: z.object({
+                authIds: z.array(z.string()).min(1).max(50000),
+                os: z.enum(["android", "ios"]),
+            }),
+        },
+    }, async (request) => {
+        const { authIds, os } = request.body as { authIds: string[]; os: "android" | "ios" };
+
+        // 1. Resolve authId → CustomerProfile.id via AuthDB
+        const rows = await authPrisma.$queryRaw<{ auth_id: string; customerId: string | null }[]>(
+            Prisma.sql`
+                SELECT s.id AS auth_id, c."customerId"
+                FROM "AuthSubject" s
+                LEFT JOIN "CustomerIdentity" c ON s.id = c."subjectId"
+                WHERE s.id IN (${Prisma.join(authIds)})
+                  AND s.type != 'GUEST'
+            `
+        );
+
+        const authToCustomer = new Map<string, string>();
+        for (const row of rows) {
+            if (row.customerId) authToCustomer.set(row.auth_id, row.customerId);
+        }
+
+        const customerIds = [...authToCustomer.values()];
+        if (customerIds.length === 0) return { authIds: [] };
+
+        // 2. Find customerIds whose earliest linked device is the requested OS
+        const matchingLinks = await app.prisma.customerDeviceLink.findMany({
+            where: {
+                customerId: { in: customerIds },
+                device: { os: { equals: os, mode: "insensitive" } },
+            },
+            select: { customerId: true },
+            distinct: ["customerId"],
+        });
+
+        const matchingCustomerIds = new Set(matchingLinks.map((l) => l.customerId));
+
+        // 3. Map back to authIds
+        const result = authIds.filter((id) => {
+            const cid = authToCustomer.get(id);
+            return cid !== undefined && matchingCustomerIds.has(cid);
+        });
+
+        return { authIds: result };
+    });
 }

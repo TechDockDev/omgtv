@@ -8,6 +8,8 @@ import {
 } from "../services/admin-analytics";
 import { getReviews, deleteReview } from "../services/collection-engagement";
 import { getSeriesAnalyticsReport, seriesAnalyticsToCsv } from "../services/series-analytics";
+import { getEpisodeAnalytics } from "../services/episode-analytics";
+import { getPlatformEngagement } from "../services/platform-engagement";
 import { getPrismaOptional } from "../lib/prisma";
 import { getRedisOptional } from "../lib/redis";
 import { userContentStatsResponseSchema } from "../schemas/admin-analytics";
@@ -255,6 +257,80 @@ export default async function adminRoutes(fastify: FastifyInstance) {
                 range: { startDate: start.toISOString(), endDate: end.toISOString() },
                 series: rows,
             };
+        },
+    });
+
+    // Episode-level retention breakdown for a single series
+    const episodeAnalyticsParamsSchema = z.object({
+        seriesId: z.string().uuid(),
+    });
+    const episodeAnalyticsQuerySchema = z.object({
+        startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    });
+
+    fastify.get("/analytics/series/:seriesId/episodes", {
+        schema: {
+            params: episodeAnalyticsParamsSchema,
+            querystring: episodeAnalyticsQuerySchema,
+        },
+        handler: async (request) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+            const { seriesId } = episodeAnalyticsParamsSchema.parse(request.params);
+            const { startDate, endDate } = episodeAnalyticsQuerySchema.parse(request.query);
+
+            // null start/end = all-time (no date filter)
+            const start = startDate ? resolveIstDateRange(startDate, startDate).start : null;
+            const end = endDate ? resolveIstDateRange(endDate, endDate).end : null;
+
+            const { series, episodes } = await getEpisodeAnalytics({ prisma, seriesId, start, end });
+
+            return {
+                seriesId,
+                seriesName: series?.title ?? null,
+                range: {
+                    startDate: start?.toISOString() ?? null,
+                    endDate: end?.toISOString() ?? null,
+                },
+                episodes,
+            };
+        },
+    });
+
+    // Platform Engagement by OS / App Version — period-based (daily or monthly)
+    const platformEngagementQuerySchema = z.object({
+        startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        period: z.enum(["daily", "monthly"]).optional().default("monthly"),
+        platform: z.enum(["all", "android", "ios"]).optional().default("all"),
+    });
+
+    fastify.get("/analytics/platform-engagement", {
+        schema: { querystring: platformEngagementQuerySchema },
+        handler: async (request) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+            const { startDate, endDate, period, platform } =
+                platformEngagementQuerySchema.parse(request.query);
+
+            const end = endDate
+                ? new Date(`${endDate}T23:59:59.999+05:30`)
+                : new Date();
+            const start = startDate
+                ? new Date(`${startDate}T00:00:00.000+05:30`)
+                : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+            return getPlatformEngagement({
+                prisma,
+                start,
+                end,
+                periodType: period,
+                platform: platform === "all" ? undefined : platform,
+                log: { warn: (msg) => fastify.log.warn(msg) },
+            });
         },
     });
 
