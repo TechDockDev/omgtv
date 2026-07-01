@@ -384,7 +384,7 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         period: z.enum(["daily", "monthly"]).optional().default("monthly"),
       }),
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { startDate, endDate, period = "monthly" } =
       request.query as { startDate?: string; endDate?: string; period: "daily" | "monthly" };
 
@@ -399,6 +399,7 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       : new Date(end.getTime() - 365 * 24 * 60 * 60 * 1000);
 
     const periodFmt = period === "monthly" ? "YYYY-MM" : "YYYY-MM-DD";
+    const periodTrunc = period === "monthly" ? "month" : "day";
     const periodInterval = period === "monthly" ? "1 month" : "1 day";
     const periodEnd = period === "monthly"
       ? `gs + INTERVAL '1 month' - INTERVAL '1 millisecond'`
@@ -413,8 +414,8 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
             ${periodEnd} AS p_end,
             TO_CHAR(gs AT TIME ZONE 'Asia/Kolkata', '${periodFmt}') AS period_key
           FROM generate_series(
-            DATE_TRUNC('${period}', $1::timestamptz AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata',
-            DATE_TRUNC('${period}', $2::timestamptz AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata',
+            DATE_TRUNC('${periodTrunc}', $1::timestamptz AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata',
+            DATE_TRUNC('${periodTrunc}', $2::timestamptz AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata',
             INTERVAL '${periodInterval}'
           ) gs
         ),
