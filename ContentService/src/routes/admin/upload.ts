@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Storage } from "@google-cloud/storage";
 import { MediaAssetStatus, MediaAssetType } from "@prisma/client";
+import { loadConfig } from "../../config";
 
 // Request Schema
 const uploadBodySchema = z.object({
@@ -11,8 +12,9 @@ const uploadBodySchema = z.object({
 });
 
 export default async function adminUploadRoutes(fastify: FastifyInstance) {
-    const storage = new Storage({ projectId: process.env.GCP_PROJECT_ID });
-    const bucketName = process.env.UPLOAD_BUCKET || "videos-bucket-pocketlol-dev";
+    const config = loadConfig();
+    const storage = new Storage({ projectId: config.GCP_PROJECT_ID });
+    const bucketName = config.UPLOAD_BUCKET ?? "videos-bucket-omgtv-prod";
 
     /**
      * POST /admin/media/upload

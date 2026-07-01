@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { MediaAssetStatus } from "@prisma/client";
 import * as crypto from "crypto";
+import { Storage } from "@google-cloud/storage";
+import { loadConfig } from "../../config";
 
 const listImagesQuerySchema = z.object({
     status: z.nativeEnum(MediaAssetStatus).optional(),
@@ -134,9 +136,9 @@ export default async function adminImageRoutes(fastify: FastifyInstance) {
         async (request, reply) => {
             const { title, filename } = uploadImageBodySchema.parse(request.body);
             const adminId = requireAdminId(request, reply);
-            const { Storage } = await import("@google-cloud/storage");
-            const storage = new Storage({ projectId: process.env.GCP_PROJECT_ID });
-            const bucketName = process.env.UPLOAD_BUCKET || "videos-bucket-pocketlol-dev"; // Reusing video bucket for simplicity
+            const config = loadConfig();
+            const storage = new Storage({ projectId: config.GCP_PROJECT_ID });
+            const bucketName = config.UPLOAD_BUCKET ?? "videos-bucket-omgtv-prod";
 
             // 1. Create ImageAsset in DB (PENDING)
             // We generate a UUID for the uploadId to ensure uniqueness
