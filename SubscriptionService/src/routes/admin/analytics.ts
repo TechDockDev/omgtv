@@ -2,6 +2,9 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getPrisma } from "../../lib/prisma";
 import { loadConfig } from "../../config";
+import { getRedis } from "../../lib/redis";
+import { FUNNELS, FUNNEL_IDS } from "../../lib/funnel-definitions";
+import { queryPostHogFunnel } from "../../lib/posthog-query";
 
 interface CohortBucket {
   period: string;
@@ -25,6 +28,7 @@ interface LifecycleRow {
   subCancelled: number;
   subExpired: number;
   totalSubscribed: number;
+  renewedSubs: number;
   subChurned: number;
   subChurnPercent: number;
   reactivated: number;
@@ -45,6 +49,7 @@ interface UserSubRow {
   paid_ends_at: Date | null;
   provider: string | null;
   is_reactivated: boolean | string;
+  is_renewed: boolean | string;
 }
 
 const bool = (v: any): boolean => v === true || v === "t";
@@ -72,6 +77,7 @@ function buildRow(period: string, counts: Omit<LifecycleRow, "period" | "freePer
     totalSubscribed: counts.totalSubscribed,
     subChurned: counts.subChurned,
     subChurnPercent: pct(counts.subChurned, counts.totalSubscribed),
+    renewedSubs: counts.renewedSubs,
     reactivated: counts.reactivated,
     recoveryPercent: pct(counts.reactivated, counts.subChurned),
     razorpayUsers: counts.razorpayUsers,
@@ -95,6 +101,7 @@ function zeroCounters() {
     subExpired: 0,
     totalSubscribed: 0,
     subChurned: 0,
+    renewedSubs: 0,
     reactivated: 0,
     razorpayUsers: 0,
     phonePeUsers: 0,
@@ -250,6 +257,16 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
               AND us2."endsAt" < us1."startsAt"
           )
       ),
+      Renewed AS (
+        SELECT "userId"
+        FROM "Transaction"
+        WHERE "userId" = ANY(${allUserIds})
+          AND "status" = 'SUCCESS'
+          AND "trialPlanId" IS NULL
+          AND "planId" IS NOT NULL
+        GROUP BY "userId"
+        HAVING COUNT(*) > 1
+      ),
       ActiveUsers AS (
         SELECT "userId" FROM HadTrial
         UNION
@@ -264,13 +281,15 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         lp."status"                                           AS paid_status,
         lp."endsAt"                                           AS paid_ends_at,
         COALESCE(lp."provider", lt."provider")                AS provider,
-        (r."userId" IS NOT NULL)                              AS is_reactivated
+        (r."userId" IS NOT NULL)                              AS is_reactivated,
+        (rn."userId" IS NOT NULL)                             AS is_renewed
       FROM ActiveUsers au
       LEFT JOIN HadTrial ht  ON au."userId" = ht."userId"
       LEFT JOIN HadPaid  hp  ON au."userId" = hp."userId"
       LEFT JOIN LatestTrial lt ON au."userId" = lt."userId"
       LEFT JOIN LatestPaid  lp ON au."userId" = lp."userId"
       LEFT JOIN Reactivated  r ON au."userId" = r."userId"
+      LEFT JOIN Renewed      rn ON au."userId" = rn."userId"
     `;
 
     // ── Step 5: Aggregate per cohort period in TypeScript ─────────────────────
@@ -321,6 +340,7 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       if (row.paid_status === "EXPIRED" ||
           (row.paid_status === "CANCELED" && (!paidEndsAt || paidEndsAt <= now))) counter.subChurned++;
 
+      if (bool(row.is_renewed)) counter.renewedSubs++;
       if (bool(row.is_reactivated)) counter.reactivated++;
 
       if (row.provider === "razorpay") counter.razorpayUsers++;
@@ -329,7 +349,7 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
 
     // ── Step 6: Build period rows + overall ───────────────────────────────────
     const rows: LifecycleRow[] = Array.from(periodCounters.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => b.localeCompare(a))
       .map(([p, c]) => buildRow(p, c));
 
     // Overall = sum of all counters, percentages recomputed
@@ -480,46 +500,38 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         FROM periods p
         LEFT JOIN period_subs ps ON ps.period_key = p.period_key
         LEFT JOIN period_revenue r ON r.period_key = p.period_key
-        ORDER BY p.period_key
+        ORDER BY p.period_key DESC
       `, start, end),
 
-      fetch(
-        `${config.AUTH_SERVICE_URL}/internal/analytics/registration-counts?period=${period}`,
-        { headers: { "x-service-token": serviceToken } }
-      ).then(async (res) => {
-        if (!res.ok) {
-          request.log.warn({ status: res.status }, "biz-fin: AuthService registration-counts failed");
+      (() => {
+        const regParams = new URLSearchParams({ period });
+        if (startDate) regParams.set("startDate", startDate);
+        if (endDate) regParams.set("endDate", endDate);
+        return fetch(
+          `${config.AUTH_SERVICE_URL}/internal/analytics/registration-counts?${regParams}`,
+          { headers: { "x-service-token": serviceToken } }
+        ).then(async (res) => {
+          if (!res.ok) {
+            request.log.warn({ status: res.status }, "biz-fin: AuthService registration-counts failed");
+            return { cohorts: [] as { period: string; count: number }[] };
+          }
+          return res.json() as Promise<{ cohorts: { period: string; count: number }[] }>;
+        }).catch((err) => {
+          request.log.warn({ err }, "biz-fin: AuthService registration-counts error");
           return { cohorts: [] as { period: string; count: number }[] };
-        }
-        return res.json() as Promise<{ cohorts: { period: string; count: number }[] }>;
-      }).catch((err) => {
-        request.log.warn({ err }, "biz-fin: AuthService registration-counts error");
-        return { cohorts: [] as { period: string; count: number }[] };
-      }),
+        });
+      })(),
     ]);
 
-    // ── Accumulate cumulative registrations ────────────────────────────────────
-    // AuthService returns cohorts from 2020-01-01 onward (no startDate sent).
-    // We accumulate a running total so each period row knows total registered users
-    // as of that period end.
-    const sortedCohorts = regData.cohorts.sort((a, b) => a.period.localeCompare(b.period));
-    let runningReg = 0;
-    let cohortIdx = 0;
-
-    const cumRegByPeriod = new Map<string, number>();
-    const sortedPeriodKeys = sqlRows.map((r) => r.period_key).sort((a, b) => a.localeCompare(b));
-
-    for (const pKey of sortedPeriodKeys) {
-      while (cohortIdx < sortedCohorts.length && sortedCohorts[cohortIdx].period <= pKey) {
-        runningReg += sortedCohorts[cohortIdx].count;
-        cohortIdx++;
-      }
-      cumRegByPeriod.set(pKey, runningReg);
+    // ── Per-period registration counts (not cumulative) ────────────────────────
+    const regByPeriod = new Map<string, number>();
+    for (const cohort of regData.cohorts) {
+      regByPeriod.set(cohort.period, cohort.count);
     }
 
     // ── Build period rows ──────────────────────────────────────────────────────
     const rows: BizFinRow[] = sqlRows.map((r) => {
-      const totalReg = cumRegByPeriod.get(r.period_key) ?? 0;
+      const totalReg = regByPeriod.get(r.period_key) ?? 0;
       const mrr = Number(r.mrr_rupees);
       const gross = Number(r.gross_rupees);
       const refunded = Number(r.refunded_rupees);
@@ -538,13 +550,14 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       };
     });
 
-    // ── Overall row — snapshot fields from last period, revenue summed ─────────
-    const last = rows[rows.length - 1];
+    // ── Overall row — snapshot fields from latest period, revenue+registrations summed ──
+    // rows[0] is most recent because SQL uses ORDER BY period_key DESC
+    const last = rows[0];
     const totalGross = rows.reduce((s, r) => s + r.grossRevenueRupees, 0);
     const totalNet = rows.reduce((s, r) => s + r.netRevenueRupees, 0);
+    const totalReg = rows.reduce((s, r) => s + r.totalRegistered, 0);
     const overallMrr = last?.mrrRupees ?? 0;
     const overallPaid = last?.activePaidSubs ?? 0;
-    const overallReg = last?.totalRegistered ?? 0;
 
     const overall: BizFinRow = {
       period: "Overall",
@@ -552,8 +565,8 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       activePaidSubs: overallPaid,
       activeTrials: last?.activeTrials ?? 0,
       mrrRupees: overallMrr,
-      totalRegistered: overallReg,
-      arpuRupees: overallReg > 0 ? +(overallMrr / overallReg).toFixed(2) : 0,
+      totalRegistered: totalReg,
+      arpuRupees: totalReg > 0 ? +(overallMrr / totalReg).toFixed(2) : 0,
       arppuRupees: overallPaid > 0 ? +(overallMrr / overallPaid).toFixed(2) : 0,
       grossRevenueRupees: +totalGross.toFixed(2),
       netRevenueRupees: +totalNet.toFixed(2),
@@ -563,6 +576,89 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       range: { startDate: start.toISOString(), endDate: end.toISOString() },
       overall,
       rows,
+    };
+  });
+
+  // ── PostHog Funnels ──────────────────────────────────────────────────────────
+
+  const FUNNEL_CACHE_TTL = 300; // 5 minutes
+
+  /**
+   * GET /api/v1/subscription/admin/analytics/funnels/:funnelId
+   *
+   * Pulls a single funnel from PostHog Query API, caches result 5 min in Redis.
+   *
+   * Params:  funnelId — one of: activation, paywall-conversion, video-engagement,
+   *                              episode-paywall, audio-engagement, search
+   * Query:   startDate  YYYY-MM-DD (IST)
+   *          endDate    YYYY-MM-DD (IST, exclusive)
+   *          platform   all | android | ios  (default: all)
+   */
+  app.get("/analytics/funnels/:funnelId", {
+    schema: {
+      params: z.object({
+        funnelId: z.enum(FUNNEL_IDS as [string, ...string[]]),
+      }),
+      querystring: z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        platform: z.enum(["all", "android", "ios"]).optional().default("all"),
+      }),
+    },
+  }, async (request, reply) => {
+    const { funnelId } = request.params as { funnelId: string };
+    const { startDate, endDate, platform = "all" } =
+      request.query as { startDate?: string; endDate?: string; platform: "all" | "android" | "ios" };
+
+    const funnel = FUNNELS[funnelId];
+    if (!funnel) return reply.code(404).send({ error: "Funnel not found" });
+
+    const dateFrom = startDate ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const dateTo = endDate ?? new Date().toISOString().slice(0, 10);
+
+    const cacheKey = `posthog:funnel:${funnelId}:${dateFrom}:${dateTo}:${platform}`;
+
+    const redis = getRedis();
+    const cached = await redis.get(cacheKey).catch(() => null);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
+    try {
+      const steps = await queryPostHogFunnel({ funnel, dateFrom, dateTo, platform });
+
+      const result = {
+        funnelId,
+        funnelName: funnel.name,
+        conversionWindow: `${funnel.conversionWindowInterval}${funnel.conversionWindowUnit}`,
+        dateFrom,
+        dateTo,
+        platform,
+        lastRefreshedAt: new Date().toISOString(),
+        steps,
+      };
+
+      await redis.set(cacheKey, JSON.stringify(result), "EX", FUNNEL_CACHE_TTL).catch(() => {});
+
+      return result;
+    } catch (err: any) {
+      request.log.error({ err }, "PostHog funnel query failed");
+      return reply.code(502).send({ error: "PostHog query failed", detail: err.message });
+    }
+  });
+
+  /**
+   * GET /api/v1/subscription/admin/analytics/funnels
+   * Lists available funnel IDs and names.
+   */
+  app.get("/analytics/funnels", {}, async () => {
+    return {
+      funnels: FUNNEL_IDS.map((id) => ({
+        id,
+        name: FUNNELS[id].name,
+        steps: FUNNELS[id].steps.length,
+        conversionWindow: `${FUNNELS[id].conversionWindowInterval}${FUNNELS[id].conversionWindowUnit}`,
+      })),
     };
   });
 }

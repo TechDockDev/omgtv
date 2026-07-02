@@ -166,7 +166,7 @@ export async function getPlatformEngagement(params: {
   }
 
   const rows: PlatformPeriodRow[] = Array.from(periodMap.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => b.localeCompare(a))
     .map(([period, ids]) => {
       const u = ids.all.size;
       const ao = opensByPeriod.get(period) ?? 0;

@@ -48,6 +48,9 @@ const envSchema = z.object({
     .pipe(z.string().url().optional()),
   OTEL_METRICS_EXPORT_INTERVAL_MS: z.coerce.number().int().positive().default(60000),
   AD_REWARD_COINS: z.coerce.number().int().positive().default(5),
+  POSTHOG_PERSONAL_API_KEY: z.string().optional(),
+  POSTHOG_PROJECT_ID: z.string().optional(),
+  POSTHOG_HOST: z.string().url().default("https://us.posthog.com"),
 });
 
 type Env = z.infer<typeof envSchema>;

@@ -96,7 +96,11 @@ export async function getSeriesAnalyticsReport(params: {
     }),
     prisma.review.groupBy({
       by: ["contentId"],
-      where: { contentType: "SERIES", contentId: { in: seriesIds } },
+      where: {
+        contentType: "SERIES",
+        contentId: { in: seriesIds },
+        createdAt: { gte: start, lt: end },
+      },
       _avg: { rating: true },
       _count: { _all: true },
     }),
