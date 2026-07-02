@@ -106,7 +106,7 @@ services:
       - UPLOAD_SERVICE_URL=http://upload-service:5000
       - SEARCH_SERVICE_URL=http://search-service:4800
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-      - UPLOAD_BUCKET=videos-bucket-pocketlol-dev
+      - UPLOAD_BUCKET=videos-bucket-omgtv-prod
       - TRANSCODING_REQUESTS_TOPIC=transcoding-requests-dev
       - MEDIA_READY_SUBSCRIPTION=projects/omg-tv-497110/subscriptions/streaming-audit-sub-dev
     depends_on:
@@ -153,7 +153,7 @@ services:
       - REDIS_URL=redis://10.235.43.227:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
       - CONTENT_SERVICE_URL=http://content-service:4600
-      - UPLOAD_BUCKET=videos-bucket-pocketlol-dev
+      - UPLOAD_BUCKET=videos-bucket-omgtv-prod
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - MEDIA_UPLOADED_TOPIC=uploaded-media-dev
     depends_on:
@@ -172,6 +172,7 @@ services:
       - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
       - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}
       - AUTH_SERVICE_ADDRESS=auth-service:50051
+      - AUTH_SERVICE_URL=http://auth-service:4000
       - USER_SERVICE_ADDRESS=user-service:50052
     depends_on:
       - cloud-sql-proxy
@@ -182,8 +183,8 @@ services:
     environment:
       - NODE_ENV=production
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-      - GCS_UPLOADS_BUCKET=videos-bucket-pocketlol-dev
-      - GCS_STREAMING_BUCKET=videos-bucket-pocketlol-dev
+      - GCS_UPLOADS_BUCKET=videos-bucket-omgtv-prod
+      - GCS_STREAMING_BUCKET=videos-bucket-omgtv-prod
       - PREVIEW_GENERATION_TOPIC=media.preview.requested-dev
       - MEDIA_PROCESSED_TOPIC=media.processed-dev
       - PUBSUB_SUBSCRIPTION=projects/omg-tv-497110/subscriptions/transcoding-requests-sub-dev

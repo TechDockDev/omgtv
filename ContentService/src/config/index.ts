@@ -44,9 +44,8 @@ const envSchema = z.object({
   MOBILE_HOME_SECTION_ITEM_LIMIT: z.coerce
     .number()
     .int()
-    .min(4)
-    .max(30)
-    .default(12),
+    .min(1)
+    .default(1000),
   MOBILE_REELS_PAGE_SIZE: z.coerce.number().int().min(5).max(50).default(20),
   ENTITLEMENT_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(300),
   MOBILE_STREAMING_TYPE: z.string().default("HLS"),

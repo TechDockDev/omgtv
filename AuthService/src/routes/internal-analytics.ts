@@ -26,8 +26,8 @@ export default fp(async function internalAnalyticsRoutes(fastify: FastifyInstanc
    * GET /internal/analytics/registrations
    * Returns CustomerIdentity rows grouped into IST cohort buckets by register date.
    * endDate is EXCLUSIVE (standard half-open interval: [startDate, endDate)).
-   * userIds are CustomerIdentity.customerId values (= CustomerProfile.id in UserService
-   * = UserSubscription.userId in SubscriptionService).
+   * userIds are CustomerIdentity.subjectId values (= AuthSubject.id = JWT sub
+   * = x-user-id header = UserSubscription.userId in SubscriptionService).
    */
   fastify.get("/internal/analytics/registrations", {
     preHandler: [guardServiceToken],
@@ -55,9 +55,9 @@ export default fp(async function internalAnalyticsRoutes(fastify: FastifyInstanc
 
     const prisma = (request.server as any).prisma;
 
-    const rows: { customerId: string; createdAt: Date }[] = await prisma.customerIdentity.findMany({
+    const rows: { subjectId: string; createdAt: Date }[] = await prisma.customerIdentity.findMany({
       where: { createdAt: { gte: start, lt: end } },
-      select: { customerId: true, createdAt: true },
+      select: { subjectId: true, createdAt: true },
       orderBy: { createdAt: "asc" },
     });
 
@@ -65,7 +65,7 @@ export default fp(async function internalAnalyticsRoutes(fastify: FastifyInstanc
     for (const row of rows) {
       const key = istPeriodKey(row.createdAt, period);
       if (!cohortMap.has(key)) cohortMap.set(key, []);
-      cohortMap.get(key)!.push(row.customerId);
+      cohortMap.get(key)!.push(row.subjectId);
     }
 
     const cohorts = Array.from(cohortMap.entries())

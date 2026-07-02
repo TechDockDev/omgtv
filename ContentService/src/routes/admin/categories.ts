@@ -5,6 +5,7 @@ import {
   CatalogServiceError,
 } from "../../services/catalog-service";
 import { loadConfig } from "../../config";
+import { getPrisma } from "../../lib/prisma";
 
 const categoryBodySchema = z.object({
   name: z.string().min(1),
@@ -175,6 +176,85 @@ export default async function adminCategoryRoutes(fastify: FastifyInstance) {
           .status(500)
           .send({ message: "Unable to replace category" });
       }
+    },
+  });
+
+  // GET /:id/series — list all series in a category ordered by displayOrder
+  fastify.get<{ Params: { id: string } }>("/:id/series", {
+    schema: {
+      params: z.object({ id: z.string().uuid() }),
+    },
+    handler: async (request, reply) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+      const prisma = getPrisma();
+
+      const category = await prisma.category.findUnique({
+        where: { id, deletedAt: null },
+        select: { id: true, name: true, slug: true },
+      });
+      if (!category) return reply.status(404).send({ message: "Category not found" });
+
+      const series = await prisma.series.findMany({
+        where: { categoryId: id, deletedAt: null },
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          displayOrder: true,
+          status: true,
+          visibility: true,
+          releaseDate: true,
+          heroImageUrl: true,
+        },
+        orderBy: [{ displayOrder: "asc" }, { createdAt: "desc" }],
+      });
+
+      return { category, total: series.length, series };
+    },
+  });
+
+  // PATCH /:id/series/reorder — bulk update displayOrder for series in this category
+  fastify.patch<{ Params: { id: string } }>("/:id/series/reorder", {
+    schema: {
+      params: z.object({ id: z.string().uuid() }),
+      body: z.object({
+        order: z.array(z.object({
+          id: z.string().uuid(),
+          displayOrder: z.number().int().min(0),
+        })).min(1),
+      }),
+    },
+    handler: async (request, reply) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+      const { order } = request.body as { order: { id: string; displayOrder: number }[] };
+      const prisma = getPrisma();
+
+      const category = await prisma.category.findUnique({
+        where: { id, deletedAt: null },
+        select: { id: true },
+      });
+      if (!category) return reply.status(404).send({ message: "Category not found" });
+
+      // Verify all series belong to this category
+      const seriesIds = order.map((o) => o.id);
+      const existing = await prisma.series.findMany({
+        where: { id: { in: seriesIds }, categoryId: id, deletedAt: null },
+        select: { id: true },
+      });
+      if (existing.length !== seriesIds.length) {
+        return reply.status(400).send({ message: "One or more series IDs do not belong to this category" });
+      }
+
+      await prisma.$transaction(
+        order.map((o) =>
+          prisma.series.update({
+            where: { id: o.id },
+            data: { displayOrder: o.displayOrder },
+          })
+        )
+      );
+
+      return { updated: order.length };
     },
   });
 

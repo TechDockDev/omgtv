@@ -247,7 +247,7 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
               AND us2."planId" IS NOT NULL
               AND us2."trialPlanId" IS NULL
               AND us2."status" IN ('CANCELED', 'EXPIRED')
-              AND us2."createdAt" < us1."createdAt"
+              AND us2."endsAt" < us1."startsAt"
           )
       ),
       ActiveUsers AS (
