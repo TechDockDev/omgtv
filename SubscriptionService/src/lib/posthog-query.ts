@@ -37,9 +37,7 @@ export async function queryPostHogFunnel(params: {
       properties: [...platformProps, ...(step.properties ?? [])],
     })),
     dateRange: { date_from: dateFrom, date_to: dateTo },
-    funnelWindowInterval: funnel.conversionWindowInterval,
-    funnelWindowIntervalUnit: funnel.conversionWindowUnit,
-    filterTestAccounts: true,
+    filterTestAccounts: false,
   };
 
   const res = await fetch(`${host}/api/projects/${projectId}/query/`, {
