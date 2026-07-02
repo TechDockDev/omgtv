@@ -312,10 +312,14 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       if (hadTrial && hadPaid) counter.convertedFromTrial++;
 
       if (hadPaid) counter.totalSubscribed++;
-      if (row.paid_status === "ACTIVE" && paidEndsAt && paidEndsAt > now) counter.subActive++;
+      // subActive: ACTIVE with future access, OR CANCELED but access period not yet ended
+      if (paidEndsAt && paidEndsAt > now &&
+          (row.paid_status === "ACTIVE" || row.paid_status === "CANCELED")) counter.subActive++;
       if (row.paid_status === "CANCELED") counter.subCancelled++;
       if (row.paid_status === "EXPIRED") counter.subExpired++;
-      if (row.paid_status === "CANCELED" || row.paid_status === "EXPIRED") counter.subChurned++;
+      // subChurned: actually lost access — EXPIRED, or CANCELED where access period ended
+      if (row.paid_status === "EXPIRED" ||
+          (row.paid_status === "CANCELED" && (!paidEndsAt || paidEndsAt <= now))) counter.subChurned++;
 
       if (bool(row.is_reactivated)) counter.reactivated++;
 
@@ -391,8 +395,9 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
     const config = loadConfig();
     const serviceToken = config.SERVICE_AUTH_TOKEN ?? "";
 
+    // endDate is exclusive ([startDate, endDate)) — "2026-08-01" means up to Jul 31 23:59 IST
     const end = endDate
-      ? new Date(`${endDate}T23:59:59.999+05:30`)
+      ? new Date(`${endDate}T00:00:00.000+05:30`)
       : new Date();
     const start = startDate
       ? new Date(`${startDate}T00:00:00.000+05:30`)
@@ -425,6 +430,7 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
             us."userId",
             us."planId",
             us."trialPlanId",
+            us."status",
             sp."pricePaise",
             sp."durationDays",
             ROW_NUMBER() OVER (
@@ -444,12 +450,13 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         period_subs AS (
           SELECT
             period_key,
-            COUNT(*)::int                                                                  AS active_all,
-            COUNT(*) FILTER (WHERE "planId" IS NOT NULL AND "trialPlanId" IS NULL)::int   AS active_paid,
-            COUNT(*) FILTER (WHERE "trialPlanId" IS NOT NULL)::int                        AS active_trial,
+            COUNT(*)::int                                                                                          AS active_all,
+            COUNT(*) FILTER (WHERE "planId" IS NOT NULL AND "trialPlanId" IS NULL)::int                           AS active_paid,
+            COUNT(*) FILTER (WHERE "trialPlanId" IS NOT NULL)::int                                                AS active_trial,
+            -- MRR excludes CANCELED subs: they will not renew so should not count as recurring revenue
             COALESCE(SUM(
               "pricePaise"::numeric / 100.0 * (30.0 / NULLIF("durationDays", 0))
-            ) FILTER (WHERE "planId" IS NOT NULL AND "trialPlanId" IS NULL), 0)           AS mrr_rupees
+            ) FILTER (WHERE "planId" IS NOT NULL AND "trialPlanId" IS NULL AND "status" != 'CANCELED'), 0)       AS mrr_rupees
           FROM deduped
           GROUP BY period_key
         ),
@@ -459,8 +466,7 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
             COALESCE(SUM("amountPaise") FILTER (WHERE "status" = 'SUCCESS'),  0)::numeric / 100.0 AS gross_rupees,
             COALESCE(SUM("amountPaise") FILTER (WHERE "status" = 'REFUNDED'), 0)::numeric / 100.0 AS refunded_rupees
           FROM "Transaction"
-          WHERE "createdAt" >= $1 AND "createdAt" <= $2
-            AND "planId" IS NOT NULL
+          WHERE "createdAt" >= $1 AND "createdAt" < $2
           GROUP BY 1
         )
         SELECT
