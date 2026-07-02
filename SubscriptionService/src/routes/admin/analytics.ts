@@ -229,10 +229,14 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         ORDER BY "userId", "createdAt" DESC
       ),
       HadTrial AS (
-        SELECT DISTINCT "userId"
-        FROM "UserSubscription"
-        WHERE "trialPlanId" IS NOT NULL
-          AND "userId" = ANY(${allUserIds})
+        -- Check both UserSubscription AND Transaction: Razorpay trial→paid conversion
+        -- clears trialPlanId on the UserSubscription record, so we also look in Transaction
+        -- where the original trial payment always retains trialPlanId.
+        SELECT DISTINCT "userId" FROM "UserSubscription"
+        WHERE "trialPlanId" IS NOT NULL AND "userId" = ANY(${allUserIds})
+        UNION
+        SELECT DISTINCT "userId" FROM "Transaction"
+        WHERE "trialPlanId" IS NOT NULL AND "userId" = ANY(${allUserIds})
       ),
       HadPaid AS (
         SELECT DISTINCT "userId"
@@ -241,30 +245,33 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
           AND "userId" = ANY(${allUserIds})
       ),
       Reactivated AS (
+        -- Any user who cancelled any sub (trial or paid) and came back with any new sub.
+        -- us1 = current active sub (trial or paid), us2 = prior cancelled sub (trial or paid).
         SELECT DISTINCT us1."userId"
         FROM "UserSubscription" us1
         WHERE us1."userId" = ANY(${allUserIds})
-          AND us1."status" = 'ACTIVE'
-          AND us1."planId" IS NOT NULL
-          AND us1."trialPlanId" IS NULL
+          AND us1."status" IN ('ACTIVE', 'TRIAL')
           AND us1."endsAt" > ${now}
           AND EXISTS (
             SELECT 1 FROM "UserSubscription" us2
             WHERE us2."userId" = us1."userId"
-              AND us2."planId" IS NOT NULL
-              AND us2."trialPlanId" IS NULL
-              AND us2."status" IN ('CANCELED', 'EXPIRED')
+              AND us2."status" = 'CANCELED'
               AND us2."endsAt" < us1."startsAt"
+              AND us2."id" != us1."id"
           )
       ),
       Renewed AS (
-        SELECT "userId"
+        -- A renewal means the SAME subscription was auto-billed again (same subscriptionId).
+        -- Grouping by userId+subscriptionId excludes reactivations (new sub after cancellation
+        -- always has a different subscriptionId).
+        SELECT DISTINCT "userId"
         FROM "Transaction"
         WHERE "userId" = ANY(${allUserIds})
           AND "status" = 'SUCCESS'
           AND "trialPlanId" IS NULL
           AND "planId" IS NOT NULL
-        GROUP BY "userId"
+          AND "subscriptionId" IS NOT NULL
+        GROUP BY "userId", "subscriptionId"
         HAVING COUNT(*) > 1
       ),
       ActiveUsers AS (
@@ -322,7 +329,10 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
 
       if (hadTrial) counter.trialStarted++;
 
-      if (row.trial_status === "TRIAL" || row.trial_status === "ACTIVE") {
+      // Only count trialActive for users who have NOT yet converted to paid.
+      // PhonePe billing creates a new paid UserSubscription without expiring the old trial record,
+      // so a converted user's trial can still appear as "TRIAL" status until the hourly cron runs.
+      if (!hadPaid && (row.trial_status === "TRIAL" || row.trial_status === "ACTIVE")) {
         if (trialEndsAt && trialEndsAt > now) counter.trialActive++;
       }
       if (row.trial_status === "CANCELED") counter.trialCancelled++;

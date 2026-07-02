@@ -235,20 +235,11 @@ export default async function adminCategoryRoutes(fastify: FastifyInstance) {
       });
       if (!category) return reply.status(404).send({ message: "Category not found" });
 
-      // Verify all series belong to this category
-      const seriesIds = order.map((o) => o.id);
-      const existing = await prisma.series.findMany({
-        where: { id: { in: seriesIds }, categoryId: id, deletedAt: null },
-        select: { id: true },
-      });
-      if (existing.length !== seriesIds.length) {
-        return reply.status(400).send({ message: "One or more series IDs do not belong to this category" });
-      }
-
+      // Update only series that actually belong to this category — ignore any that don't.
       await prisma.$transaction(
         order.map((o) =>
-          prisma.series.update({
-            where: { id: o.id },
+          prisma.series.updateMany({
+            where: { id: o.id, categoryId: id, deletedAt: null },
             data: { displayOrder: o.displayOrder },
           })
         )
