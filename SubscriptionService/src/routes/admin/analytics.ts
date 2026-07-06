@@ -39,21 +39,6 @@ interface LifecycleRow {
   phonePePercent: number;
 }
 
-interface UserSubRow {
-  userId: string;
-  had_trial: boolean | string;
-  had_paid: boolean | string;
-  trial_status: string | null;
-  trial_ends_at: Date | null;
-  paid_status: string | null;
-  paid_ends_at: Date | null;
-  provider: string | null;
-  is_reactivated: boolean | string;
-  is_renewed: boolean | string;
-}
-
-const bool = (v: any): boolean => v === true || v === "t";
-
 function pct(num: number, den: number): number {
   return den > 0 ? +((num / den) * 100).toFixed(1) : 0;
 }
@@ -122,7 +107,13 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
    *
    * Response:
    *   overall — sum row across all periods
-   *   rows    — one row per cohort period
+   *   rows    — one row per period. Every column counts users by the date the
+   *             EVENT happened (trial started, first paid sub, cancellation,
+   *             expiry, renewal) — NOT by registration cohort. This makes the
+   *             numbers line up with the transactions screen for the same range.
+   *             EXCEPTION: convertedFromTrial is attributed to the period the
+   *             trial STARTED, so trialToSubConvPercent in each row measures
+   *             that row's own trial batch.
    */
   app.get("/analytics/lifecycle", {
     schema: {
@@ -139,8 +130,21 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
 
     const config = loadConfig();
     const serviceToken = config.SERVICE_AUTH_TOKEN ?? "";
+    const now = new Date();
 
-    // ── Step 1: Get registration cohorts from AuthService ──────────────────────
+    const start = startDate
+      ? new Date(`${startDate}T00:00:00.000+05:30`)
+      : new Date("2020-01-01T00:00:00.000Z");
+    // endDate is exclusive — [startDate, endDate)
+    const end = endDate ? new Date(`${endDate}T00:00:00.000+05:30`) : now;
+
+    const periodKey = (d: Date): string => {
+      const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+      return period === "daily" ? ist.toISOString().slice(0, 10) : ist.toISOString().slice(0, 7);
+    };
+    const inRange = (d: Date) => d >= start && d < end;
+
+    // ── Step 1: Registration cohorts from AuthService (per-period counts) ─────
     const authParams = new URLSearchParams({ period });
     if (startDate) authParams.set("startDate", startDate);
     if (endDate) authParams.set("endDate", endDate);
@@ -162,202 +166,236 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       return reply.code(502).send({ error: "AuthService unavailable" });
     }
 
-    if (!cohorts.length) return { overall: buildRow("Overall", zeroCounters()), rows: [] };
+    // ── Step 2: Full subscription + transaction history up to `end` ───────────
+    // History BEFORE `start` is needed too: prior-trial and prior-cancellation
+    // checks (conversion, reactivation, renewal) look at events that may predate
+    // the filter window. This is NOT restricted to registration cohorts — users
+    // who registered before the window but transacted inside it must be counted.
+    const [subs, txs] = await Promise.all([
+      prisma.userSubscription.findMany({
+        where: { createdAt: { lt: end }, status: { not: "PENDING" } },
+        select: {
+          id: true, userId: true, planId: true, trialPlanId: true, status: true,
+          provider: true, startsAt: true, endsAt: true, createdAt: true, updatedAt: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.transaction.findMany({
+        where: { createdAt: { lt: end }, status: "SUCCESS" },
+        select: { userId: true, subscriptionId: true, planId: true, trialPlanId: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
 
-    // ── Step 2: Apply platform filter via UserService ──────────────────────────
-    let cohortsFinal = cohorts;
-
+    // ── Step 3: Optional platform filter (registrations AND activity users) ───
+    let allowed: Set<string> | null = null;
     if (platform !== "all") {
-      const allIdsForPlatformCheck = cohorts.flatMap((c) => c.userIds);
+      const ids = new Set<string>();
+      for (const c of cohorts) for (const uid of c.userIds) ids.add(uid);
+      for (const s of subs) ids.add(s.userId);
       try {
         const res = await fetch(
           `${config.USER_SERVICE_URL}/internal/analytics/filter-by-platform`,
           {
             method: "POST",
             headers: { "content-type": "application/json", "x-service-token": serviceToken },
-            body: JSON.stringify({ authIds: allIdsForPlatformCheck, os: platform }),
+            body: JSON.stringify({ authIds: Array.from(ids), os: platform }),
           }
         );
-        if (!res.ok) {
-          request.log.warn({ status: res.status }, "UserService filter-by-platform failed — skipping platform filter");
-        } else {
+        if (res.ok) {
           const data = await res.json() as { authIds: string[] };
-          const matchedSet = new Set(data.authIds);
-          cohortsFinal = cohorts.map((c) => ({
-            ...c,
-            userIds: c.userIds.filter((id) => matchedSet.has(id)),
-            count: 0,
-          })).map((c) => ({ ...c, count: c.userIds.length }))
-            .filter((c) => c.count > 0);
+          allowed = new Set(data.authIds);
+        } else {
+          request.log.warn({ status: res.status }, "UserService filter-by-platform failed — skipping platform filter");
         }
       } catch (err) {
         request.log.warn(err, "UserService filter-by-platform error — skipping platform filter");
       }
     }
+    const isAllowed = (uid: string) => allowed === null || allowed.has(uid);
 
-    if (!cohortsFinal.length) return { overall: buildRow("Overall", zeroCounters()), rows: [] };
-
-    // ── Step 3: Build userId → period map ─────────────────────────────────────
-    const periodMap = new Map<string, string>();
-    for (const c of cohortsFinal) {
-      for (const uid of c.userIds) {
-        periodMap.set(uid, c.period);
-      }
-    }
-    const allUserIds = Array.from(periodMap.keys());
-
-    // ── Step 4: Single SQL — per-user subscription status flags ───────────────
-    const now = new Date();
-
-    const subRows = await prisma.$queryRaw<UserSubRow[]>`
-      WITH LatestTrial AS (
-        SELECT DISTINCT ON ("userId")
-          "userId", "status", "endsAt", "provider"
-        FROM "UserSubscription"
-        WHERE "trialPlanId" IS NOT NULL
-          AND "status" != 'PENDING'
-          AND "userId" = ANY(${allUserIds})
-        ORDER BY "userId", "createdAt" DESC
-      ),
-      LatestPaid AS (
-        SELECT DISTINCT ON ("userId")
-          "userId", "status", "endsAt", "provider"
-        FROM "UserSubscription"
-        WHERE "trialPlanId" IS NULL AND "planId" IS NOT NULL
-          AND "status" != 'PENDING'
-          AND "userId" = ANY(${allUserIds})
-        ORDER BY "userId", "createdAt" DESC
-      ),
-      HadTrial AS (
-        -- Check both UserSubscription AND Transaction: Razorpay trial→paid conversion
-        -- clears trialPlanId on the UserSubscription record, so we also look in Transaction
-        -- where the original trial payment always retains trialPlanId.
-        SELECT DISTINCT "userId" FROM "UserSubscription"
-        WHERE "trialPlanId" IS NOT NULL AND "userId" = ANY(${allUserIds})
-        UNION
-        SELECT DISTINCT "userId" FROM "Transaction"
-        WHERE "trialPlanId" IS NOT NULL AND "userId" = ANY(${allUserIds})
-      ),
-      HadPaid AS (
-        SELECT DISTINCT "userId"
-        FROM "UserSubscription"
-        WHERE "trialPlanId" IS NULL AND "planId" IS NOT NULL
-          AND "userId" = ANY(${allUserIds})
-      ),
-      Reactivated AS (
-        -- Any user who cancelled any sub (trial or paid) and came back with any new sub.
-        -- us1 = current active sub (trial or paid), us2 = prior cancelled sub (trial or paid).
-        SELECT DISTINCT us1."userId"
-        FROM "UserSubscription" us1
-        WHERE us1."userId" = ANY(${allUserIds})
-          AND us1."status" IN ('ACTIVE', 'TRIAL')
-          AND us1."endsAt" > ${now}
-          AND EXISTS (
-            SELECT 1 FROM "UserSubscription" us2
-            WHERE us2."userId" = us1."userId"
-              AND us2."status" = 'CANCELED'
-              AND us2."endsAt" < us1."startsAt"
-              AND us2."id" != us1."id"
-          )
-      ),
-      Renewed AS (
-        -- A renewal means the SAME subscription was auto-billed again (same subscriptionId).
-        -- Grouping by userId+subscriptionId excludes reactivations (new sub after cancellation
-        -- always has a different subscriptionId).
-        SELECT DISTINCT "userId"
-        FROM "Transaction"
-        WHERE "userId" = ANY(${allUserIds})
-          AND "status" = 'SUCCESS'
-          AND "trialPlanId" IS NULL
-          AND "planId" IS NOT NULL
-          AND "subscriptionId" IS NOT NULL
-        GROUP BY "userId", "subscriptionId"
-        HAVING COUNT(*) > 1
-      ),
-      ActiveUsers AS (
-        SELECT "userId" FROM HadTrial
-        UNION
-        SELECT "userId" FROM HadPaid
-      )
-      SELECT
-        au."userId"                                             AS "userId",
-        (ht."userId" IS NOT NULL)                             AS had_trial,
-        (hp."userId" IS NOT NULL)                             AS had_paid,
-        lt."status"                                           AS trial_status,
-        lt."endsAt"                                           AS trial_ends_at,
-        lp."status"                                           AS paid_status,
-        lp."endsAt"                                           AS paid_ends_at,
-        COALESCE(lp."provider", lt."provider")                AS provider,
-        (r."userId" IS NOT NULL)                              AS is_reactivated,
-        (rn."userId" IS NOT NULL)                             AS is_renewed
-      FROM ActiveUsers au
-      LEFT JOIN HadTrial ht  ON au."userId" = ht."userId"
-      LEFT JOIN HadPaid  hp  ON au."userId" = hp."userId"
-      LEFT JOIN LatestTrial lt ON au."userId" = lt."userId"
-      LEFT JOIN LatestPaid  lp ON au."userId" = lp."userId"
-      LEFT JOIN Reactivated  r ON au."userId" = r."userId"
-      LEFT JOIN Renewed      rn ON au."userId" = rn."userId"
-    `;
-
-    // ── Step 5: Aggregate per cohort period in TypeScript ─────────────────────
-    const subUserSet = new Set(subRows.map((r) => r.userId));
-
+    // ── Step 4: Aggregate — every metric bucketed by ITS OWN event date ───────
     const periodCounters = new Map<string, ReturnType<typeof zeroCounters>>();
-    for (const c of cohortsFinal) {
-      periodCounters.set(c.period, { ...zeroCounters(), registrations: c.count });
-    }
+    const counterFor = (p: string) => {
+      let c = periodCounters.get(p);
+      if (!c) { c = zeroCounters(); periodCounters.set(p, c); }
+      return c;
+    };
+    // dedupe: one increment per user per period per metric
+    const seen = new Set<string>();
+    const addOnce = (metric: keyof ReturnType<typeof zeroCounters>, p: string, uid: string) => {
+      const k = `${metric}|${p}|${uid}`;
+      if (seen.has(k)) return;
+      seen.add(k);
+      counterFor(p)[metric]++;
+    };
 
-    // Free users: registered users with zero subscription activity
-    for (const c of cohortsFinal) {
-      const counter = periodCounters.get(c.period)!;
-      for (const uid of c.userIds) {
-        if (!subUserSet.has(uid)) counter.freeUsers++;
+    // Registrations + free users (registered in period, zero subscription activity ever)
+    const usersWithAnySub = new Set(subs.map((s) => s.userId));
+    for (const c of cohorts) {
+      const uids = c.userIds.filter(isAllowed);
+      if (uids.length === 0) continue;
+      const counter = counterFor(c.period);
+      counter.registrations += uids.length;
+      for (const uid of uids) {
+        if (!usersWithAnySub.has(uid)) counter.freeUsers++;
       }
     }
 
-    // Per-user subscription metrics
-    for (const row of subRows) {
-      const cohortPeriod = periodMap.get(row.userId);
-      if (!cohortPeriod) continue;
-      const counter = periodCounters.get(cohortPeriod);
-      if (!counter) continue;
-
-      const hadTrial = bool(row.had_trial);
-      const hadPaid = bool(row.had_paid);
-      const trialEndsAt = row.trial_ends_at ? new Date(row.trial_ends_at) : null;
-      const paidEndsAt = row.paid_ends_at ? new Date(row.paid_ends_at) : null;
-
-      if (hadTrial) counter.trialStarted++;
-
-      // Only count trialActive for users who have NOT yet converted to paid.
-      // PhonePe billing creates a new paid UserSubscription without expiring the old trial record,
-      // so a converted user's trial can still appear as "TRIAL" status until the hourly cron runs.
-      if (!hadPaid && (row.trial_status === "TRIAL" || row.trial_status === "ACTIVE")) {
-        if (trialEndsAt && trialEndsAt > now) counter.trialActive++;
+    // Per-user trial/paid evidence from BOTH tables — the Razorpay webhook
+    // trial→paid path clears trialPlanId on UserSubscription, but the original
+    // trial Transaction always keeps it.
+    const trialStartAt = new Map<string, Date>();
+    const firstPaidAt = new Map<string, Date>();
+    // Users with a dedicated paid UserSubscription row. PhonePe converts trial→paid
+    // by re-billing the SAME record (trialPlanId stays set), so converted PhonePe
+    // users are NOT in this set — their paid evidence comes from Transaction only.
+    const paidSubUsers = new Set<string>();
+    for (const s of subs) {
+      const at = s.startsAt ?? s.createdAt;
+      if (s.trialPlanId) {
+        const cur = trialStartAt.get(s.userId);
+        if (!cur || at < cur) trialStartAt.set(s.userId, at);
+      } else if (s.planId) {
+        paidSubUsers.add(s.userId);
+        const cur = firstPaidAt.get(s.userId);
+        if (!cur || at < cur) firstPaidAt.set(s.userId, at);
       }
-      if (row.trial_status === "CANCELED") counter.trialCancelled++;
-      if (row.trial_status === "EXPIRED") counter.trialExpired++;
-
-      if (hadTrial && hadPaid) counter.convertedFromTrial++;
-
-      if (hadPaid) counter.totalSubscribed++;
-      // subActive: ACTIVE with future access, OR CANCELED but access period not yet ended
-      if (paidEndsAt && paidEndsAt > now &&
-          (row.paid_status === "ACTIVE" || row.paid_status === "CANCELED")) counter.subActive++;
-      if (row.paid_status === "CANCELED") counter.subCancelled++;
-      if (row.paid_status === "EXPIRED") counter.subExpired++;
-      // subChurned: actually lost access — EXPIRED, or CANCELED where access period ended
-      if (row.paid_status === "EXPIRED" ||
-          (row.paid_status === "CANCELED" && (!paidEndsAt || paidEndsAt <= now))) counter.subChurned++;
-
-      if (bool(row.is_renewed)) counter.renewedSubs++;
-      if (bool(row.is_reactivated)) counter.reactivated++;
-
-      if (row.provider === "razorpay") counter.razorpayUsers++;
-      if (row.provider === "phonepe") counter.phonePeUsers++;
+    }
+    for (const t of txs) {
+      if (t.trialPlanId) {
+        const cur = trialStartAt.get(t.userId);
+        if (!cur || t.createdAt < cur) trialStartAt.set(t.userId, t.createdAt);
+      } else if (t.planId) {
+        const cur = firstPaidAt.get(t.userId);
+        if (!cur || t.createdAt < cur) firstPaidAt.set(t.userId, t.createdAt);
+      }
     }
 
-    // ── Step 6: Build period rows + overall ───────────────────────────────────
+    type SubRow = (typeof subs)[number];
+    const subsByUser = new Map<string, SubRow[]>();
+    for (const s of subs) {
+      let arr = subsByUser.get(s.userId);
+      if (!arr) { arr = []; subsByUser.set(s.userId, arr); }
+      arr.push(s);
+    }
+
+    for (const s of subs) {
+      if (!isAllowed(s.userId)) continue;
+      const isTrial = s.trialPlanId !== null;
+      const isPaid = !isTrial && s.planId !== null;
+      const startedAt = s.startsAt ?? s.createdAt;
+
+      if (isTrial) {
+        if (inRange(startedAt)) {
+          const p = periodKey(startedAt);
+          addOnce("trialStarted", p, s.userId);
+          if (s.provider === "razorpay") addOnce("razorpayUsers", p, s.userId);
+          if (s.provider === "phonepe") addOnce("phonePeUsers", p, s.userId);
+          // still on trial now, and never converted to paid
+          if (!firstPaidAt.has(s.userId) && (s.status === "TRIAL" || s.status === "ACTIVE") &&
+              s.endsAt && s.endsAt > now) {
+            addOnce("trialActive", p, s.userId);
+          }
+        }
+        // If the user converted to paid BEFORE this status change, the event belongs
+        // to the paid buckets, not the trial buckets. For PhonePe (no separate paid
+        // row) route it to sub*; for Razorpay (separate paid row exists) the paid
+        // row already tracks it — just don't double-count as a trial event.
+        const paidAt = firstPaidAt.get(s.userId);
+        const convertedBefore = (d: Date) => paidAt !== undefined && paidAt <= d;
+        if (s.status === "CANCELED" && inRange(s.updatedAt)) {
+          if (!convertedBefore(s.updatedAt)) {
+            addOnce("trialCancelled", periodKey(s.updatedAt), s.userId);
+          } else if (!paidSubUsers.has(s.userId)) {
+            addOnce("subCancelled", periodKey(s.updatedAt), s.userId);
+          }
+        }
+        if (s.status === "EXPIRED" && inRange(s.updatedAt)) {
+          if (!convertedBefore(s.updatedAt)) {
+            addOnce("trialExpired", periodKey(s.updatedAt), s.userId);
+          } else if (!paidSubUsers.has(s.userId)) {
+            addOnce("subExpired", periodKey(s.updatedAt), s.userId);
+            addOnce("subChurned", periodKey(s.updatedAt), s.userId);
+          }
+        }
+        // Converted PhonePe user who cancelled and whose access period has lapsed
+        if (s.status === "CANCELED" && convertedBefore(s.updatedAt) && !paidSubUsers.has(s.userId) &&
+            s.endsAt && s.endsAt <= now && inRange(s.endsAt)) {
+          addOnce("subChurned", periodKey(s.endsAt), s.userId);
+        }
+      }
+
+      if (isPaid) {
+        if (inRange(startedAt)) {
+          const p = periodKey(startedAt);
+          if (s.provider === "razorpay") addOnce("razorpayUsers", p, s.userId);
+          if (s.provider === "phonepe") addOnce("phonePeUsers", p, s.userId);
+          // has access right now (ACTIVE, or CANCELED with access period not yet ended)
+          if (s.endsAt && s.endsAt > now && (s.status === "ACTIVE" || s.status === "CANCELED")) {
+            addOnce("subActive", p, s.userId);
+          }
+        }
+        if (s.status === "CANCELED" && inRange(s.updatedAt)) {
+          addOnce("subCancelled", periodKey(s.updatedAt), s.userId);
+        }
+        if (s.status === "EXPIRED" && inRange(s.updatedAt)) {
+          addOnce("subExpired", periodKey(s.updatedAt), s.userId);
+          addOnce("subChurned", periodKey(s.updatedAt), s.userId);
+        } else if (s.status === "CANCELED" && s.endsAt && s.endsAt <= now && inRange(s.endsAt)) {
+          addOnce("subChurned", periodKey(s.endsAt), s.userId);
+        }
+      }
+
+      // Reactivated: this sub (trial or paid) started after a prior CANCELED sub ended
+      if (inRange(startedAt)) {
+        const history = subsByUser.get(s.userId) ?? [];
+        const hadPriorCancel = history.some(
+          (o) => o.id !== s.id && o.status === "CANCELED" && o.endsAt && o.endsAt < startedAt
+        );
+        if (hadPriorCancel) addOnce("reactivated", periodKey(startedAt), s.userId);
+      }
+    }
+
+    // New paying subscribers (bucketed by first-paid date) + trial→paid conversions
+    // (bucketed by the period the TRIAL STARTED — cohort attribution — so that
+    // trialToSubConvPercent in each row compares conversions against the same
+    // trial batch, not against unrelated trials that started in the payment month).
+    for (const [uid, at] of firstPaidAt) {
+      if (!isAllowed(uid)) continue;
+      const tAt = trialStartAt.get(uid);
+      if (tAt && tAt <= at && inRange(tAt)) {
+        addOnce("convertedFromTrial", periodKey(tAt), uid);
+      }
+      if (!inRange(at)) continue;
+      const p = periodKey(at);
+      addOnce("totalSubscribed", p, uid);
+      // PhonePe conversion keeps billing the SAME (trial-flagged) sub row, so the
+      // paid branch above never sees it — count subActive from the latest sub here.
+      if (!paidSubUsers.has(uid)) {
+        const history = subsByUser.get(uid) ?? [];
+        const latest = history[history.length - 1];
+        if (latest && latest.endsAt && latest.endsAt > now &&
+            (latest.status === "ACTIVE" || latest.status === "CANCELED")) {
+          addOnce("subActive", p, uid);
+        }
+      }
+    }
+
+    // Renewals: 2nd+ successful paid charge on the SAME subscriptionId.
+    // Charges before the window still count toward the sequence, so a July renewal
+    // of a June subscription is correctly detected.
+    const txCountBySub = new Map<string, number>();
+    for (const t of txs) {
+      if (t.trialPlanId || !t.planId || !t.subscriptionId) continue;
+      const n = (txCountBySub.get(t.subscriptionId) ?? 0) + 1;
+      txCountBySub.set(t.subscriptionId, n);
+      if (n >= 2 && isAllowed(t.userId) && inRange(t.createdAt)) {
+        addOnce("renewedSubs", periodKey(t.createdAt), t.userId);
+      }
+    }
+
+    // ── Step 5: Build period rows + overall ───────────────────────────────────
     const rows: LifecycleRow[] = Array.from(periodCounters.entries())
       .sort(([a], [b]) => b.localeCompare(a))
       .map(([p, c]) => buildRow(p, c));
@@ -457,12 +495,29 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         active_subs AS (
           SELECT
             p.period_key,
+            p.p_end,
             us."userId",
             us."planId",
             us."trialPlanId",
             us."status",
+            us."provider",
             sp."pricePaise",
             sp."durationDays",
+            -- Paid = dedicated paid sub, OR a trial-flagged sub whose user has a successful
+            -- paid Transaction by this period's end. PhonePe converts trial→paid by
+            -- re-billing the SAME record (trialPlanId stays set), so the transaction
+            -- is the only reliable paid signal for those users.
+            (
+              (us."trialPlanId" IS NULL AND us."planId" IS NOT NULL)
+              OR EXISTS (
+                SELECT 1 FROM "Transaction" t
+                WHERE t."userId" = us."userId"
+                  AND t."status" = 'SUCCESS'
+                  AND t."trialPlanId" IS NULL
+                  AND t."planId" IS NOT NULL
+                  AND t."createdAt" <= p.p_end
+              )
+            ) AS is_paid,
             ROW_NUMBER() OVER (
               PARTITION BY p.period_key, us."userId"
               ORDER BY us."endsAt" DESC
@@ -477,17 +532,62 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         deduped AS (
           SELECT * FROM active_subs WHERE rn = 1
         ),
+        -- Razorpay ONLY: real recurring price comes from the user's actual charges.
+        -- The plan row was edited in place, so pricePaise/durationDays no longer match
+        -- what legacy Razorpay subscribers pay (Rs99 billed MONTHLY per Razorpay,
+        -- regardless of the plan row's name/duration). PhonePe keeps plan pricing.
+        sub_mrr AS (
+          SELECT
+            d.*,
+            lt.amount_paise AS last_amount_paise,
+            lt.created_at   AS last_charge_at,
+            pt.created_at   AS prev_charge_at
+          FROM deduped d
+          LEFT JOIN LATERAL (
+            SELECT t."amountPaise" AS amount_paise, t."createdAt" AS created_at, t."subscriptionId" AS sub_id
+            FROM "Transaction" t
+            WHERE d."provider" = 'razorpay'
+              AND t."userId" = d."userId"
+              AND t."status" = 'SUCCESS'
+              AND t."trialPlanId" IS NULL
+              AND t."planId" IS NOT NULL
+              AND t."createdAt" <= d.p_end
+            ORDER BY t."createdAt" DESC
+            LIMIT 1
+          ) lt ON true
+          LEFT JOIN LATERAL (
+            SELECT t."createdAt" AS created_at
+            FROM "Transaction" t
+            WHERE t."userId" = d."userId"
+              AND t."status" = 'SUCCESS'
+              AND t."trialPlanId" IS NULL
+              AND t."planId" IS NOT NULL
+              AND t."subscriptionId" IS NOT DISTINCT FROM lt.sub_id
+              AND t."createdAt" < lt.created_at
+            ORDER BY t."createdAt" DESC
+            LIMIT 1
+          ) pt ON true
+        ),
         period_subs AS (
           SELECT
             period_key,
-            COUNT(*)::int                                                                                          AS active_all,
-            COUNT(*) FILTER (WHERE "planId" IS NOT NULL AND "trialPlanId" IS NULL)::int                           AS active_paid,
-            COUNT(*) FILTER (WHERE "trialPlanId" IS NOT NULL)::int                                                AS active_trial,
-            -- MRR excludes CANCELED subs: they will not renew so should not count as recurring revenue
+            COUNT(*)::int                                                              AS active_all,
+            COUNT(*) FILTER (WHERE is_paid)::int                                       AS active_paid,
+            COUNT(*) FILTER (WHERE NOT is_paid AND "trialPlanId" IS NOT NULL)::int     AS active_trial,
+            -- MRR excludes CANCELED subs: they will not renew so should not count as recurring revenue.
+            -- Razorpay: latest real charge amount normalized by the OBSERVED billing gap
+            -- (fallback: 30 days — Razorpay bills monthly). PhonePe: plan-table pricing.
             COALESCE(SUM(
-              "pricePaise"::numeric / 100.0 * (30.0 / NULLIF("durationDays", 0))
-            ) FILTER (WHERE "planId" IS NOT NULL AND "trialPlanId" IS NULL AND "status" != 'CANCELED'), 0)       AS mrr_rupees
-          FROM deduped
+              CASE WHEN "provider" = 'razorpay' AND last_amount_paise IS NOT NULL THEN
+                last_amount_paise::numeric / 100.0 * 30.0
+                / GREATEST(COALESCE(
+                    EXTRACT(EPOCH FROM (last_charge_at - prev_charge_at)) / 86400.0, 30
+                  ), 1)
+              ELSE
+                "pricePaise"::numeric / 100.0 * (30.0 / NULLIF("durationDays", 0))
+              END
+            ) FILTER (WHERE is_paid AND "status" != 'CANCELED'), 0)                    AS mrr_rupees
+          FROM sub_mrr
           GROUP BY period_key
         ),
         period_revenue AS (
