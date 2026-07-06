@@ -25,7 +25,7 @@ export default fp(async function internalAnalyticsRoutes(fastify: FastifyInstanc
   /**
    * GET /internal/analytics/registrations
    * Returns CustomerIdentity rows grouped into IST cohort buckets by register date.
-   * endDate is EXCLUSIVE (standard half-open interval: [startDate, endDate)).
+   * endDate is INCLUSIVE — the full endDate calendar day (IST) is counted.
    * userIds are CustomerIdentity.subjectId values (= AuthSubject.id = JWT sub
    * = x-user-id header = UserSubscription.userId in SubscriptionService).
    */
@@ -48,9 +48,9 @@ export default fp(async function internalAnalyticsRoutes(fastify: FastifyInstanc
     const start = startDate
       ? new Date(`${startDate}T00:00:00.000+05:30`)
       : new Date("2020-01-01T00:00:00.000Z");
-    // endDate is exclusive — use start-of-day so "2026-08-01" means up to Jul 31 23:59 IST
+    // endDate is INCLUSIVE (matches SubscriptionService admin screens) — full endDate day counts
     const end = endDate
-      ? new Date(`${endDate}T00:00:00.000+05:30`)
+      ? new Date(`${endDate}T23:59:59.999+05:30`)
       : new Date();
 
     const prisma = (request.server as any).prisma;
@@ -100,8 +100,9 @@ export default fp(async function internalAnalyticsRoutes(fastify: FastifyInstanc
     const start = startDate
       ? new Date(`${startDate}T00:00:00.000+05:30`)
       : new Date("2020-01-01T00:00:00.000Z");
+    // endDate is INCLUSIVE — full endDate day counts
     const end = endDate
-      ? new Date(`${endDate}T00:00:00.000+05:30`)
+      ? new Date(`${endDate}T23:59:59.999+05:30`)
       : new Date();
 
     const prisma = (request.server as any).prisma;

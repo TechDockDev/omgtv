@@ -135,8 +135,8 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
     const start = startDate
       ? new Date(`${startDate}T00:00:00.000+05:30`)
       : new Date("2020-01-01T00:00:00.000Z");
-    // endDate is exclusive — [startDate, endDate)
-    const end = endDate ? new Date(`${endDate}T00:00:00.000+05:30`) : now;
+    // endDate is INCLUSIVE (same as /admin/all-transactions) — the full endDate day counts
+    const end = endDate ? new Date(`${endDate}T23:59:59.999+05:30`) : now;
 
     const periodKey = (d: Date): string => {
       const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
@@ -463,9 +463,9 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
     const config = loadConfig();
     const serviceToken = config.SERVICE_AUTH_TOKEN ?? "";
 
-    // endDate is exclusive ([startDate, endDate)) — "2026-08-01" means up to Jul 31 23:59 IST
+    // endDate is INCLUSIVE (same as /admin/all-transactions) — the full endDate day counts
     const end = endDate
-      ? new Date(`${endDate}T00:00:00.000+05:30`)
+      ? new Date(`${endDate}T23:59:59.999+05:30`)
       : new Date();
     const start = startDate
       ? new Date(`${startDate}T00:00:00.000+05:30`)

@@ -640,8 +640,9 @@ export async function getCustomAdAnalytics(params: {
     endDate?: string;
 }): Promise<{ summary: { totalImpressions: number, totalClicks: number, avgCtr: number }, ads: CustomAdMetric[] }> {
     const { prisma, startDate, endDate } = params;
-    const start = startDate ? new Date(startDate) : new Date(0);
-    const end = endDate ? new Date(endDate) : new Date();
+    // IST day boundaries, endDate INCLUSIVE — consistent with all other analytics endpoints
+    const start = startDate ? new Date(`${startDate}T00:00:00.000+05:30`) : new Date(0);
+    const end = endDate ? new Date(`${endDate}T23:59:59.999+05:30`) : new Date();
 
     const appEventModel = (prisma as any).appEvent;
     if (!appEventModel) {
