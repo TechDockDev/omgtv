@@ -18,6 +18,7 @@ interface LifecycleRow {
   freeUsers: number;
   freePercent: number;
   trialStarted: number;
+  repeatTrials: number;
   regToTrialPercent: number;
   trialActive: number;
   trialCancelled: number;
@@ -50,6 +51,9 @@ function buildRow(period: string, counts: Omit<LifecycleRow, "period" | "freePer
     freeUsers: counts.freeUsers,
     freePercent: pct(counts.freeUsers, counts.registrations),
     trialStarted: counts.trialStarted,
+    // Of trialStarted, users who had ALREADY trialed before (trial again / re-trial).
+    // First-time trials = trialStarted - repeatTrials.
+    repeatTrials: counts.repeatTrials,
     regToTrialPercent: pct(counts.trialStarted, counts.registrations),
     trialActive: counts.trialActive,
     trialCancelled: counts.trialCancelled,
@@ -61,14 +65,22 @@ function buildRow(period: string, counts: Omit<LifecycleRow, "period" | "freePer
     subExpired: counts.subExpired,
     totalSubscribed: counts.totalSubscribed,
     subChurned: counts.subChurned,
-    subChurnPercent: pct(counts.subChurned, counts.totalSubscribed),
+    // Churn rate = of subs that faced a renew-or-leave decision this period
+    // (churned + renewed), how many left. NOT churned/totalSubscribed — that
+    // denominator is NEW subscribers and is 0 in months with only old-sub churn.
+    subChurnPercent: pct(counts.subChurned, counts.subChurned + counts.renewedSubs),
     renewedSubs: counts.renewedSubs,
     reactivated: counts.reactivated,
-    recoveryPercent: pct(counts.reactivated, counts.subChurned),
+    // Recovery rate = comebacks vs churn movement this period. Not reactivated/subChurned
+    // alone — comebacks relate to EARLIER months' churn, so a month with reactivations
+    // but zero same-month churn would divide by zero and wrongly show 0%.
+    recoveryPercent: pct(counts.reactivated, counts.reactivated + counts.subChurned),
     razorpayUsers: counts.razorpayUsers,
     phonePeUsers: counts.phonePeUsers,
-    razorpayPercent: pct(counts.razorpayUsers, counts.registrations),
-    phonePePercent: pct(counts.phonePeUsers, counts.registrations),
+    // Provider split — proportion of users who transacted via each provider.
+    // The two always sum to 100% (when there is any provider activity).
+    razorpayPercent: pct(counts.razorpayUsers, counts.razorpayUsers + counts.phonePeUsers),
+    phonePePercent: pct(counts.phonePeUsers, counts.razorpayUsers + counts.phonePeUsers),
   };
 }
 
@@ -77,6 +89,7 @@ function zeroCounters() {
     registrations: 0,
     freeUsers: 0,
     trialStarted: 0,
+    repeatTrials: 0,
     trialActive: 0,
     trialCancelled: 0,
     trialExpired: 0,
@@ -290,6 +303,9 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         if (inRange(startedAt)) {
           const p = periodKey(startedAt);
           addOnce("trialStarted", p, s.userId);
+          // Repeat trial: user had an earlier trial before this one started
+          const firstTrialAt = trialStartAt.get(s.userId);
+          if (firstTrialAt && firstTrialAt < startedAt) addOnce("repeatTrials", p, s.userId);
           if (s.provider === "razorpay") addOnce("razorpayUsers", p, s.userId);
           if (s.provider === "phonepe") addOnce("phonePeUsers", p, s.userId);
           // still on trial now, and never converted to paid
