@@ -199,7 +199,7 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       }),
       prisma.transaction.findMany({
         where: { createdAt: { lt: end }, status: "SUCCESS" },
-        select: { userId: true, subscriptionId: true, planId: true, trialPlanId: true, createdAt: true },
+        select: { userId: true, subscriptionId: true, planId: true, trialPlanId: true, provider: true, createdAt: true },
         orderBy: { createdAt: "asc" },
       }),
     ]);
@@ -395,7 +395,12 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       const n = (txCountBySub.get(t.subscriptionId) ?? 0) + 1;
       txCountBySub.set(t.subscriptionId, n);
       if (n >= 2 && isAllowed(t.userId) && inRange(t.createdAt)) {
-        addOnce("renewedSubs", periodKey(t.createdAt), t.userId);
+        const p = periodKey(t.createdAt);
+        addOnce("renewedSubs", p, t.userId);
+        // A renewal is provider activity too — without this, a month of pure
+        // renewals shows razorpayUsers/phonePeUsers = 0 next to renewedSubs > 0.
+        if (t.provider === "razorpay") addOnce("razorpayUsers", p, t.userId);
+        if (t.provider === "phonepe") addOnce("phonePeUsers", p, t.userId);
       }
     }
 
@@ -549,25 +554,30 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
     const periodTrunc = period === "monthly" ? "month" : "day";
     const periodInterval = period === "monthly" ? "1 month" : "1 day";
     const periodEnd = period === "monthly"
-      ? `gs + INTERVAL '1 month' - INTERVAL '1 millisecond'`
-      : `gs + INTERVAL '1 day' - INTERVAL '1 millisecond'`;
+      ? `gs_local + INTERVAL '1 month' - INTERVAL '1 millisecond'`
+      : `gs_local + INTERVAL '1 day' - INTERVAL '1 millisecond'`;
 
     // ── Run SQL + AuthService fetch in parallel ────────────────────────────────
     const [sqlRows, regData] = await Promise.all([
       prisma.$queryRawUnsafe<BizFinSqlRow[]>(`
         WITH periods AS (
+          -- Step periods on IST WALL-CLOCK timestamps (gs_local is a plain timestamp).
+          -- Stepping timestamptz by '1 month' happens in the session timezone (UTC),
+          -- where "May 1 IST" is Apr 30 UTC — and Apr 30 + 1 month clamps to May 30,
+          -- producing a duplicate May and a missing June. On local timestamps the
+          -- 1st + 1 month is always the next 1st.
           SELECT
-            gs AS p_start,
+            gs_local AT TIME ZONE 'Asia/Kolkata' AS p_start,
             -- Cap the ongoing period at NOW() so the current month snapshots
             -- "as of now" (consistent with lifecycle) instead of projecting to
             -- a month-end that hasn't happened yet.
-            LEAST(${periodEnd}, NOW()) AS p_end,
-            TO_CHAR(gs AT TIME ZONE 'Asia/Kolkata', '${periodFmt}') AS period_key
+            LEAST((${periodEnd}) AT TIME ZONE 'Asia/Kolkata', NOW()) AS p_end,
+            TO_CHAR(gs_local, '${periodFmt}') AS period_key
           FROM generate_series(
-            DATE_TRUNC('${periodTrunc}', $1::timestamptz AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata',
-            DATE_TRUNC('${periodTrunc}', $2::timestamptz AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata',
+            DATE_TRUNC('${periodTrunc}', $1::timestamptz AT TIME ZONE 'Asia/Kolkata'),
+            DATE_TRUNC('${periodTrunc}', $2::timestamptz AT TIME ZONE 'Asia/Kolkata'),
             INTERVAL '${periodInterval}'
-          ) gs
+          ) gs_local
         ),
         active_subs AS (
           SELECT
