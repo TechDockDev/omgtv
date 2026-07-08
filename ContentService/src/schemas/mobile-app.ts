@@ -27,7 +27,9 @@ export const streamingInfoSchema = z.object({
 
 const progressSchema = z.object({
   watched_duration: z.number().int().nonnegative(),
-  total_duration: z.number().int().positive(),
+  // 0 allowed: episodes whose media duration is not yet known (pending transcode)
+  // must not fail response validation and 500 the whole endpoint
+  total_duration: z.number().int().nonnegative(),
   percentage: z.number().min(0),
   last_watched_at: z.string().datetime().nullable(),
   is_completed: z.boolean(),
@@ -49,7 +51,7 @@ const continueWatchItemSchema = z.object({
   series_title: z.string(),
   title: z.string(),
   thumbnail: z.string().nullable(),
-  duration_seconds: z.number().int().positive(),
+  duration_seconds: z.number().int().nonnegative(),
   streaming: streamingInfoSchema,
   progress: progressSchema,
   rating: z.number().nullable(),
@@ -193,7 +195,7 @@ const seriesEpisodeSchema = z.object({
   title: z.string(),
   description: z.string().nullable(),
   thumbnail: z.string().nullable(),
-  duration_seconds: z.number().int().positive(),
+  duration_seconds: z.number().int().nonnegative(),
   release_date: z.string().datetime().nullable(),
   is_download_allowed: z.boolean(),
   is_locked: z.boolean(),

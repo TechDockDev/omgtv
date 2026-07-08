@@ -127,6 +127,10 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
    *             EXCEPTION: convertedFromTrial is attributed to the period the
    *             trial STARTED, so trialToSubConvPercent in each row measures
    *             that row's own trial batch.
+   *             SNAPSHOTS: subActive / trialActive = live at the period's end;
+   *             totalSubscribed = distinct paying users at any point in the
+   *             period (≈ subActive + subChurned). The Overall row computes
+   *             these three over the whole range — they are not summable.
    */
   app.get("/analytics/lifecycle", {
     schema: {
@@ -260,6 +264,11 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
     // trial Transaction always keeps it.
     const trialStartAt = new Map<string, Date>();
     const firstPaidAt = new Map<string, Date>();
+    // Earliest trial per user from UserSubscription rows ONLY — used for repeat-trial
+    // detection. (trialStartAt also mixes in Transaction timestamps, which are created
+    // ~a minute BEFORE the sub activates — comparing across tables would flag every
+    // normal single-trial user as a repeat.)
+    const firstTrialSubAt = new Map<string, Date>();
     // Users with a dedicated paid UserSubscription row. PhonePe converts trial→paid
     // by re-billing the SAME record (trialPlanId stays set), so converted PhonePe
     // users are NOT in this set — their paid evidence comes from Transaction only.
@@ -269,6 +278,8 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       if (s.trialPlanId) {
         const cur = trialStartAt.get(s.userId);
         if (!cur || at < cur) trialStartAt.set(s.userId, at);
+        const curSub = firstTrialSubAt.get(s.userId);
+        if (!curSub || at < curSub) firstTrialSubAt.set(s.userId, at);
       } else if (s.planId) {
         paidSubUsers.add(s.userId);
         const cur = firstPaidAt.get(s.userId);
@@ -303,16 +314,11 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         if (inRange(startedAt)) {
           const p = periodKey(startedAt);
           addOnce("trialStarted", p, s.userId);
-          // Repeat trial: user had an earlier trial before this one started
-          const firstTrialAt = trialStartAt.get(s.userId);
-          if (firstTrialAt && firstTrialAt < startedAt) addOnce("repeatTrials", p, s.userId);
+          // Repeat trial: a strictly earlier trial SUBSCRIPTION exists for this user
+          const firstTrialSub = firstTrialSubAt.get(s.userId);
+          if (firstTrialSub && firstTrialSub < startedAt) addOnce("repeatTrials", p, s.userId);
           if (s.provider === "razorpay") addOnce("razorpayUsers", p, s.userId);
           if (s.provider === "phonepe") addOnce("phonePeUsers", p, s.userId);
-          // still on trial now, and never converted to paid
-          if (!firstPaidAt.has(s.userId) && (s.status === "TRIAL" || s.status === "ACTIVE") &&
-              s.endsAt && s.endsAt > now) {
-            addOnce("trialActive", p, s.userId);
-          }
         }
         // If the user converted to paid BEFORE this status change, the event belongs
         // to the paid buckets, not the trial buckets. For PhonePe (no separate paid
@@ -347,10 +353,6 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
           const p = periodKey(startedAt);
           if (s.provider === "razorpay") addOnce("razorpayUsers", p, s.userId);
           if (s.provider === "phonepe") addOnce("phonePeUsers", p, s.userId);
-          // has access right now (ACTIVE, or CANCELED with access period not yet ended)
-          if (s.endsAt && s.endsAt > now && (s.status === "ACTIVE" || s.status === "CANCELED")) {
-            addOnce("subActive", p, s.userId);
-          }
         }
         if (s.status === "CANCELED" && inRange(s.updatedAt)) {
           addOnce("subCancelled", periodKey(s.updatedAt), s.userId);
@@ -373,28 +375,14 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       }
     }
 
-    // New paying subscribers (bucketed by first-paid date) + trial→paid conversions
-    // (bucketed by the period the TRIAL STARTED — cohort attribution — so that
-    // trialToSubConvPercent in each row compares conversions against the same
-    // trial batch, not against unrelated trials that started in the payment month).
+    // Trial→paid conversions — attributed to the period the TRIAL started (cohort
+    // attribution) so trialToSubConvPercent compares conversions against the same
+    // trial batch, not against unrelated trials that started in the payment month.
     for (const [uid, at] of firstPaidAt) {
       if (!isAllowed(uid)) continue;
       const tAt = trialStartAt.get(uid);
       if (tAt && tAt <= at && inRange(tAt)) {
         addOnce("convertedFromTrial", periodKey(tAt), uid);
-      }
-      if (!inRange(at)) continue;
-      const p = periodKey(at);
-      addOnce("totalSubscribed", p, uid);
-      // PhonePe conversion keeps billing the SAME (trial-flagged) sub row, so the
-      // paid branch above never sees it — count subActive from the latest sub here.
-      if (!paidSubUsers.has(uid)) {
-        const history = subsByUser.get(uid) ?? [];
-        const latest = history[history.length - 1];
-        if (latest && latest.endsAt && latest.endsAt > now &&
-            (latest.status === "ACTIVE" || latest.status === "CANCELED")) {
-          addOnce("subActive", p, uid);
-        }
       }
     }
 
@@ -411,17 +399,87 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
       }
     }
 
-    // ── Step 5: Build period rows + overall ───────────────────────────────────
+    // ── Step 5: Snapshot & presence metrics ───────────────────────────────────
+    // subActive / trialActive = live at the period's END (or "now" for the ongoing
+    // period) — same semantics as biz-fin's active counts.
+    // totalSubscribed = distinct users holding an active PAID sub at ANY point in
+    // the period — the umbrella column (≈ subActive + subChurned).
+    const periodStartOf = (p: string): Date =>
+      period === "daily"
+        ? new Date(`${p}T00:00:00.000+05:30`)
+        : new Date(`${p}-01T00:00:00.000+05:30`);
+    const periodEndOf = (p: string): Date => {
+      let boundary: Date;
+      if (period === "daily") {
+        boundary = new Date(periodStartOf(p).getTime() + 24 * 60 * 60 * 1000 - 1);
+      } else {
+        const [y, m] = p.split("-").map((n) => parseInt(n, 10));
+        const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+        boundary = new Date(new Date(`${next}-01T00:00:00.000+05:30`).getTime() - 1);
+      }
+      return boundary > now ? now : boundary;
+    };
+
+    const countPresence = (targetKey: string, pStart: Date, pEnd: Date) => {
+      for (const s of subs) {
+        if (!isAllowed(s.userId)) continue;
+        if (!s.endsAt) continue;
+        const startedAt = s.startsAt ?? s.createdAt;
+        if (startedAt > pEnd) continue;
+        const isTrialRow = s.trialPlanId !== null;
+        const isPaidRow = !isTrialRow && s.planId !== null;
+        if (!isTrialRow && !isPaidRow) continue;
+
+        const paidAt = firstPaidAt.get(s.userId);
+        // A converted trial row (PhonePe re-bills the same record) is "paid"
+        // from the user's first successful paid charge onward.
+        const paidFrom = isPaidRow
+          ? startedAt
+          : paidAt !== undefined && paidAt <= pEnd
+            ? (paidAt > startedAt ? paidAt : startedAt)
+            : null;
+
+        if (paidFrom !== null) {
+          // held an active paid sub at some point within [pStart, pEnd]
+          if (s.endsAt > pStart) addOnce("totalSubscribed", targetKey, s.userId);
+          // still live at the period's end
+          if (s.endsAt > pEnd) addOnce("subActive", targetKey, s.userId);
+        } else if (isTrialRow && s.endsAt > pEnd) {
+          // on trial (not yet converted) and live at the period's end
+          addOnce("trialActive", targetKey, s.userId);
+        }
+      }
+    };
+
+    for (const p of Array.from(periodCounters.keys())) {
+      countPresence(p, periodStartOf(p), periodEndOf(p));
+    }
+
+    // Overall gets its own whole-range pass — summing snapshots across periods
+    // would count the same living subscriber once per month.
+    const OVERALL_KEY = "__overall__";
+    countPresence(OVERALL_KEY, start, end > now ? now : end);
+
+    // ── Step 6: Build period rows + overall ───────────────────────────────────
     const rows: LifecycleRow[] = Array.from(periodCounters.entries())
+      .filter(([p]) => p !== OVERALL_KEY)
       .sort(([a], [b]) => b.localeCompare(a))
       .map(([p, c]) => buildRow(p, c));
 
-    // Overall = sum of all counters, percentages recomputed
+    // Overall = sum of event counters, percentages recomputed
     const overall = zeroCounters();
-    for (const c of periodCounters.values()) {
+    for (const [p, c] of periodCounters.entries()) {
+      if (p === OVERALL_KEY) continue;
       for (const key of Object.keys(overall) as (keyof typeof overall)[]) {
         overall[key] += c[key];
       }
+    }
+    // Snapshot/presence columns are NOT summable — use the whole-range pass instead
+    const oc = periodCounters.get(OVERALL_KEY);
+    if (oc) {
+      overall.totalSubscribed = oc.totalSubscribed;
+      overall.subActive = oc.subActive;
+      overall.trialActive = oc.trialActive;
     }
 
     return {
@@ -500,7 +558,10 @@ export default async function analyticsAdminRoutes(app: FastifyInstance) {
         WITH periods AS (
           SELECT
             gs AS p_start,
-            ${periodEnd} AS p_end,
+            -- Cap the ongoing period at NOW() so the current month snapshots
+            -- "as of now" (consistent with lifecycle) instead of projecting to
+            -- a month-end that hasn't happened yet.
+            LEAST(${periodEnd}, NOW()) AS p_end,
             TO_CHAR(gs AT TIME ZONE 'Asia/Kolkata', '${periodFmt}') AS period_key
           FROM generate_series(
             DATE_TRUNC('${periodTrunc}', $1::timestamptz AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata',

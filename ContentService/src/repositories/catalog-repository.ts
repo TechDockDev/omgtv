@@ -422,7 +422,7 @@ export class CatalogRepository {
       include: {
         category: true,
         mediaAssets: true,
-        _count: { select: { episodes: true } },
+        _count: { select: { episodes: { where: { deletedAt: null } } } },
       },
     });
   }
@@ -1945,7 +1945,7 @@ export class CatalogRepository {
       include: {
         category: true,
         _count: {
-          select: { episodes: true },
+          select: { episodes: { where: { deletedAt: null } } },
         },
       },
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],

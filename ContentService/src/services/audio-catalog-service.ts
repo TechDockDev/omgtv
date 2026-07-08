@@ -28,7 +28,8 @@ function isSeriesPubliclyDiscoverable(
 
 const fullSeriesInclude = {
   audioCategory: true as const,
-  _count: { select: { episodes: true } },
+  // Count only active episodes — soft-deleted ones must not inflate totalEpisodes
+  _count: { select: { episodes: { where: { deletedAt: null } } } },
 } as const;
 
 export interface AudioSeriesSummary {
