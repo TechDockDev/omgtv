@@ -45,17 +45,9 @@ export type UpdateUserParams = {
 };
 
 import { loadConfig } from "../config";
+import { authPrisma } from "../lib/auth-prisma";
 
 const config = loadConfig();
-
-// Singleton-ish client for Auth DB
-const authPrisma = new PrismaClient({
-    datasources: {
-        db: {
-            url: config.AUTH_DATABASE_URL,
-        },
-    },
-});
 
 const ENGAGEMENT_SERVICE_URL = config.ENGAGEMENT_SERVICE_URL;
 const SUBSCRIPTION_SERVICE_URL = config.SUBSCRIPTION_SERVICE_URL;

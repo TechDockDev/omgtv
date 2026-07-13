@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# WARNING: this script DELETES and RECREATES each secret with only the keys
+# listed here. Live secrets may hold manually-added keys this script doesn't
+# know about (e.g. PhonePe credentials in subscription-service-secrets).
+# Before re-running against prod, diff every secret's keys against this file:
+#   kubectl get secret <name> -n prod -o jsonpath='{.data}' | jq 'keys'
 set -euo pipefail
 
 if ! command -v gcloud >/dev/null 2>&1; then
@@ -68,6 +73,10 @@ kubectl -n "$NAMESPACE" create secret generic cloudsql-secrets \
 
 mk_db_url() {
   db="$1"
+  # Prisma pool size per pod. Without this Prisma defaults to CPUs*2+1 (17 on
+  # 8-core nodes), and the fleet exhausts Cloud SQL max_connections at peak.
+  # Budget: sum(connection_limit * HPA maxReplicas) must stay < max_connections - 10.
+  conn_limit="${2:-3}"
   urlencode() {
     value="$1"
 
@@ -98,27 +107,29 @@ print(up.quote(sys.argv[1], safe=""))' "$value"
   user_enc="$(urlencode "$DB_USER" | tr -d '\n')"
   pass_enc="$(urlencode "$DB_PASS" | tr -d '\n')"
 
-  echo "postgresql://${user_enc}:${pass_enc}@127.0.0.1:5432/${db}?schema=public"
+  echo "postgresql://${user_enc}:${pass_enc}@127.0.0.1:5432/${db}?schema=public&connection_limit=${conn_limit}&pool_timeout=30"
 }
 
 create_db_secret() {
   name="$1"
   db="$2"
-  url="$(mk_db_url "$db")"
+  conn_limit="${3:-3}"
+  url="$(mk_db_url "$db" "$conn_limit")"
 
   kubectl -n "$NAMESPACE" delete secret "${name}" >/dev/null 2>&1 || true
   kubectl -n "$NAMESPACE" create secret generic "${name}" --from-literal=DATABASE_URL="$url"
 }
 
 echo "Creating DB secrets"
-create_db_secret content-service-secrets pocketlol_content
-create_db_secret upload-service-secrets pocketlol_upload
-create_db_secret subscription-service-secrets pocketlol_subscription
+create_db_secret content-service-secrets pocketlol_content 5
+create_db_secret upload-service-secrets pocketlol_upload 2
+create_db_secret subscription-service-secrets pocketlol_subscription 5
 
 echo "Creating user-service-secrets"
 kubectl -n "$NAMESPACE" delete secret user-service-secrets >/dev/null 2>&1 || true
 kubectl -n "$NAMESPACE" create secret generic user-service-secrets \
   --from-literal=DATABASE_URL="$(mk_db_url pocketlol_users)" \
+  --from-literal=AUTH_DATABASE_URL="$(mk_db_url pocketlol_auth 2)" \
   --from-literal=AUTH_SERVICE_TOKEN="$SERVICE_AUTH_TOKEN"
 
 echo "Creating auth-service-secrets"
@@ -146,7 +157,7 @@ kubectl -n "$NAMESPACE" create secret generic streaming-service-secrets \
 echo "Creating subscription-service-secrets"
 kubectl -n "$NAMESPACE" delete secret subscription-service-secrets >/dev/null 2>&1 || true
 kubectl -n "$NAMESPACE" create secret generic subscription-service-secrets \
-  --from-literal=DATABASE_URL="$(mk_db_url pocketlol_subscription)" \
+  --from-literal=DATABASE_URL="$(mk_db_url pocketlol_subscription 5)" \
   --from-literal=RAZORPAY_KEY_ID="$(get_secret_optional razorpay-key-id "")" \
   --from-literal=RAZORPAY_KEY_SECRET="$(get_secret_optional razorpay-key-secret "")" \
   --from-literal=RAZORPAY_WEBHOOK_SECRET="$(get_secret_optional razorpay-webhook-secret "")"

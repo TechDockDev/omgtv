@@ -8,16 +8,9 @@ export type CustomerDetailsFnResult = {
     isProfileComplete: boolean;
 };
 
-import { loadConfig } from "../config";
+import { authPrisma } from "../lib/auth-prisma";
 
-// Singleton-ish client for Auth DB
-export const authPrisma = new PrismaClient({
-    datasources: {
-        db: {
-            url: loadConfig().AUTH_DATABASE_URL,
-        },
-    },
-});
+export { authPrisma };
 
 export class CustomerService {
     constructor(private readonly prisma: PrismaClient) { }

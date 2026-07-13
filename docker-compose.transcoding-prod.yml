@@ -13,7 +13,7 @@ services:
     environment:
       - NODE_ENV=production
       - GCP_PROJECT_ID=omg-tv-497110
-      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_content?schema=public
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@cloud-sql-proxy:5432/pocketlol_content?schema=public&connection_limit=2&pool_timeout=30
       - GCS_UPLOADS_BUCKET=videos-bucket-omgtv-prod
       - GCS_STREAMING_BUCKET=videos-bucket-omgtv-prod
       - PUBSUB_SUBSCRIPTION=projects/omg-tv-497110/subscriptions/transcoding-requests-sub-prod
