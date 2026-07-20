@@ -339,6 +339,38 @@ export class ViewerCatalogService {
     this.engagement = options.engagement;
   }
 
+  async getPublicTopTen(): Promise<{
+    items: Array<{ id: string; title: string; imageUrl: string | null }>;
+    fromCache: boolean;
+  }> {
+    const cacheKey = "catalog:top10";
+    if (this.redis) {
+      const cached = await getCachedJson<{
+        items: Array<{ id: string; title: string; imageUrl: string | null }>;
+      }>(this.redis, cacheKey);
+      if (cached) {
+        return { ...cached, fromCache: true };
+      }
+    }
+
+    const entries = await this.repo.getPublicTopTenSeries();
+    const items = entries
+      .filter((entry) => entry.series)
+      .map((entry) => ({
+        id: entry.series!.id,
+        title: entry.series!.title,
+        imageUrl: ensureCdnUrl(
+          entry.series!.heroImageUrl ?? entry.series!.bannerImageUrl ?? null
+        ),
+      }));
+
+    const response = { items };
+    if (this.redis) {
+      await setCachedJson(this.redis, cacheKey, response, this.feedTtl);
+    }
+    return { ...response, fromCache: false };
+  }
+
   async getFeed(params: {
     viewerId?: string;
     limit?: number;

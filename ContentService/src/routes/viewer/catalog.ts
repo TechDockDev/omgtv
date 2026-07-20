@@ -85,6 +85,20 @@ export default async function viewerCatalogRoutes(fastify: FastifyInstance) {
     },
   });
 
+  fastify.get("/top-10", {
+    config: { metricsId: "/catalog/top-10" },
+    preHandler: verifyRequest,
+    handler: async (_request, reply) => {
+      const result = await viewerCatalog.getPublicTopTen();
+      reply.header(
+        "cache-control",
+        `public, max-age=${config.FEED_CACHE_TTL_SECONDS}`
+      );
+      reply.header("x-cache", result.fromCache ? "hit" : "miss");
+      return { items: result.items };
+    },
+  });
+
   fastify.get("/series/:slug", {
     config: { metricsId: "/catalog/series/:slug" },
     preHandler: verifyRequest,
