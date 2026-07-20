@@ -196,13 +196,44 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
       });
 
       if (!retryable || attempts >= 3 || windowSoon) {
-        // Permanent failure
-        await _failRedemption(redemption, attempts, err?.code ?? err?.message, phonepe, log);
-        stats.pass2_failed++;
-        void trackSubscriptionEvent(redemption.userId, "phonepe_execute_failed", {
-          provider: "phonepe", redemption_id: redemption.id, error_code: err?.code,
-          attempts, final: true,
-        });
+        // Execute was rejected — but PhonePe may have ALREADY processed this
+        // redemption (INVALID_REDEMPTION_STATE typically means auto-debit ran
+        // before our execute call). Failing here without checking cancelled
+        // three paid subscriptions on 2026-07-20. Ask PhonePe first.
+        let confirmedState: string | null = null;
+        try {
+          const status = await phonepe.getRedemptionStatus(redemption.merchantOrderId, redemption.userId);
+          confirmedState = status.state ?? null;
+        } catch (statusErr: any) {
+          log.warn({
+            msg: "phonepe_billing: status check after execute failure errored — leaving EXECUTING for pass 4",
+            redemptionId: redemption.id, error: statusErr?.message,
+          });
+        }
+
+        if (confirmedState === "COMPLETED") {
+          await _handleRedemptionSuccess(redemption, log);
+          stats.pass2_success++;
+          void trackSubscriptionEvent(redemption.userId, "phonepe_reconciliation_recovery", {
+            provider: "phonepe", redemption_id: redemption.id, source: "execute_error_recovery",
+          });
+        } else if (confirmedState === "FAILED") {
+          // PhonePe explicitly confirms the payment failed — safe to finalize
+          await _failRedemption(redemption, attempts, err?.code ?? err?.message, phonepe, log);
+          stats.pass2_failed++;
+          void trackSubscriptionEvent(redemption.userId, "phonepe_execute_failed", {
+            provider: "phonepe", redemption_id: redemption.id, error_code: err?.code,
+            attempts, final: true,
+          });
+        } else {
+          // PENDING or status unknown — never fail a possibly-paid user.
+          // Row stays EXECUTING; Pass 4 re-verifies via getRedemptionStatus.
+          await prisma.phonePeRedemption.update({
+            where: { id: redemption.id },
+            data: { executeAttempts: attempts, lastError: err?.code ?? err?.message },
+          });
+          stats.pass2_retryable_fail++;
+        }
       } else {
         // Retryable — revert EXECUTING back to NOTIFIED for next pass
         await prisma.phonePeRedemption.update({
@@ -228,6 +259,30 @@ export async function runPhonePeBillingPass(log: JobLogger): Promise<CronRunStat
 
   for (const redemption of expiredNotified) {
     stats.pass3_expired++;
+
+    // Same guard as Pass 2: PhonePe may have auto-executed this redemption
+    // (webhook lost / our execute never ran). Confirm before cancelling.
+    try {
+      const status = await phonepe.getRedemptionStatus(redemption.merchantOrderId, redemption.userId);
+      if (status.state === "COMPLETED") {
+        const full = await prisma.phonePeRedemption.findUnique({
+          where: { id: redemption.id },
+          include: { userSubscription: { include: { plan: true } } },
+        });
+        if (full) {
+          await _handleRedemptionSuccess(full, log);
+          void trackSubscriptionEvent(redemption.userId, "phonepe_reconciliation_recovery", {
+            provider: "phonepe", redemption_id: redemption.id, source: "window_expired_recovery",
+          });
+          continue;
+        }
+      }
+    } catch (statusErr: any) {
+      // Can't reach PhonePe — don't cancel on a guess; retry next cron run
+      log.warn({ msg: "phonepe_billing: status check for expired window errored — deferring", redemptionId: redemption.id, error: statusErr?.message });
+      continue;
+    }
+
     log.error({
       msg: "phonepe_billing: notify window expired — marking FAILED",
       redemptionId: redemption.id,
