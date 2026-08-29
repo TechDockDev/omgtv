@@ -14,6 +14,8 @@ import {
   otpSendBodySchema,
   otpVerifyBodySchema,
   otpSendSuccessResponseSchema,
+  attributionTrackBodySchema,
+  attributionTrackSuccessResponseSchema,
   type AdminLoginBody,
   type AdminRegisterBody,
   type CustomerLoginBody,
@@ -25,6 +27,7 @@ import {
   type DeviceSyncBody,
   type OtpSendBody,
   type OtpVerifyBody,
+  type AttributionTrackBody,
 } from "../schemas/auth.schema";
 import { errorResponseSchema } from "../schemas/base.schema";
 import {
@@ -37,6 +40,7 @@ import {
   syncDevice,
   sendOtp,
   verifyOtp,
+  trackAttribution,
   getAuthProviderAnalytics,
   getOtpPhoneAnalytics,
   getOtpAnalytics,
@@ -392,6 +396,34 @@ const authRoutes: FastifyPluginAsync = async function authRoutes(fastify) {
       const body = otpVerifyBodySchema.parse(request.body);
       const tokens = await verifyOtp(body, request.correlationId, request.telemetrySpan);
       return reply.status(200).send({ tokens });
+    },
+  });
+
+  // Auth-optional by design: a fresh install (deferred deep link, no session
+  // yet) sends guestId only; an already-installed returning user opened via
+  // a direct deep link (re-engagement) sends their existing bearer token
+  // instead, forwarded through so AuthService can attach their customerId.
+  fastify.route<{ Body: AttributionTrackBody }>({
+    method: "POST",
+    url: "/attribution/track",
+    schema: {
+      body: attributionTrackBodySchema,
+      response: {
+        204: attributionTrackSuccessResponseSchema,
+        400: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: true },
+      rateLimitPolicy: "anonymous",
+      security: { bodyLimit: 8 * 1024 },
+    },
+    async handler(request, reply) {
+      const body = attributionTrackBodySchema.parse(request.body);
+      const authHeader = request.headers.authorization;
+      await trackAttribution(body, request.correlationId, authHeader, request.telemetrySpan);
+      return reply.status(204).send({});
     },
   });
 };

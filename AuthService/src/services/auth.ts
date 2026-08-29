@@ -7,7 +7,7 @@ import {
 import { randomBytes, createHash, randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { loadConfig } from "../config";
-import type { TokenResponse } from "../schemas/auth";
+import type { TokenResponse, Attribution } from "../schemas/auth";
 import type { FirebaseAuthIntegration } from "../plugins/firebase";
 import type { AccessTokenPayload } from "../plugins/jwt";
 import type { UserServiceIntegration } from "../types/user-service";
@@ -152,12 +152,14 @@ async function upsertCustomerSubject(params: {
   prisma: PrismaClient;
   firebaseUid: string;
   customerId: string;
+  attribution?: Attribution;
 }): Promise<{
   subjectId: string;
   customerId: string;
   firebaseUid: string | undefined;
+  isNewUser: boolean;
 }> {
-  const { prisma, firebaseUid, customerId } = params;
+  const { prisma, firebaseUid, customerId, attribution } = params;
 
   return prisma.$transaction(async (tx) => {
     const existing = await tx.customerIdentity.findFirst({
@@ -179,6 +181,7 @@ async function upsertCustomerSubject(params: {
         subjectId: updated.subjectId,
         customerId: updated.customerId,
         firebaseUid: updated.firebaseUid ?? undefined,
+        isNewUser: false, // identity already existed — this is a returning login
       };
     }
 
@@ -190,6 +193,11 @@ async function upsertCustomerSubject(params: {
             firebaseUid,
             customerId,
             lastLoginAt: new Date(),
+            // First-touch attribution — only ever set on creation, never overwritten.
+            attributionSource: attribution?.source,
+            campaignId: attribution?.campaignId,
+            adsetId: attribution?.adsetId,
+            adId: attribution?.adId,
           },
         },
       },
@@ -206,6 +214,7 @@ async function upsertCustomerSubject(params: {
       subjectId: subject.id,
       customerId: subject.customer.customerId,
       firebaseUid: subject.customer.firebaseUid ?? undefined,
+      isNewUser: true, // identity created in this request — first-ever registration
     };
   });
 }
@@ -214,8 +223,9 @@ async function upsertCustomerSubjectByPhone(params: {
   prisma: PrismaClient;
   phoneNumber: string;
   customerId: string;
+  attribution?: Attribution;
 }): Promise<{ subjectId: string; customerId: string; phoneNumber: string; isNewUser: boolean }> {
-  const { prisma, phoneNumber, customerId } = params;
+  const { prisma, phoneNumber, customerId, attribution } = params;
 
   return prisma.$transaction(async (tx) => {
     const existing = await tx.customerIdentity.findFirst({
@@ -244,6 +254,11 @@ async function upsertCustomerSubjectByPhone(params: {
             customerId,
             authProvider: AuthProvider.DLT,
             lastLoginAt: new Date(),
+            // First-touch attribution — only ever set on creation, never overwritten.
+            attributionSource: attribution?.source,
+            campaignId: attribution?.campaignId,
+            adsetId: attribution?.adsetId,
+            adId: attribution?.adId,
           },
         },
       },
@@ -267,11 +282,12 @@ export async function authenticateCustomerDlt(params: {
   deviceId: string;
   guestId?: string;
   deviceInfo?: { os?: string; osVersion?: string; deviceName?: string; model?: string; appVersion?: string; network?: string; fcmToken?: string; permissions?: Record<string, boolean> };
+  attribution?: Attribution;
   signAccessToken: (payload: AccessTokenPayload, expiresIn?: number) => Promise<string>;
   userService: UserServiceIntegration;
   redis: Redis;
 }): Promise<TokenResponse> {
-  const { prisma, phoneNumber, deviceId, guestId, deviceInfo, signAccessToken, userService, redis } = params;
+  const { prisma, phoneNumber, deviceId, guestId, deviceInfo, attribution, signAccessToken, userService, redis } = params;
 
   if (!userService.isEnabled) {
     throw new Error("UserService integration is required for customer login");
@@ -284,10 +300,30 @@ export async function authenticateCustomerDlt(params: {
     deviceInfo,
   });
 
+  // Look up the migrating guest BEFORE creating the CustomerIdentity, so its
+  // stored first-touch attribution (captured at guest/init, the true install
+  // moment) can be copied onto the new customer record. Falls back to
+  // whatever attribution the verify request itself carried, if the guest
+  // record has none — e.g. no prior guest session existed.
+  const guestIdentity = ensureResult.guestProfileId
+    ? await prisma.guestIdentity.findUnique({ where: { guestProfileId: ensureResult.guestProfileId } })
+    : null;
+
+  const resolvedAttribution: Attribution | undefined =
+    guestIdentity?.campaignId || guestIdentity?.adsetId || guestIdentity?.adId || guestIdentity?.attributionSource
+      ? {
+          source: guestIdentity.attributionSource ?? undefined,
+          campaignId: guestIdentity.campaignId ?? undefined,
+          adsetId: guestIdentity.adsetId ?? undefined,
+          adId: guestIdentity.adId ?? undefined,
+        }
+      : attribution;
+
   const identity = await upsertCustomerSubjectByPhone({
     prisma,
     phoneNumber,
     customerId: ensureResult.customerId,
+    attribution: resolvedAttribution,
   });
 
   // Fires ONLY on a user's first-ever registration (identity created in this verify).
@@ -300,21 +336,16 @@ export async function authenticateCustomerDlt(params: {
     });
   }
 
-  if (ensureResult.guestProfileId) {
-    const guestIdentity = await prisma.guestIdentity.findUnique({
-      where: { guestProfileId: ensureResult.guestProfileId },
+  if (guestIdentity) {
+    await prisma.guestIdentity.update({
+      where: { guestProfileId: guestIdentity.guestProfileId },
+      data: {
+        status: GuestLifecycleStatus.MIGRATED,
+        migratedToSubjectId: identity.subjectId,
+        migratedAt: new Date(),
+      },
     });
-    if (guestIdentity) {
-      await prisma.guestIdentity.update({
-        where: { guestProfileId: guestIdentity.guestProfileId },
-        data: {
-          status: GuestLifecycleStatus.MIGRATED,
-          migratedToSubjectId: identity.subjectId,
-          migratedAt: new Date(),
-        },
-      });
-      await prisma.session.deleteMany({ where: { subjectId: guestIdentity.subjectId } });
-    }
+    await prisma.session.deleteMany({ where: { subjectId: guestIdentity.subjectId } });
   }
 
   const payload: AccessTokenPayload = {
@@ -332,12 +363,13 @@ async function ensureGuestSubject(params: {
   guestId: string;
   deviceId: string;
   guestProfileId: string;
+  attribution?: Attribution;
 }): Promise<{
   subjectId: string;
   guestProfileId: string;
   status: GuestLifecycleStatus;
 }> {
-  const { prisma, guestId, deviceId, guestProfileId } = params;
+  const { prisma, guestId, deviceId, guestProfileId, attribution } = params;
 
   return prisma.$transaction(async (tx) => {
     const existing = await tx.guestIdentity.findUnique({
@@ -345,6 +377,9 @@ async function ensureGuestSubject(params: {
     });
 
     if (existing) {
+      // Update path — status only. Never touch attribution here: it's a
+      // first-touch field, set once at creation, and must survive repeat
+      // guest/init calls for the same device/guestId untouched.
       const updated = await tx.guestIdentity.update({
         where: { guestProfileId },
         data: {
@@ -366,6 +401,11 @@ async function ensureGuestSubject(params: {
             guestId,
             deviceId,
             guestProfileId,
+            // First-touch attribution — only ever set on creation.
+            attributionSource: attribution?.source,
+            campaignId: attribution?.campaignId,
+            adsetId: attribution?.adsetId,
+            adId: attribution?.adId,
           },
         },
       },
@@ -604,6 +644,7 @@ export async function authenticateCustomer(params: {
   deviceId: string;
   guestId?: string;
   deviceInfo?: { os?: string; osVersion?: string; deviceName?: string; model?: string; appVersion?: string; network?: string; fcmToken?: string; permissions?: Record<string, boolean> };
+  attribution?: Attribution;
   signAccessToken: (
     payload: AccessTokenPayload,
     expiresIn?: number
@@ -619,6 +660,7 @@ export async function authenticateCustomer(params: {
     deviceId,
     guestId,
     deviceInfo,
+    attribution,
     signAccessToken,
     userService,
     logger,
@@ -641,29 +683,53 @@ export async function authenticateCustomer(params: {
     deviceInfo,
   });
 
+  // Same ordering as the DLT path: look up the migrating guest BEFORE
+  // creating the CustomerIdentity so its first-touch attribution can be
+  // copied across, falling back to the request's own attribution if none.
+  const guestIdentity = ensureResult.guestProfileId
+    ? await prisma.guestIdentity.findUnique({ where: { guestProfileId: ensureResult.guestProfileId } })
+    : null;
+
+  const resolvedAttribution: Attribution | undefined =
+    guestIdentity?.campaignId || guestIdentity?.adsetId || guestIdentity?.adId || guestIdentity?.attributionSource
+      ? {
+          source: guestIdentity.attributionSource ?? undefined,
+          campaignId: guestIdentity.campaignId ?? undefined,
+          adsetId: guestIdentity.adsetId ?? undefined,
+          adId: guestIdentity.adId ?? undefined,
+        }
+      : attribution;
+
   const identity = await upsertCustomerSubject({
     prisma,
     firebaseUid,
     customerId: ensureResult.customerId,
+    attribution: resolvedAttribution,
   });
 
-  if (ensureResult.guestProfileId) {
-    const guestIdentity = await prisma.guestIdentity.findUnique({
-      where: { guestProfileId: ensureResult.guestProfileId },
+  // Fires ONLY on a user's first-ever registration (identity created in this
+  // login). Previously this path fired no equivalent event at all, unlike
+  // the DLT/OTP path — added for parity since Firebase is the default
+  // authProvider (CustomerIdentity.authProvider defaults to FIREBASE).
+  if (identity.isNewUser) {
+    trackAuthEvent(identity.customerId, "first_time_register", {
+      auth_provider: "FIREBASE",
+      $set: phoneNumber ? { phone: phoneNumber } : undefined,
     });
-    if (guestIdentity) {
-      await prisma.guestIdentity.update({
-        where: { guestProfileId: guestIdentity.guestProfileId },
-        data: {
-          status: GuestLifecycleStatus.MIGRATED,
-          migratedToSubjectId: identity.subjectId,
-          migratedAt: new Date(),
-        },
-      });
-      await prisma.session.deleteMany({
-        where: { subjectId: guestIdentity.subjectId },
-      });
-    }
+  }
+
+  if (guestIdentity) {
+    await prisma.guestIdentity.update({
+      where: { guestProfileId: guestIdentity.guestProfileId },
+      data: {
+        status: GuestLifecycleStatus.MIGRATED,
+        migratedToSubjectId: identity.subjectId,
+        migratedAt: new Date(),
+      },
+    });
+    await prisma.session.deleteMany({
+      where: { subjectId: guestIdentity.subjectId },
+    });
   }
 
   const payload: AccessTokenPayload = {
@@ -689,6 +755,7 @@ export async function initializeGuest(params: {
   deviceId: string;
   guestId?: string;
   deviceInfo?: { os?: string; osVersion?: string; deviceName?: string; model?: string; appVersion?: string; network?: string; fcmToken?: string; permissions?: Record<string, boolean> };
+  attribution?: Attribution;
   signAccessToken: (
     payload: AccessTokenPayload,
     expiresIn?: number
@@ -701,6 +768,7 @@ export async function initializeGuest(params: {
     guestId: providedGuestId,
     deviceId,
     deviceInfo,
+    attribution,
     signAccessToken,
     userService,
     redis,
@@ -727,6 +795,7 @@ export async function initializeGuest(params: {
     guestId,
     deviceId,
     guestProfileId: registration.guestProfileId,
+    attribution,
   });
 
   const payload: AccessTokenPayload = {
@@ -747,6 +816,26 @@ export async function initializeGuest(params: {
   });
 
   return { guestId, tokens };
+}
+
+// Mechanism B — append-only log of every ad-driven app open, covering both
+// deferred (fresh install) and direct (already-installed, re-engagement)
+// deep links. Unlike the first-touch fields on GuestIdentity/CustomerIdentity,
+// this always inserts a new row — no first-touch-only guard, by design.
+export async function recordAttributionEvent(params: {
+  prisma: PrismaClient;
+  eventType: "install" | "reengagement";
+  source: string;
+  campaignId?: string;
+  adsetId?: string;
+  adId?: string;
+  guestId?: string;
+  customerId?: string;
+}): Promise<void> {
+  const { prisma, eventType, source, campaignId, adsetId, adId, guestId, customerId } = params;
+  await prisma.attributionEvent.create({
+    data: { eventType, source, campaignId, adsetId, adId, guestId, customerId },
+  });
 }
 
 export async function rotateRefreshToken(params: {

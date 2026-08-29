@@ -6,6 +6,7 @@ import {
   authenticateCustomer,
   authenticateCustomerDlt,
   initializeGuest,
+  recordAttributionEvent,
   rotateRefreshToken,
   revokeSessions,
   verifyActiveSession,
@@ -23,6 +24,7 @@ import {
   deviceSyncBodySchemaMinimal,
   otpSendBodySchema,
   otpVerifyBodySchema,
+  attributionTrackBodySchema,
   type AdminLoginBody,
   type AdminRegisterBody,
   type CustomerLoginBody,
@@ -33,6 +35,7 @@ import {
   type DeviceSyncBody,
   type OtpSendBody,
   type OtpVerifyBody,
+  type AttributionTrackBody,
 } from "../schemas/auth";
 
 function mapAuthError(fastify: FastifyInstance, error: AuthError): never {
@@ -131,6 +134,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           deviceId: body.deviceId,
           guestId: body.guestId,
           deviceInfo: body.deviceInfo,
+          attribution: body.attribution,
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           logger: request.log,
@@ -165,6 +169,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           guestId: undefined,
           deviceId: body.deviceId,
           deviceInfo: body.deviceInfo,
+          attribution: body.attribution,
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           redis: request.server.redis,
@@ -322,6 +327,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           deviceId: body.deviceId,
           guestId: body.guestId,
           deviceInfo: body.deviceInfo,
+          attribution: body.attribution,
           signAccessToken: request.server.signAccessToken,
           userService: request.server.userService,
           redis: request.server.redis,
@@ -350,6 +356,53 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
         }
         if (error instanceof AuthError) mapAuthError(fastify, error);
         request.log.error({ err: error }, "OTP verify failed");
+        throw fastify.httpErrors.internalServerError();
+      }
+    },
+  });
+
+  // Mechanism B — logs every ad-driven app open (deferred install OR direct
+  // re-engagement deep link). Auth-optional: a returning logged-in user
+  // sends a bearer token (customerId gets attached); a fresh install with no
+  // session yet sends guestId instead. Always inserts a new row, never
+  // upserts — this is a full history log, not a first-touch record.
+  fastify.post<{ Body: AttributionTrackBody }>("/api/v1/auth/attribution/track", {
+    schema: { body: attributionTrackBodySchema },
+    handler: async (request, reply) => {
+      const body = attributionTrackBodySchema.parse(request.body);
+
+      let customerId: string | undefined;
+      const authHeader = request.headers.authorization;
+      if (authHeader) {
+        const token = authHeader.replace(/^Bearer\s+/i, "");
+        try {
+          const payload = (await request.server.jwt.verify(token)) as AccessTokenPayload;
+          if (payload.userType === "CUSTOMER") {
+            customerId = payload.userId;
+          }
+        } catch (error) {
+          request.log.warn({ err: error }, "Attribution track: invalid/expired token, treating as unauthenticated");
+        }
+      }
+
+      if (!customerId && !body.guestId) {
+        throw fastify.httpErrors.badRequest("guestId is required when not authenticated");
+      }
+
+      try {
+        await recordAttributionEvent({
+          prisma: request.server.prisma,
+          eventType: body.eventType,
+          source: body.source,
+          campaignId: body.campaignId,
+          adsetId: body.adsetId,
+          adId: body.adId,
+          guestId: customerId ? undefined : body.guestId,
+          customerId,
+        });
+        return reply.status(204).send();
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to record attribution event");
         throw fastify.httpErrors.internalServerError();
       }
     },

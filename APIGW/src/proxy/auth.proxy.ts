@@ -15,6 +15,7 @@ import {
   otpSendBodySchema,
   otpVerifyBodySchema,
   otpSendResponseSchema,
+  attributionTrackBodySchema,
   type AdminLoginBody,
   type AdminRegisterBody,
   type CustomerLoginBody,
@@ -26,6 +27,7 @@ import {
   type DeviceSyncBody,
   type OtpSendBody,
   type OtpVerifyBody,
+  type AttributionTrackBody,
   deviceSyncBodySchema,
 } from "../schemas/auth.schema";
 
@@ -498,6 +500,46 @@ export async function verifyOtp(
   const parsed = tokenResponseSchema.safeParse(payload);
   if (!parsed.success) throw new Error("Invalid response from auth service");
   return parsed.data;
+}
+
+export async function trackAttribution(
+  body: AttributionTrackBody,
+  correlationId: string,
+  accessToken: string | undefined,
+  span?: Span
+): Promise<void> {
+  const baseUrl = resolveServiceUrl("auth");
+
+  const validatedBody = attributionTrackBodySchema.parse(body);
+
+  try {
+    await performServiceRequest<void>({
+      serviceName: "auth",
+      baseUrl,
+      path: "/api/v1/auth/attribution/track",
+      method: "POST",
+      correlationId,
+      body: validatedBody,
+      // Forward the caller's bearer token when present so AuthService can
+      // resolve it to a customerId (re-engagement touch by a logged-in
+      // user); omit entirely for an unauthenticated fresh-install call.
+      headers: accessToken ? { authorization: accessToken } : undefined,
+      parentSpan: span,
+      spanName: "proxy:auth:attribution-track",
+    });
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      if (error.statusCode === 400) {
+        throw createHttpError(400, "guestId is required when not authenticated", error.cause);
+      }
+      throw createHttpError(
+        Math.min(error.statusCode, 502),
+        "Authentication service error",
+        error.cause
+      );
+    }
+    throw error;
+  }
 }
 
 export async function getOtpAnalytics(

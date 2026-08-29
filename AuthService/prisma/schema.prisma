@@ -69,6 +69,12 @@ model CustomerIdentity {
   updatedAt    DateTime      @updatedAt
   lastLoginAt  DateTime?
   otpLogs      OtpLog[]
+
+  // First-touch ad attribution — set once at creation, never overwritten.
+  attributionSource String?
+  campaignId         String?
+  adsetId            String?
+  adId               String?
 }
 
 model GuestIdentity {
@@ -84,7 +90,32 @@ model GuestIdentity {
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 
+  // First-touch ad attribution — set once at creation, never overwritten.
+  attributionSource String?
+  campaignId         String?
+  adsetId            String?
+  adId               String?
+
   @@unique([guestId, deviceId])
+}
+
+// Append-only log of every ad-driven app open — both deferred (fresh install)
+// and direct (already installed, re-engagement) deep links. Unlike the
+// first-touch fields above, this captures repeat touches on existing users too.
+model AttributionEvent {
+  id         String   @id @default(uuid())
+  guestId    String?
+  customerId String?
+  eventType  String
+  source     String
+  campaignId String?
+  adsetId    String?
+  adId       String?
+  occurredAt DateTime @default(now())
+
+  @@index([customerId])
+  @@index([guestId])
+  @@index([occurredAt])
 }
 
 model Session {

@@ -36,16 +36,34 @@ export const adminRegisterBodySchema = z.object({
   password: z.string().trim().min(8),
 });
 
+export const attributionSchema = z.object({
+  source: z.string().trim().min(1).max(32).optional(),
+  campaignId: z.string().trim().min(1).max(128).optional(),
+  adsetId: z.string().trim().min(1).max(128).optional(),
+  adId: z.string().trim().min(1).max(128).optional(),
+}).optional();
+
 export const customerLoginBodySchema = z.object({
   firebaseToken: z.string().trim().min(20),
   deviceId: deviceIdSchema,
   guestId: guestIdOptionalSchema,
   deviceInfo: deviceInfoSchema,
+  attribution: attributionSchema,
 });
 
 export const guestInitBodySchema = z.object({
   deviceId: deviceIdSchema,
   deviceInfo: deviceInfoSchema,
+  attribution: attributionSchema,
+});
+
+export const attributionTrackBodySchema = z.object({
+  eventType: z.enum(["install", "reengagement"]),
+  source: z.string().trim().min(1).max(32),
+  campaignId: z.string().trim().min(1).max(128).optional(),
+  adsetId: z.string().trim().min(1).max(128).optional(),
+  adId: z.string().trim().min(1).max(128).optional(),
+  guestId: guestIdOptionalSchema,
 });
 
 export const tokenResponseSchema = z.object({
@@ -80,6 +98,10 @@ export const logoutSuccessResponseSchema = createSuccessResponseSchema(
 );
 
 export const deviceSyncSuccessResponseSchema = createSuccessResponseSchema(
+  z.object({}).strict()
+);
+
+export const attributionTrackSuccessResponseSchema = createSuccessResponseSchema(
   z.object({}).strict()
 );
 
@@ -131,6 +153,7 @@ export const otpVerifyBodySchema = z.object({
   deviceId: deviceIdSchema,
   guestId: guestIdOptionalSchema,
   deviceInfo: deviceInfoSchema,
+  attribution: attributionSchema,
 });
 
 export const otpSendResponseSchema = z.object({
@@ -140,6 +163,7 @@ export const otpSendResponseSchema = z.object({
 
 export const otpSendSuccessResponseSchema = createSuccessResponseSchema(otpSendResponseSchema);
 
+export type AttributionTrackBody = z.infer<typeof attributionTrackBodySchema>;
 export type OtpSendBody = z.infer<typeof otpSendBodySchema>;
 export type OtpVerifyBody = z.infer<typeof otpVerifyBodySchema>;
 

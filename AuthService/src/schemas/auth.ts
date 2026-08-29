@@ -31,16 +31,25 @@ export const deviceInfoSchema = z.object({
   permissions: z.record(z.boolean()).optional(),
 }).optional();
 
+export const attributionSchema = z.object({
+  source: z.string().trim().min(1).max(32).optional(),
+  campaignId: z.string().trim().min(1).max(128).optional(),
+  adsetId: z.string().trim().min(1).max(128).optional(),
+  adId: z.string().trim().min(1).max(128).optional(),
+}).optional();
+
 export const customerLoginBodySchema = z.object({
   firebaseToken: z.string().trim().min(20),
   deviceId: deviceIdSchema,
   guestId: guestIdOptionalSchema,
   deviceInfo: deviceInfoSchema,
+  attribution: attributionSchema,
 });
 
 export const guestInitBodySchema = z.object({
   deviceId: deviceIdSchema,
   deviceInfo: deviceInfoSchema,
+  attribution: attributionSchema,
 });
 
 export const tokenResponseSchema = z.object({
@@ -121,6 +130,19 @@ export const otpVerifyBodySchema = z.object({
   deviceId: deviceIdSchema,
   guestId: guestIdOptionalSchema,
   deviceInfo: deviceInfoSchema,
+  attribution: attributionSchema,
+});
+
+// guestId is optional at the schema level — required only when the caller has
+// no auth token, which the route handler checks explicitly (it knows whether
+// a bearer token was present, the schema doesn't).
+export const attributionTrackBodySchema = z.object({
+  eventType: z.enum(["install", "reengagement"]),
+  source: z.string().trim().min(1).max(32),
+  campaignId: z.string().trim().min(1).max(128).optional(),
+  adsetId: z.string().trim().min(1).max(128).optional(),
+  adId: z.string().trim().min(1).max(128).optional(),
+  guestId: guestIdOptionalSchema,
 });
 
 export const otpSendResponseSchema = z.object({
@@ -156,6 +178,8 @@ export const updatePasswordSchema = z.object({
   newPassword: z.string().trim().min(8),
 });
 
+export type Attribution = z.infer<typeof attributionSchema>;
+export type AttributionTrackBody = z.infer<typeof attributionTrackBodySchema>;
 export type OtpSendBody = z.infer<typeof otpSendBodySchema>;
 export type OtpVerifyBody = z.infer<typeof otpVerifyBodySchema>;
 export type AdminLoginBody = z.infer<typeof adminLoginBodySchema>;
