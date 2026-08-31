@@ -60,6 +60,10 @@ export const tokenResponseSchema = z.object({
   tokenType: z.literal("Bearer").default("Bearer"),
   roles: z.array(z.string()).optional(),
   permissions: z.array(z.string()).optional(),
+  // Only meaningful for customer login/registration (DLT + Firebase) — true
+  // only on a user's very first-ever registration. Absent for admin login,
+  // guest tokens, and refresh, since "new user" doesn't apply there.
+  isNewUser: z.boolean().optional(),
 });
 
 export const guestInitResponseSchema = z.object({

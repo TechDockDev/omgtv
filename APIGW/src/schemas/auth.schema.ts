@@ -74,6 +74,9 @@ export const tokenResponseSchema = z.object({
   tokenType: z.literal("Bearer"),
   roles: z.array(z.string()).optional(),
   permissions: z.array(z.string()).optional(),
+  // Only meaningful for customer login/registration — true only on a user's
+  // very first-ever registration. Absent for admin login, guest tokens, refresh.
+  isNewUser: z.boolean().optional(),
 });
 
 export const guestInitDataSchema = z.object({

@@ -355,7 +355,8 @@ export async function authenticateCustomerDlt(params: {
     deviceId,
   };
 
-  return issueSessionTokens({ prisma, redis, subjectId: identity.subjectId, payload, signAccessToken, deviceId });
+  const tokens = await issueSessionTokens({ prisma, redis, subjectId: identity.subjectId, payload, signAccessToken, deviceId });
+  return { ...tokens, isNewUser: identity.isNewUser };
 }
 
 async function ensureGuestSubject(params: {
@@ -740,7 +741,7 @@ export async function authenticateCustomer(params: {
     deviceId,
   };
 
-  return issueSessionTokens({
+  const tokens = await issueSessionTokens({
     prisma,
     redis,
     subjectId: identity.subjectId,
@@ -748,6 +749,7 @@ export async function authenticateCustomer(params: {
     signAccessToken,
     deviceId,
   });
+  return { ...tokens, isNewUser: identity.isNewUser };
 }
 
 export async function initializeGuest(params: {
