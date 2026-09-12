@@ -332,7 +332,24 @@ export async function authenticateCustomerDlt(params: {
     trackAuthEvent(identity.customerId, "first_time_register", {
       auth_provider: "DLT",
       phone: phoneNumber,
-      $set: { phone: phoneNumber },
+      ...(resolvedAttribution ? {
+        attribution_source: resolvedAttribution.source,
+        campaign_id: resolvedAttribution.campaignId,
+        adset_id: resolvedAttribution.adsetId,
+        ad_id: resolvedAttribution.adId,
+      } : {}),
+      // $set writes these onto the PostHog person profile, not just this
+      // event, so acquisition-channel breakdowns work across every funnel
+      // step for this user, not just this one event.
+      $set: {
+        phone: phoneNumber,
+        ...(resolvedAttribution ? {
+          attribution_source: resolvedAttribution.source,
+          campaign_id: resolvedAttribution.campaignId,
+          adset_id: resolvedAttribution.adsetId,
+          ad_id: resolvedAttribution.adId,
+        } : {}),
+      },
     });
   }
 
@@ -715,7 +732,24 @@ export async function authenticateCustomer(params: {
   if (identity.isNewUser) {
     trackAuthEvent(identity.customerId, "first_time_register", {
       auth_provider: "FIREBASE",
-      $set: phoneNumber ? { phone: phoneNumber } : undefined,
+      ...(resolvedAttribution ? {
+        attribution_source: resolvedAttribution.source,
+        campaign_id: resolvedAttribution.campaignId,
+        adset_id: resolvedAttribution.adsetId,
+        ad_id: resolvedAttribution.adId,
+      } : {}),
+      // $set writes these onto the PostHog person profile, not just this
+      // event, so acquisition-channel breakdowns work across every funnel
+      // step for this user, not just this one event.
+      $set: {
+        ...(phoneNumber ? { phone: phoneNumber } : {}),
+        ...(resolvedAttribution ? {
+          attribution_source: resolvedAttribution.source,
+          campaign_id: resolvedAttribution.campaignId,
+          adset_id: resolvedAttribution.adsetId,
+          ad_id: resolvedAttribution.adId,
+        } : {}),
+      },
     });
   }
 
