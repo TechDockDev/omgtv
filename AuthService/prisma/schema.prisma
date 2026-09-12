@@ -75,6 +75,7 @@ model CustomerIdentity {
   campaignId         String?
   adsetId            String?
   adId               String?
+  contentId          String? // series/episode/reel the deep link pointed to
 }
 
 model GuestIdentity {
@@ -95,6 +96,7 @@ model GuestIdentity {
   campaignId         String?
   adsetId            String?
   adId               String?
+  contentId          String? // series/episode/reel the deep link pointed to
 
   @@unique([guestId, deviceId])
 }
@@ -111,6 +113,7 @@ model AttributionEvent {
   campaignId String?
   adsetId    String?
   adId       String?
+  contentId  String? // series/episode/reel the deep link pointed to
   occurredAt DateTime @default(now())
 
   @@index([customerId])

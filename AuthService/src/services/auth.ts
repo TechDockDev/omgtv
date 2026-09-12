@@ -198,6 +198,7 @@ async function upsertCustomerSubject(params: {
             campaignId: attribution?.campaignId,
             adsetId: attribution?.adsetId,
             adId: attribution?.adId,
+            contentId: attribution?.contentId,
           },
         },
       },
@@ -259,6 +260,7 @@ async function upsertCustomerSubjectByPhone(params: {
             campaignId: attribution?.campaignId,
             adsetId: attribution?.adsetId,
             adId: attribution?.adId,
+            contentId: attribution?.contentId,
           },
         },
       },
@@ -310,12 +312,13 @@ export async function authenticateCustomerDlt(params: {
     : null;
 
   const resolvedAttribution: Attribution | undefined =
-    guestIdentity?.campaignId || guestIdentity?.adsetId || guestIdentity?.adId || guestIdentity?.attributionSource
+    guestIdentity?.campaignId || guestIdentity?.adsetId || guestIdentity?.adId || guestIdentity?.attributionSource || guestIdentity?.contentId
       ? {
           source: guestIdentity.attributionSource ?? undefined,
           campaignId: guestIdentity.campaignId ?? undefined,
           adsetId: guestIdentity.adsetId ?? undefined,
           adId: guestIdentity.adId ?? undefined,
+          contentId: guestIdentity.contentId ?? undefined,
         }
       : attribution;
 
@@ -424,6 +427,7 @@ async function ensureGuestSubject(params: {
             campaignId: attribution?.campaignId,
             adsetId: attribution?.adsetId,
             adId: attribution?.adId,
+            contentId: attribution?.contentId,
           },
         },
       },
@@ -709,12 +713,13 @@ export async function authenticateCustomer(params: {
     : null;
 
   const resolvedAttribution: Attribution | undefined =
-    guestIdentity?.campaignId || guestIdentity?.adsetId || guestIdentity?.adId || guestIdentity?.attributionSource
+    guestIdentity?.campaignId || guestIdentity?.adsetId || guestIdentity?.adId || guestIdentity?.attributionSource || guestIdentity?.contentId
       ? {
           source: guestIdentity.attributionSource ?? undefined,
           campaignId: guestIdentity.campaignId ?? undefined,
           adsetId: guestIdentity.adsetId ?? undefined,
           adId: guestIdentity.adId ?? undefined,
+          contentId: guestIdentity.contentId ?? undefined,
         }
       : attribution;
 
@@ -865,12 +870,13 @@ export async function recordAttributionEvent(params: {
   campaignId?: string;
   adsetId?: string;
   adId?: string;
+  contentId?: string;
   guestId?: string;
   customerId?: string;
 }): Promise<void> {
-  const { prisma, eventType, source, campaignId, adsetId, adId, guestId, customerId } = params;
+  const { prisma, eventType, source, campaignId, adsetId, adId, contentId, guestId, customerId } = params;
   await prisma.attributionEvent.create({
-    data: { eventType, source, campaignId, adsetId, adId, guestId, customerId },
+    data: { eventType, source, campaignId, adsetId, adId, contentId, guestId, customerId },
   });
 }
 

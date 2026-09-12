@@ -41,6 +41,7 @@ export const attributionSchema = z.object({
   campaignId: z.string().trim().min(1).max(128).optional(),
   adsetId: z.string().trim().min(1).max(128).optional(),
   adId: z.string().trim().min(1).max(128).optional(),
+  contentId: z.string().trim().min(1).max(128).optional(),
 }).optional();
 
 export const customerLoginBodySchema = z.object({
@@ -63,6 +64,7 @@ export const attributionTrackBodySchema = z.object({
   campaignId: z.string().trim().min(1).max(128).optional(),
   adsetId: z.string().trim().min(1).max(128).optional(),
   adId: z.string().trim().min(1).max(128).optional(),
+  contentId: z.string().trim().min(1).max(128).optional(),
   guestId: guestIdOptionalSchema,
 });
 

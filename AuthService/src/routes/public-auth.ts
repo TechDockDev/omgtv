@@ -397,6 +397,7 @@ export default fp(async function publicAuthRoutes(fastify: FastifyInstance) {
           campaignId: body.campaignId,
           adsetId: body.adsetId,
           adId: body.adId,
+          contentId: body.contentId,
           guestId: customerId ? undefined : body.guestId,
           customerId,
         });
