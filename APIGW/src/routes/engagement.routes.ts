@@ -27,6 +27,29 @@ import {
   addReviewSuccessResponseSchema,
   type AddReviewBody,
   type AddReviewResponse,
+  submitReportBodySchema,
+  submitReportSuccessResponseSchema,
+  type SubmitReportBody,
+  type SubmitReportResponse,
+  reportStatusQuerySchema,
+  reportStatusSuccessResponseSchema,
+  type ReportStatusResponse,
+  myReportsQuerySchema,
+  myReportsListSuccessResponseSchema,
+  type MyReportsQuery,
+  type MyReportsListResponse,
+  adminReportListQuerySchema,
+  adminReportListSuccessResponseSchema,
+  type AdminReportListQuery,
+  type AdminReportListResponse,
+  adminReportIdParamsSchema,
+  adminReportSuccessResponseSchema,
+  type AdminReportItem,
+  adminReportUpdateBodySchema,
+  type AdminReportUpdateBody,
+  adminReportStatsQuerySchema,
+  adminReportStatsSuccessResponseSchema,
+  type AdminReportStatsResponse,
 } from "../schemas/engagement.schema";
 import { errorResponseSchema } from "../schemas/base.schema";
 import {
@@ -59,6 +82,13 @@ import {
   saveProgress,
   getProgress,
   addReviewProxy,
+  submitReportProxy,
+  getReportStatusProxy,
+  listMyReportsProxy,
+  listContentReportsProxy,
+  getContentReportProxy,
+  updateContentReportProxy,
+  getContentReportStatsProxy,
   getUserContentStatsProxy,
   getGeneralDashboardStatsProxy,
   getCustomAdAnalyticsProxy,
@@ -1201,6 +1231,233 @@ export default async function engagementRoutes(fastify: FastifyInstance) {
       const { id } = engagementIdParamsSchema.parse(request.params);
       const body = addReviewBodySchema.parse(request.body);
       return addReviewProxy(
+        id,
+        body,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // Report content / grievance — public, no login required
+  fastify.route<{
+    Body: SubmitReportBody;
+    Reply: SubmitReportResponse;
+  }>({
+    method: "POST",
+    url: "/client/reports",
+    schema: {
+      body: submitReportBodySchema,
+      response: {
+        200: submitReportSuccessResponseSchema,
+        400: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: true },
+      rateLimitPolicy: "anonymous",
+      security: { bodyLimit: 8 * 1024 },
+    },
+    async handler(request) {
+      const body = submitReportBodySchema.parse(request.body);
+      return submitReportProxy(
+        body,
+        request.correlationId,
+        request.user,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // Check complaint status — public
+  fastify.route<{
+    Params: { ticketId: string };
+    Querystring: { email: string };
+    Reply: ReportStatusResponse;
+  }>({
+    method: "GET",
+    url: "/client/reports/:ticketId/status",
+    schema: {
+      params: z.object({ ticketId: z.string().min(1) }),
+      querystring: reportStatusQuerySchema,
+      response: {
+        200: reportStatusSuccessResponseSchema,
+        400: errorResponseSchema,
+        404: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: true },
+      rateLimitPolicy: "anonymous",
+    },
+    async handler(request) {
+      const { ticketId } = z.object({ ticketId: z.string().min(1) }).parse(request.params);
+      const { email } = reportStatusQuerySchema.parse(request.query);
+      return getReportStatusProxy(
+        ticketId,
+        email,
+        request.correlationId,
+        request.user,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // List my own complaints — requires login
+  fastify.route<{
+    Querystring: MyReportsQuery;
+    Reply: MyReportsListResponse;
+  }>({
+    method: "GET",
+    url: "/client/reports",
+    schema: {
+      querystring: myReportsQuerySchema,
+      response: {
+        200: myReportsListSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: authenticatedConfig,
+    preHandler: [fastify.authorize(["user", "admin", "guest"])],
+    async handler(request) {
+      const query = myReportsQuerySchema.parse(request.query);
+      return listMyReportsProxy(
+        query,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  // --- Admin: Complaint Dashboard ---
+
+  fastify.route<{
+    Querystring: AdminReportListQuery;
+    Reply: AdminReportListResponse;
+  }>({
+    method: "GET",
+    url: "/admin/reports",
+    schema: {
+      querystring: adminReportListQuerySchema,
+      response: {
+        200: adminReportListSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "admin" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request) {
+      const query = adminReportListQuerySchema.parse(request.query);
+      return listContentReportsProxy(
+        query,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Querystring: { month?: string };
+    Reply: AdminReportStatsResponse;
+  }>({
+    method: "GET",
+    url: "/admin/reports/stats",
+    schema: {
+      querystring: adminReportStatsQuerySchema,
+      response: {
+        200: adminReportStatsSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "admin" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request) {
+      const { month } = adminReportStatsQuerySchema.parse(request.query);
+      return getContentReportStatsProxy(
+        month,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Params: { id: string };
+    Reply: AdminReportItem;
+  }>({
+    method: "GET",
+    url: "/admin/reports/:id",
+    schema: {
+      params: adminReportIdParamsSchema,
+      response: {
+        200: adminReportSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        404: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "admin" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request) {
+      const { id } = adminReportIdParamsSchema.parse(request.params);
+      return getContentReportProxy(
+        id,
+        request.correlationId,
+        request.user!,
+        request.telemetrySpan
+      );
+    },
+  });
+
+  fastify.route<{
+    Params: { id: string };
+    Body: AdminReportUpdateBody;
+    Reply: AdminReportItem;
+  }>({
+    method: "PATCH",
+    url: "/admin/reports/:id",
+    schema: {
+      params: adminReportIdParamsSchema,
+      body: adminReportUpdateBodySchema,
+      response: {
+        200: adminReportSuccessResponseSchema,
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        404: errorResponseSchema,
+        500: errorResponseSchema,
+      },
+    },
+    config: {
+      auth: { public: false },
+      rateLimitPolicy: "admin" as const,
+    },
+    preHandler: [fastify.authorize(["admin"])],
+    async handler(request) {
+      const { id } = adminReportIdParamsSchema.parse(request.params);
+      const body = adminReportUpdateBodySchema.parse(request.body);
+      return updateContentReportProxy(
         id,
         body,
         request.correlationId,

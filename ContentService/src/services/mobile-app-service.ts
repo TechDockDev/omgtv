@@ -93,6 +93,7 @@ type CarouselEntryView = {
   thumbnailUrl: string | null;
   videoUrl: string | null;
   rating: number | null;
+  age_rating?: string | null;
   series_id: string | null;
   engagement?: {
     likeCount: number;
@@ -339,6 +340,7 @@ export class MobileAppService {
         watchedDuration: null,
         progress: null,
         rating: engagement?.averageRating ?? null,
+        age_rating: (t.series as any).ageRating ?? null,
         lastWatchedAt: null,
         series_id: t.series.id,
         engagement: engagement ?? DEFAULT_ENGAGEMENT,
@@ -515,6 +517,7 @@ export class MobileAppService {
         totalEpisodes: s.totalEpisodes,
         totalDurationSeconds: s.totalDurationSeconds,
         rating: engagement?.averageRating ?? null,
+        age_rating: s.ageRating ?? null,
         engagement: engagement ?? DEFAULT_ENGAGEMENT,
         is_audio_series: true as const,
       };
@@ -833,6 +836,7 @@ export class MobileAppService {
       thumbnailUrl: series.heroImageUrl ?? series.bannerImageUrl ?? null,
       videoUrl: null,
       rating: engagementRating ?? null,
+      age_rating: (series as any).ageRating ?? null,
       series_id: series.id,
       is_audio_series: series.isAudioSeries,
     } satisfies CarouselEntryView;
@@ -869,6 +873,7 @@ export class MobileAppService {
       thumbnailUrl: item.heroImageUrl ?? item.defaultThumbnailUrl,
       videoUrl: item.playback.manifestUrl,
       rating: engagementRating ?? item.ratings.average,
+      age_rating: item.series.ageRating ?? null,
       series_id: item.series.id,
       is_audio_series: item.series.isAudioSeries,
     } satisfies CarouselEntryView;
@@ -930,6 +935,7 @@ export class MobileAppService {
         is_completed: progress?.is_completed ?? false,
       },
       rating: item.ratings.average,
+      age_rating: item.series.ageRating ?? null,
       is_audio_series: item.series.isAudioSeries,
     };
   }
@@ -959,6 +965,7 @@ export class MobileAppService {
       watchedDuration: this.formatDuration(watchedSeconds),
       progress: progressRatio,
       rating: engagementRating ?? item.ratings.average,
+      age_rating: item.series.ageRating ?? null,
       lastWatchedAt: progress?.last_watched_at ?? null,
       series_id: item.series.id,
       // Internal fields for grouping
@@ -1214,6 +1221,7 @@ export class MobileAppService {
       banner: detail.series.bannerImageUrl,
       tags: detail.series.tags,
       category: detail.series.category?.name ?? null,
+      age_rating: detail.series.ageRating ?? null,
       is_subscribed: isSubscribed,
       is_trial: isTrial,
       is_locked: !detail.series.isFree && !isSubscribed && !isTrial,

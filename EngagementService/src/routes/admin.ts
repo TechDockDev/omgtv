@@ -7,6 +7,13 @@ import {
     getCustomAdAnalytics,
 } from "../services/admin-analytics";
 import { getReviews, deleteReview } from "../services/collection-engagement";
+import {
+    listContentReports,
+    getContentReportById,
+    updateContentReport,
+    getContentReportStats,
+} from "../services/content-report-admin-service";
+import { ReportStatus } from "@prisma/client";
 import { getSeriesAnalyticsReport, seriesAnalyticsToCsv } from "../services/series-analytics";
 import { getEpisodeAnalytics } from "../services/episode-analytics";
 import { getPlatformEngagement } from "../services/platform-engagement";
@@ -409,6 +416,87 @@ export default async function adminRoutes(fastify: FastifyInstance) {
                 contentType: result.contentType,
                 contentId: result.contentId,
             };
+        },
+    });
+
+    // --- Complaint Dashboard ---
+
+    const reportIdParamsSchema = z.object({
+        id: z.string().uuid(),
+    });
+
+    const reportListQuerySchema = z.object({
+        status: z.nativeEnum(ReportStatus).optional(),
+        overdueOnly: z.coerce.boolean().optional(),
+        search: z.string().optional(),
+        page: z.coerce.number().min(1).default(1),
+        limit: z.coerce.number().min(1).max(100).default(20),
+    });
+
+    fastify.get("/reports", {
+        schema: { querystring: reportListQuerySchema },
+        handler: async (request) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+            const query = reportListQuerySchema.parse(request.query);
+            return listContentReports({ prisma, ...query });
+        },
+    });
+
+    fastify.get("/reports/stats", {
+        schema: { querystring: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() }) },
+        handler: async (request) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+            const { month } = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() }).parse(request.query);
+            return getContentReportStats({ prisma, month });
+        },
+    });
+
+    fastify.get("/reports/:id", {
+        schema: { params: reportIdParamsSchema },
+        handler: async (request, reply) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+            const { id } = reportIdParamsSchema.parse(request.params);
+            const report = await getContentReportById({ prisma, id });
+            if (!report) {
+                return reply.code(404).send({ error: "Report not found" });
+            }
+            return report;
+        },
+    });
+
+    const updateReportBodySchema = z.object({
+        status: z.nativeEnum(ReportStatus).optional(),
+        response: z.string().min(1).max(4000).optional(),
+    });
+
+    fastify.patch("/reports/:id", {
+        schema: { params: reportIdParamsSchema, body: updateReportBodySchema },
+        handler: async (request, reply) => {
+            if (!prisma) {
+                throw fastify.httpErrors.serviceUnavailable("Database not available");
+            }
+            const { id } = reportIdParamsSchema.parse(request.params);
+            const body = updateReportBodySchema.parse(request.body);
+            const respondedByHeader = request.headers["x-user-id"];
+            const respondedBy = typeof respondedByHeader === "string" && respondedByHeader ? respondedByHeader : undefined;
+
+            const updated = await updateContentReport({
+                prisma,
+                id,
+                status: body.status,
+                response: body.response,
+                respondedBy,
+            });
+            if (!updated) {
+                return reply.code(404).send({ error: "Report not found" });
+            }
+            return updated;
         },
     });
 }

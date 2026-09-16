@@ -21,6 +21,14 @@ enum Visibility {
   PRIVATE
 }
 
+enum AgeRating {
+  U
+  U_A_7
+  U_A_13
+  U_A_16
+  A
+}
+
 enum MediaAssetStatus {
   PENDING
   UPLOADED  // File uploaded but processing not started
@@ -73,6 +81,7 @@ model Series {
   swipeAdFrequency Int               @default(0)
   status           PublicationStatus @default(DRAFT)
   visibility       Visibility        @default(PUBLIC)
+  ageRating        AgeRating?
   releaseDate      DateTime?
   ownerId          String
   categoryId       String?

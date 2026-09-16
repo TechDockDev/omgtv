@@ -9,8 +9,20 @@ export type CustomerDetailsFnResult = {
 };
 
 import { authPrisma } from "../lib/auth-prisma";
+import { AuthClient, OtpClientError } from "../clients/auth-client";
+import { hashPin, verifyPinHash } from "../utils/pin";
 
 export { authPrisma };
+
+export class PinError extends Error {
+    constructor(message: string, public readonly code: "NO_PHONE" | "OTP_FAILED" | "NO_PIN" | "LOCKED" | "INVALID_PIN") {
+        super(message);
+        this.name = "PinError";
+    }
+}
+
+const PIN_MAX_ATTEMPTS = 5;
+const PIN_LOCKOUT_MS = 5 * 60 * 1000;
 
 export class CustomerService {
     constructor(private readonly prisma: PrismaClient) { }
@@ -236,5 +248,99 @@ export class CustomerService {
             }));
 
         return tokens;
+    }
+
+    // --- Parental PIN ---
+
+    private async getProfileWithPhone(userId: string): Promise<{ firebaseUid: string; profile: Awaited<ReturnType<PrismaClient["customerProfile"]["findUnique"]>> }> {
+        const firebaseUid = await this.getFirebaseUid(userId);
+        if (!firebaseUid) {
+            throw new PinError("User not found or not a customer", "NO_PHONE");
+        }
+        const profile = await this.prisma.customerProfile.findUnique({ where: { firebaseUid } });
+        return { firebaseUid, profile };
+    }
+
+    async getPinStatus(userId: string): Promise<{ hasPin: boolean }> {
+        const { profile } = await this.getProfileWithPhone(userId);
+        return { hasPin: Boolean(profile?.pinHash) };
+    }
+
+    async sendPinOtp(userId: string): Promise<{ expiresIn: number }> {
+        const { profile } = await this.getProfileWithPhone(userId);
+        if (!profile?.phoneNumber) {
+            throw new PinError("No phone number on file for this account", "NO_PHONE");
+        }
+
+        try {
+            return await new AuthClient().sendOtp(profile.phoneNumber);
+        } catch (err) {
+            if (err instanceof OtpClientError) {
+                throw new PinError(err.message, "OTP_FAILED");
+            }
+            throw err;
+        }
+    }
+
+    async setPin(userId: string, pin: string, otp: string): Promise<void> {
+        const { firebaseUid, profile } = await this.getProfileWithPhone(userId);
+        if (!profile?.phoneNumber) {
+            throw new PinError("No phone number on file for this account", "NO_PHONE");
+        }
+
+        try {
+            await new AuthClient().verifyOtp(profile.phoneNumber, otp);
+        } catch (err) {
+            if (err instanceof OtpClientError) {
+                throw new PinError(err.message, "OTP_FAILED");
+            }
+            throw err;
+        }
+
+        const pinHash = await hashPin(pin);
+        await this.prisma.customerProfile.update({
+            where: { firebaseUid },
+            data: {
+                pinHash,
+                pinUpdatedAt: new Date(),
+                pinFailedAttempts: 0,
+                pinLockedUntil: null,
+            },
+        });
+    }
+
+    async verifyPin(userId: string, pin: string): Promise<{ valid: true }> {
+        const { firebaseUid, profile } = await this.getProfileWithPhone(userId);
+        if (!profile?.pinHash) {
+            throw new PinError("PIN not set for this account", "NO_PIN");
+        }
+
+        if (profile.pinLockedUntil && profile.pinLockedUntil > new Date()) {
+            throw new PinError("Too many incorrect attempts. Try again later.", "LOCKED");
+        }
+
+        const valid = await verifyPinHash(pin, profile.pinHash);
+        if (!valid) {
+            const attempts = profile.pinFailedAttempts + 1;
+            const lockedOut = attempts >= PIN_MAX_ATTEMPTS;
+            await this.prisma.customerProfile.update({
+                where: { firebaseUid },
+                data: {
+                    pinFailedAttempts: lockedOut ? 0 : attempts,
+                    pinLockedUntil: lockedOut ? new Date(Date.now() + PIN_LOCKOUT_MS) : null,
+                },
+            });
+            throw new PinError(
+                lockedOut ? "Too many incorrect attempts. Try again later." : "Incorrect PIN",
+                lockedOut ? "LOCKED" : "INVALID_PIN"
+            );
+        }
+
+        await this.prisma.customerProfile.update({
+            where: { firebaseUid },
+            data: { pinFailedAttempts: 0, pinLockedUntil: null },
+        });
+
+        return { valid: true };
     }
 }

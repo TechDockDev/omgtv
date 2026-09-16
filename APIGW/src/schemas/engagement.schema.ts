@@ -254,4 +254,161 @@ export const addReviewSuccessResponseSchema = createSuccessResponseSchema(
 export type AddReviewBody = z.infer<typeof addReviewBodySchema>;
 export type AddReviewResponse = z.infer<typeof addReviewResponseSchema>;
 
+// Report content / grievance
+export const submitReportBodySchema = z.object({
+  reporter_name: z.string().trim().min(1).max(200),
+  reporter_email: z.string().trim().email(),
+  movie_show_name: z.string().trim().min(1).max(300),
+  episode_name: z.string().trim().min(1).max(300).optional(),
+  video_timestamp: z.string().trim().min(1).max(50),
+  reason: z.string().trim().min(1).max(2000),
+});
+
+export const submitReportResponseSchema = z.object({
+  ticket_id: z.string(),
+});
+
+export const submitReportSuccessResponseSchema = createSuccessResponseSchema(
+  submitReportResponseSchema
+);
+
+export type SubmitReportBody = z.infer<typeof submitReportBodySchema>;
+export type SubmitReportResponse = z.infer<typeof submitReportResponseSchema>;
+
+// Public: check complaint status
+export const reportStatusQuerySchema = z.object({
+  email: z.string().trim().email(),
+});
+
+export const reportStatusResponseSchema = z.object({
+  ticketId: z.string(),
+  status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]),
+  movieShowName: z.string(),
+  response: z.string().nullable(),
+  respondedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export const reportStatusSuccessResponseSchema = createSuccessResponseSchema(
+  reportStatusResponseSchema
+);
+
+export type ReportStatusQuery = z.infer<typeof reportStatusQuerySchema>;
+export type ReportStatusResponse = z.infer<typeof reportStatusResponseSchema>;
+
+// Authenticated: list my own complaints
+export const myReportsQuerySchema = z.object({
+  page: z.coerce.number().min(1).optional().default(1),
+  limit: z.coerce.number().min(1).max(100).optional().default(20),
+});
+
+export const myReportItemSchema = z.object({
+  ticketId: z.string(),
+  status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]),
+  movieShowName: z.string(),
+  episodeName: z.string().nullable(),
+  videoTimestamp: z.string(),
+  reason: z.string(),
+  response: z.string().nullable(),
+  respondedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export const myReportsListResponseSchema = z.object({
+  items: z.array(myReportItemSchema),
+  pagination: z.object({
+    total: z.number(),
+    page: z.number(),
+    limit: z.number(),
+    totalPages: z.number(),
+  }),
+});
+
+export const myReportsListSuccessResponseSchema = createSuccessResponseSchema(
+  myReportsListResponseSchema
+);
+
+export type MyReportsQuery = z.infer<typeof myReportsQuerySchema>;
+export type MyReportsListResponse = z.infer<typeof myReportsListResponseSchema>;
+
+// Admin: Complaint dashboard
+export const adminReportListQuerySchema = z.object({
+  status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]).optional(),
+  overdueOnly: z.coerce.boolean().optional(),
+  search: z.string().optional(),
+  page: z.coerce.number().min(1).optional().default(1),
+  limit: z.coerce.number().min(1).max(100).optional().default(20),
+});
+
+export const adminReportItemSchema = z.object({
+  id: z.string(),
+  ticketId: z.string(),
+  userId: z.string().nullable(),
+  reporterName: z.string(),
+  reporterEmail: z.string(),
+  movieShowName: z.string(),
+  episodeName: z.string().nullable(),
+  videoTimestamp: z.string(),
+  reason: z.string(),
+  status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]),
+  emailSent: z.boolean(),
+  dueAt: z.string(),
+  response: z.string().nullable(),
+  respondedAt: z.string().nullable(),
+  respondedBy: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  isOverdue: z.boolean(),
+  daysRemaining: z.number(),
+});
+
+export const adminReportListResponseSchema = z.object({
+  items: z.array(adminReportItemSchema),
+  pagination: z.object({
+    total: z.number(),
+    page: z.number(),
+    limit: z.number(),
+    totalPages: z.number(),
+  }),
+});
+
+export const adminReportListSuccessResponseSchema = createSuccessResponseSchema(
+  adminReportListResponseSchema
+);
+
+export const adminReportSuccessResponseSchema = createSuccessResponseSchema(
+  adminReportItemSchema
+);
+
+export const adminReportIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const adminReportUpdateBodySchema = z.object({
+  status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]).optional(),
+  response: z.string().trim().min(1).max(4000).optional(),
+});
+
+export const adminReportStatsQuerySchema = z.object({
+  month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+});
+
+export const adminReportStatsResponseSchema = z.object({
+  month: z.string(),
+  totalComplaints: z.number(),
+  resolvedComplaints: z.number(),
+  pendingComplaints: z.number(),
+  overdueComplaints: z.number(),
+});
+
+export const adminReportStatsSuccessResponseSchema = createSuccessResponseSchema(
+  adminReportStatsResponseSchema
+);
+
+export type AdminReportListQuery = z.infer<typeof adminReportListQuerySchema>;
+export type AdminReportItem = z.infer<typeof adminReportItemSchema>;
+export type AdminReportListResponse = z.infer<typeof adminReportListResponseSchema>;
+export type AdminReportUpdateBody = z.infer<typeof adminReportUpdateBodySchema>;
+export type AdminReportStatsResponse = z.infer<typeof adminReportStatsResponseSchema>;
+
 

@@ -1,4 +1,5 @@
 import {
+  AgeRating,
   Category,
   Episode,
   MediaAsset,
@@ -558,6 +559,7 @@ export class CatalogService {
       tags?: string[];
       status?: PublicationStatus;
       visibility?: Visibility;
+      ageRating?: AgeRating;
       releaseDate?: Date | null;
       ownerId?: string;
       categoryId?: string | null;
@@ -629,6 +631,7 @@ export class CatalogService {
         tags,
         status: input.status,
         visibility: input.visibility,
+        ageRating: input.ageRating,
         releaseDate: input.releaseDate ?? null,
         ownerId: input.ownerId ?? adminId ?? this.defaultOwnerId,
         categoryId: input.categoryId ?? null,
@@ -722,6 +725,7 @@ export class CatalogService {
       tags?: string[];
       status?: PublicationStatus;
       visibility?: Visibility;
+      ageRating?: AgeRating;
       releaseDate?: Date | null;
       categoryId?: string | null;
       slug?: string;
@@ -782,6 +786,7 @@ export class CatalogService {
         tags,
         status: input.status,
         visibility: input.visibility,
+        ageRating: input.ageRating,
         releaseDate: input.releaseDate,
         categoryId: input.categoryId,
         slug: input.slug,

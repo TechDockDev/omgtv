@@ -52,6 +52,7 @@ export type ViewerFeedItem = {
     } | null;
     isAudioSeries: boolean;
     tags: string[];
+    ageRating: string | null;
   };
   playback: {
     status: MediaAssetStatus;
@@ -101,6 +102,7 @@ export type SeriesDetailResponse = {
     heroImageUrl: string | null;
     bannerImageUrl: string | null;
     tags: string[];
+    ageRating: string | null;
     releaseDate: string | null;
     isFree: boolean;
     adOnSeriesOpen: boolean;
@@ -140,6 +142,7 @@ export type RelatedSeriesResponse = {
     synopsis: string | null;
     heroImageUrl: string | null;
     bannerImageUrl: string | null;
+    ageRating: string | null;
     category: {
       id: string;
       slug: string;
@@ -278,6 +281,7 @@ export function buildFeedItem(
         : null,
       isAudioSeries: episode.series.isAudioSeries,
       tags: episode.series.tags,
+      ageRating: episode.series.ageRating ?? null,
     },
     isFree: episode.isFree || episode.series.isFree,
     isTrial: (episode as any).isTrial ?? true,
@@ -631,6 +635,7 @@ export class ViewerCatalogService {
             heroImageUrl: ensureCdnUrl(series.heroImageUrl ?? null),
             bannerImageUrl: ensureCdnUrl(series.bannerImageUrl ?? null),
             tags: series.tags,
+            ageRating: (series as any).ageRating ?? null,
             releaseDate: series.releaseDate?.toISOString() ?? null,
             isFree: series.isFree,
             adOnSeriesOpen: (series as any).adOnSeriesOpen ?? false,
@@ -722,6 +727,7 @@ export class ViewerCatalogService {
             synopsis: entry.synopsis ?? null,
             heroImageUrl: ensureCdnUrl(entry.heroImageUrl ?? null),
             bannerImageUrl: ensureCdnUrl(entry.bannerImageUrl ?? null),
+            ageRating: (entry as any).ageRating ?? null,
             category: entry.category
               ? {
                 id: entry.category.id,
@@ -796,6 +802,7 @@ export class ViewerCatalogService {
         synopsis: series.synopsis ?? null,
         heroImageUrl: ensureCdnUrl(series.heroImageUrl || series.mediaAssets?.[0]?.defaultThumbnailUrl || null),
         bannerImageUrl: ensureCdnUrl(series.bannerImageUrl ?? null),
+        ageRating: (series as any).ageRating ?? null,
         totalEpisodes: (series as any)._count?.episodes ?? 0,
         category: series.category
           ? {
@@ -945,6 +952,7 @@ export class ViewerCatalogService {
                 : null,
               isAudioSeries: series.isAudioSeries,
               tags: series.tags,
+              ageRating: (series as any).ageRating ?? null,
             },
             playback: {
               status: MediaAssetStatus.READY, // Assume ready for series container
@@ -1055,6 +1063,7 @@ export class ViewerCatalogService {
                 : null,
               isAudioSeries: series.isAudioSeries,
               tags: series.tags,
+              ageRating: (series as any).ageRating ?? null,
             },
             playback: {
               status: MediaAssetStatus.READY,

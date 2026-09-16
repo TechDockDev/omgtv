@@ -94,16 +94,20 @@ model DeviceIdentity {
 }
 
 model CustomerProfile {
-  id           String               @id @default(uuid())
-  firebaseUid  String?              @unique
-  phoneNumber  String?              @unique
-  name         String?
-  email        String?
-  status       String               @default("active") // active, inactive, blocked
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
-  devices      CustomerDeviceLink[]
-  guestMigrations GuestProfile[]    @relation("GuestCustomerMigration")
+  id                String               @id @default(uuid())
+  firebaseUid       String?              @unique
+  phoneNumber       String?              @unique
+  name              String?
+  email             String?
+  status            String               @default("active") // active, inactive, blocked
+  pinHash           String?
+  pinUpdatedAt      DateTime?
+  pinFailedAttempts Int                  @default(0)
+  pinLockedUntil    DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  devices           CustomerDeviceLink[]
+  guestMigrations   GuestProfile[]       @relation("GuestCustomerMigration")
 }
 
 model CustomerDeviceLink {

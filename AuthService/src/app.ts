@@ -21,6 +21,7 @@ import adminSettingsRoutes from "./routes/admin-settings";
 import adminSecurityRoutes from "./routes/admin-security";
 import internalAdminRoutes from "./routes/internal-admin";
 import internalAnalyticsRoutes from "./routes/internal-analytics";
+import internalOtpRoutes from "./routes/internal-otp";
 import { buildJwks } from "./utils/jwks";
 import formbody from "@fastify/formbody";
 
@@ -66,6 +67,7 @@ export async function buildApp() {
   await fastify.register(adminSettingsRoutes, { prefix: "/api/v1/auth/admin" });
   await fastify.register(internalAdminRoutes);
   await fastify.register(internalAnalyticsRoutes);
+  await fastify.register(internalOtpRoutes);
 
   fastify.get("/health", async () => ({ status: "ok" }));
 

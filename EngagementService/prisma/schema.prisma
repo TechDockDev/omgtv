@@ -82,6 +82,37 @@ model Review {
   @@index([userId])
 }
 
+enum ReportStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+}
+
+model ContentReport {
+  id             String       @id @default(uuid())
+  ticketId       String       @unique
+  userId         String?
+  reporterName   String
+  reporterEmail  String
+  movieShowName  String
+  episodeName    String?
+  videoTimestamp String
+  reason         String
+  status         ReportStatus @default(OPEN)
+  emailSent      Boolean      @default(false)
+  dueAt          DateTime
+  response       String?
+  respondedAt    DateTime?
+  respondedBy    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([ticketId])
+  @@index([reporterEmail])
+  @@index([status])
+  @@index([dueAt])
+}
+
 model SearchHistory {
   id        String   @id @default(uuid())
   userId    String

@@ -29,6 +29,24 @@ import {
   addReviewResponseSchema,
   type AddReviewBody,
   type AddReviewResponse,
+  submitReportBodySchema,
+  submitReportResponseSchema,
+  type SubmitReportBody,
+  type SubmitReportResponse,
+  reportStatusResponseSchema,
+  type ReportStatusResponse,
+  adminReportListResponseSchema,
+  type AdminReportListQuery,
+  type AdminReportListResponse,
+  adminReportItemSchema,
+  type AdminReportItem,
+  adminReportUpdateBodySchema,
+  type AdminReportUpdateBody,
+  adminReportStatsResponseSchema,
+  type AdminReportStatsResponse,
+  myReportsListResponseSchema,
+  type MyReportsQuery,
+  type MyReportsListResponse,
 } from "../schemas/engagement.schema";
 import { z } from "zod";
 
@@ -911,6 +929,48 @@ export async function addReviewProxy(
   return parsed.data;
 }
 
+export async function submitReportProxy(
+  body: SubmitReportBody,
+  correlationId: string,
+  user: GatewayUser | undefined,
+  span?: Span
+): Promise<SubmitReportResponse> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const validatedBody = submitReportBodySchema.parse(body);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<SubmitReportResponse>({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/client/reports`,
+      method: "POST",
+      correlationId,
+      user,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:engagement:submitReport",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to submit report",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = submitReportResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+  return parsed.data;
+}
+
 // Admin: User Content Analytics
 export async function getUserContentStatsProxy(
   userId: string,
@@ -1171,4 +1231,263 @@ export async function syncStoreAnalyticsProxy(
   }
 
   return (payload as any)?.data ?? payload;
+}
+
+// Public: check complaint status
+export async function getReportStatusProxy(
+  ticketId: string,
+  email: string,
+  correlationId: string,
+  user: GatewayUser | undefined,
+  span?: Span
+): Promise<ReportStatusResponse> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const path = `/client/reports/${encodeURIComponent(ticketId)}/status?email=${encodeURIComponent(email)}`;
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<ReportStatusResponse>({
+      serviceName: "engagement",
+      baseUrl,
+      path,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:getReportStatus",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to fetch report status",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = reportStatusResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+  return parsed.data;
+}
+
+// Authenticated: list my own complaints
+export async function listMyReportsProxy(
+  query: MyReportsQuery,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<MyReportsListResponse> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const search = new URLSearchParams();
+  search.append("page", String(query.page));
+  search.append("limit", String(query.limit));
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<MyReportsListResponse>({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/client/reports?${search.toString()}`,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:listMyReports",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to list your complaints",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = myReportsListResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+  return parsed.data;
+}
+
+// Admin: Complaint dashboard
+export async function listContentReportsProxy(
+  query: AdminReportListQuery,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<AdminReportListResponse> {
+  const baseUrl = resolveServiceUrl("engagement");
+
+  const search = new URLSearchParams();
+  if (query.status) search.append("status", query.status);
+  if (query.overdueOnly !== undefined) search.append("overdueOnly", String(query.overdueOnly));
+  if (query.search) search.append("search", query.search);
+  search.append("page", String(query.page));
+  search.append("limit", String(query.limit));
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<AdminReportListResponse>({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/admin/reports?${search.toString()}`,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:listContentReports",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to list complaints",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = adminReportListResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+  return parsed.data;
+}
+
+export async function getContentReportProxy(
+  id: string,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<AdminReportItem> {
+  const baseUrl = resolveServiceUrl("engagement");
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<AdminReportItem>({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/admin/reports/${id}`,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:getContentReport",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to fetch complaint",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = adminReportItemSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+  return parsed.data;
+}
+
+export async function updateContentReportProxy(
+  id: string,
+  body: AdminReportUpdateBody,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<AdminReportItem> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const validatedBody = adminReportUpdateBodySchema.parse(body);
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<AdminReportItem>({
+      serviceName: "engagement",
+      baseUrl,
+      path: `/admin/reports/${id}`,
+      method: "PATCH",
+      correlationId,
+      user,
+      body: validatedBody,
+      parentSpan: span,
+      spanName: "proxy:engagement:updateContentReport",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to update complaint",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = adminReportItemSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+  return parsed.data;
+}
+
+export async function getContentReportStatsProxy(
+  month: string | undefined,
+  correlationId: string,
+  user: GatewayUser,
+  span?: Span
+): Promise<AdminReportStatsResponse> {
+  const baseUrl = resolveServiceUrl("engagement");
+  const path = month ? `/admin/reports/stats?month=${encodeURIComponent(month)}` : "/admin/reports/stats";
+
+  let payload: unknown;
+  try {
+    const response = await performServiceRequest<AdminReportStatsResponse>({
+      serviceName: "engagement",
+      baseUrl,
+      path,
+      method: "GET",
+      correlationId,
+      user,
+      parentSpan: span,
+      spanName: "proxy:engagement:getContentReportStats",
+    });
+    payload = response.payload;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw createHttpError(
+        error.statusCode >= 500 ? 502 : error.statusCode,
+        "Failed to fetch complaint stats",
+        error.cause
+      );
+    }
+    throw error;
+  }
+
+  const data = (payload as any)?.data ?? payload;
+  const parsed = adminReportStatsResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error("Invalid response from engagement service");
+  }
+  return parsed.data;
 }

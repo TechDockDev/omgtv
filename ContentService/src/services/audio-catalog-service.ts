@@ -42,6 +42,7 @@ export interface AudioSeriesSummary {
   isFree: boolean;
   totalEpisodes: number;
   totalDurationSeconds: number;
+  ageRating: string | null;
   audioCategory: { id: string; name: string } | null;
 }
 
@@ -76,6 +77,7 @@ async function buildSeriesSummaries(prisma: PrismaClient, seriesIds: string[]): 
       isFree: s.isFree,
       totalEpisodes: agg.count,
       totalDurationSeconds: agg.seconds,
+      ageRating: (s as any).ageRating ?? null,
       audioCategory: s.audioCategory ? { id: s.audioCategory.id, name: s.audioCategory.name } : null,
     });
   }
@@ -505,6 +507,7 @@ export async function getPublicAudioCategorySections(
       isFree: s.isFree,
       totalEpisodes: s._count.episodes,
       totalDurationSeconds: durationBySeriesId.get(s.id) ?? 0,
+      ageRating: (s as any).ageRating ?? null,
       audioCategory: null,
     });
     seriesByCategory.set(s.audioCategoryId, list);

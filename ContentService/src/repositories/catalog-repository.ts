@@ -1,5 +1,6 @@
 import {
   Ad,
+  AgeRating,
   CarouselEntry,
   Category,
   Episode,
@@ -303,6 +304,7 @@ export class CatalogRepository {
     tags?: string[];
     status?: PublicationStatus;
     visibility?: Visibility;
+    ageRating?: AgeRating;
     releaseDate?: Date | null;
     ownerId: string;
     categoryId?: string | null;
@@ -325,6 +327,7 @@ export class CatalogRepository {
         tags: data.tags ?? [],
         status: data.status ?? PublicationStatus.PUBLISHED,
         visibility: data.visibility ?? Visibility.PUBLIC,
+        ageRating: data.ageRating,
         releaseDate: data.releaseDate ?? null,
         ownerId: data.ownerId,
         categoryId: data.categoryId ?? null,
@@ -351,6 +354,7 @@ export class CatalogRepository {
       tags?: string[];
       status?: PublicationStatus;
       visibility?: Visibility;
+      ageRating?: AgeRating;
       releaseDate?: Date | null;
       categoryId?: string | null;
       slug?: string;
@@ -375,6 +379,7 @@ export class CatalogRepository {
         tags: data.tags,
         status: data.status,
         visibility: data.visibility,
+        ageRating: data.ageRating,
         releaseDate: data.releaseDate,
         categoryId: data.categoryId,
         slug: data.slug,
@@ -1395,6 +1400,7 @@ export class CatalogRepository {
             bannerImageUrl: true,
             isAudioSeries: true,
             visibility: true,
+            ageRating: true,
           }
         },
         episode: {

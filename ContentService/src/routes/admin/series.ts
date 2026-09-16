@@ -5,7 +5,7 @@ import {
   CatalogServiceError,
 } from "../../services/catalog-service";
 import { EngagementClient } from "../../clients/engagement-client";
-import { PublicationStatus, Visibility } from "@prisma/client";
+import { PublicationStatus, Visibility, AgeRating } from "@prisma/client";
 import { loadConfig } from "../../config";
 import { getRedis } from "../../lib/redis";
 
@@ -18,6 +18,7 @@ const createSeriesSchema = z.object({
   tags: z.array(z.string()).optional(),
   status: z.nativeEnum(PublicationStatus).optional(),
   visibility: z.nativeEnum(Visibility).optional(),
+  ageRating: z.nativeEnum(AgeRating).optional(),
   releaseDate: z.coerce.date().optional(),
   ownerId: z.string().uuid().optional(),
   categoryId: z.string().uuid().optional(),
@@ -48,6 +49,23 @@ export default async function adminSeriesRoutes(fastify: FastifyInstance) {
     }
     throw reply.server.httpErrors.badRequest("Missing x-admin-id header");
   };
+
+  // Static list of age-rating options for the admin dropdown — value is what
+  // gets sent to create/update, label is the display text.
+  const AGE_RATING_OPTIONS = [
+    { value: AgeRating.U, label: "U" },
+    { value: AgeRating.U_A_7, label: "U/A 7+" },
+    { value: AgeRating.U_A_13, label: "U/A 13+" },
+    { value: AgeRating.U_A_16, label: "U/A 16+" },
+    { value: AgeRating.A, label: "A" },
+  ];
+
+  fastify.get("/age-ratings", {
+    handler: async (request, reply) => {
+      requireAdminId(request, reply);
+      return reply.send({ items: AGE_RATING_OPTIONS });
+    },
+  });
 
   fastify.get("/", {
     schema: {
