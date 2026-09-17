@@ -15,14 +15,11 @@ import { hashPin, verifyPinHash } from "../utils/pin";
 export { authPrisma };
 
 export class PinError extends Error {
-    constructor(message: string, public readonly code: "NO_PHONE" | "OTP_FAILED" | "NO_PIN" | "LOCKED" | "INVALID_PIN") {
+    constructor(message: string, public readonly code: "NO_PHONE" | "OTP_FAILED" | "NO_PIN" | "INVALID_PIN") {
         super(message);
         this.name = "PinError";
     }
 }
-
-const PIN_MAX_ATTEMPTS = 5;
-const PIN_LOCKOUT_MS = 5 * 60 * 1000;
 
 export class CustomerService {
     constructor(private readonly prisma: PrismaClient) { }
@@ -300,47 +297,61 @@ export class CustomerService {
         const pinHash = await hashPin(pin);
         await this.prisma.customerProfile.update({
             where: { firebaseUid },
-            data: {
-                pinHash,
-                pinUpdatedAt: new Date(),
-                pinFailedAttempts: 0,
-                pinLockedUntil: null,
-            },
+            data: { pinHash, pinUpdatedAt: new Date() },
         });
     }
 
-    async verifyPin(userId: string, pin: string): Promise<{ valid: true }> {
+    // Customer self-service: remove their own PIN, same OTP bar as setPin —
+    // disabling parental controls is as sensitive as changing them.
+    async removePinWithOtp(userId: string, otp: string): Promise<void> {
         const { firebaseUid, profile } = await this.getProfileWithPhone(userId);
-        if (!profile?.pinHash) {
+        if (!profile?.phoneNumber) {
+            throw new PinError("No phone number on file for this account", "NO_PHONE");
+        }
+        if (!profile.pinHash) {
             throw new PinError("PIN not set for this account", "NO_PIN");
         }
 
-        if (profile.pinLockedUntil && profile.pinLockedUntil > new Date()) {
-            throw new PinError("Too many incorrect attempts. Try again later.", "LOCKED");
-        }
-
-        const valid = await verifyPinHash(pin, profile.pinHash);
-        if (!valid) {
-            const attempts = profile.pinFailedAttempts + 1;
-            const lockedOut = attempts >= PIN_MAX_ATTEMPTS;
-            await this.prisma.customerProfile.update({
-                where: { firebaseUid },
-                data: {
-                    pinFailedAttempts: lockedOut ? 0 : attempts,
-                    pinLockedUntil: lockedOut ? new Date(Date.now() + PIN_LOCKOUT_MS) : null,
-                },
-            });
-            throw new PinError(
-                lockedOut ? "Too many incorrect attempts. Try again later." : "Incorrect PIN",
-                lockedOut ? "LOCKED" : "INVALID_PIN"
-            );
+        try {
+            await new AuthClient().verifyOtp(profile.phoneNumber, otp);
+        } catch (err) {
+            if (err instanceof OtpClientError) {
+                throw new PinError(err.message, "OTP_FAILED");
+            }
+            throw err;
         }
 
         await this.prisma.customerProfile.update({
             where: { firebaseUid },
-            data: { pinFailedAttempts: 0, pinLockedUntil: null },
+            data: { pinHash: null, pinUpdatedAt: null },
         });
+    }
+
+    async verifyPin(userId: string, pin: string): Promise<{ valid: true }> {
+        const { profile } = await this.getProfileWithPhone(userId);
+        if (!profile?.pinHash) {
+            throw new PinError("PIN not set for this account", "NO_PIN");
+        }
+
+        const valid = await verifyPinHash(pin, profile.pinHash);
+        if (!valid) {
+            throw new PinError("Incorrect PIN", "INVALID_PIN");
+        }
 
         return { valid: true };
+    }
+
+    // Admin/support action: clears the parental PIN entirely (not a reset-to-new-PIN —
+    // the customer must set a fresh one, with OTP, next time they want parental controls on).
+    async removePin(userId: string): Promise<void> {
+        const { firebaseUid, profile } = await this.getProfileWithPhone(userId);
+        if (!profile) {
+            throw new PinError("User not found or not a customer", "NO_PHONE");
+        }
+
+        await this.prisma.customerProfile.update({
+            where: { firebaseUid },
+            data: { pinHash: null, pinUpdatedAt: null },
+        });
     }
 }

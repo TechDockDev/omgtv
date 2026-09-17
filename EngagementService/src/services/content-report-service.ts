@@ -1,7 +1,11 @@
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { randomBytes } from "node:crypto";
 import { NotificationClient } from "../clients/notification-client";
 import { escapeHtml } from "../utils/html";
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
 
 const TICKET_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid confusion when read aloud/typed
 
@@ -46,45 +50,59 @@ export async function submitContentReport(params: {
 }): Promise<{ ticketId: string }> {
   const { prisma, userId, reporterName, reporterEmail, movieShowName, episodeName, videoTimestamp, reason } = params;
 
+  const dueAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+
+  // Insert directly instead of pre-checking uniqueness with a separate query —
+  // with 33^8 (~2.8 trillion) possible ticket IDs a collision is astronomically
+  // rare, so optimize for the common case (one write, no extra read) and only
+  // fall back to retrying if the DB's own unique constraint actually rejects it.
   let ticketId = generateTicketId();
   let attempts = 0;
   const maxAttempts = 10;
-  while (attempts < maxAttempts) {
-    const existing = await prisma.contentReport.findUnique({ where: { ticketId } });
-    if (!existing) break;
-    ticketId = generateTicketId();
-    attempts++;
+  while (true) {
+    try {
+      await prisma.contentReport.create({
+        data: {
+          ticketId,
+          userId,
+          reporterName,
+          reporterEmail,
+          movieShowName,
+          episodeName,
+          videoTimestamp,
+          reason,
+          dueAt,
+        },
+      });
+      break;
+    } catch (error) {
+      attempts++;
+      if (isUniqueConstraintError(error) && attempts < maxAttempts) {
+        ticketId = generateTicketId();
+        continue;
+      }
+      throw error;
+    }
   }
-  if (attempts >= maxAttempts) {
-    throw new Error("Could not generate a unique ticket ID after multiple attempts");
-  }
 
-  const dueAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
-
-  await prisma.contentReport.create({
-    data: {
-      ticketId,
-      userId,
-      reporterName,
-      reporterEmail,
-      movieShowName,
-      episodeName,
-      videoTimestamp,
-      reason,
-      dueAt,
-    },
-  });
-
+  // Fire-and-forget: the customer gets their ticket ID immediately, the
+  // confirmation email (and its own DB update) happen in the background —
+  // an email/SMTP round-trip must never be on the critical path of this response.
   const notificationClient = new NotificationClient();
-  const emailSent = await notificationClient.sendEmail(
-    reporterEmail,
-    `Your complaint ticket ${ticketId}`,
-    buildConfirmationEmailHtml({ ticketId, reporterName, movieShowName, episodeName, videoTimestamp, reason })
-  );
-
-  if (emailSent) {
-    await prisma.contentReport.update({ where: { ticketId }, data: { emailSent: true } });
-  }
+  notificationClient
+    .sendEmail(
+      reporterEmail,
+      `Your complaint ticket ${ticketId}`,
+      buildConfirmationEmailHtml({ ticketId, reporterName, movieShowName, episodeName, videoTimestamp, reason })
+    )
+    .then((emailSent) => {
+      if (emailSent) {
+        return prisma.contentReport.update({ where: { ticketId }, data: { emailSent: true } });
+      }
+    })
+    .catch((err) => {
+      console.warn("[submitContentReport] Background email/update failed (non-fatal):", err);
+    });
 
   return { ticketId };
 }

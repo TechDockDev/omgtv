@@ -107,10 +107,12 @@ model ContentReport {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  @@index([ticketId])
+  // No explicit index on ticketId — the `@unique` above already creates one;
+  // a duplicate would just cost extra write time on every insert for nothing.
   @@index([reporterEmail])
   @@index([status])
   @@index([dueAt])
+  @@index([userId])
 }
 
 model SearchHistory {

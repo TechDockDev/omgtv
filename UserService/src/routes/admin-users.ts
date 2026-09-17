@@ -18,6 +18,7 @@ import {
 } from "../utils/serialize";
 import { isAdminVerificationError } from "../types/auth-service";
 import { listUsers, listTrialConvertedUsers, getUserDetails, updateUser, blockUser, deleteUser } from "../services/user-management";
+import { CustomerService, PinError } from "../services/customer-service";
 import { z } from "zod";
 import { loadConfig } from "../config";
 
@@ -325,6 +326,32 @@ export default async function adminUserRoutes(fastify: FastifyInstance) {
       return {
         success: true,
         data: { deleted: true }
+      };
+    },
+  });
+
+  // Support/admin action: clear a customer's parental-control PIN entirely
+  // (e.g. locked out, forgot PIN and no longer has the registered phone).
+  fastify.delete("/app-users/:userId/pin", {
+    schema: {
+      params: userIdParamsSchema,
+    },
+    handler: async (request, reply) => {
+      const params = userIdParamsSchema.parse(request.params);
+      const service = new CustomerService(request.server.prisma);
+
+      try {
+        await service.removePin(params.userId);
+      } catch (error) {
+        if (error instanceof PinError) {
+          throw request.server.httpErrors.notFound(error.message);
+        }
+        throw error;
+      }
+
+      return {
+        success: true,
+        message: "Parental PIN removed successfully",
       };
     },
   });

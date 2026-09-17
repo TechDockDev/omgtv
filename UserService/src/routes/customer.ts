@@ -102,7 +102,6 @@ export default async function customerRoutes(fastify: FastifyInstance) {
         NO_PHONE: 400,
         OTP_FAILED: 400,
         NO_PIN: 400,
-        LOCKED: 423,
         INVALID_PIN: 401,
     };
 
@@ -153,6 +152,25 @@ export default async function customerRoutes(fastify: FastifyInstance) {
             try {
                 await service.setPin(userId, body.pin, body.otp);
                 return { success: true, message: "PIN saved successfully" };
+            } catch (error) {
+                return handlePinError(error, reply);
+            }
+        },
+    });
+
+    const removePinBodySchema = z.object({
+        otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
+    });
+
+    fastify.delete("/pin", {
+        schema: { body: removePinBodySchema },
+        preHandler: requireUserId,
+        handler: async (req, reply) => {
+            const userId = req.headers["x-user-id"] as string;
+            const body = removePinBodySchema.parse(req.body);
+            try {
+                await service.removePinWithOtp(userId, body.otp);
+                return { success: true, message: "PIN removed successfully" };
             } catch (error) {
                 return handlePinError(error, reply);
             }

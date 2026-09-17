@@ -1,4 +1,4 @@
-import type { PrismaClient, ReportStatus } from "@prisma/client";
+import { Prisma, type PrismaClient, type ReportStatus } from "@prisma/client";
 import { NotificationClient } from "../clients/notification-client";
 import { escapeHtml } from "../utils/html";
 
@@ -108,25 +108,33 @@ export async function updateContentReport(params: {
 }) {
   const { prisma, id, status, response, respondedBy } = params;
 
-  const existing = await prisma.contentReport.findUnique({ where: { id } });
-  if (!existing) return null;
-
   const isNewResponse = typeof response === "string" && response.length > 0;
 
-  const updated = await prisma.contentReport.update({
-    where: { id },
-    data: {
-      ...(status ? { status } : {}),
-      ...(isNewResponse
-        ? { response, respondedAt: new Date(), respondedBy: respondedBy ?? null }
-        : {}),
-    },
-  });
+  // Update directly instead of a pre-check findUnique — one query instead of
+  // two on the common (found) path; a missing row just surfaces as P2025 below.
+  let updated;
+  try {
+    updated = await prisma.contentReport.update({
+      where: { id },
+      data: {
+        ...(status ? { status } : {}),
+        ...(isNewResponse
+          ? { response, respondedAt: new Date(), respondedBy: respondedBy ?? null }
+          : {}),
+      },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+      return null;
+    }
+    throw error;
+  }
 
   if (isNewResponse) {
+    // Fire-and-forget: the admin gets their updated ticket back immediately,
+    // email + push go out in the background (never block this response on SMTP/FCM).
     const notificationClient = new NotificationClient();
-
-    await notificationClient.sendEmail(
+    const emailPromise = notificationClient.sendEmail(
       updated.reporterEmail,
       `Response to your complaint ${updated.ticketId}`,
       buildResponseEmailHtml({
@@ -137,11 +145,14 @@ export async function updateContentReport(params: {
         status: updated.status,
       })
     );
+    const pushCopy = pushCopyForStatus(updated.status);
+    const pushPromise = updated.userId
+      ? notificationClient.sendPush(updated.userId, pushCopy.title, pushCopy.body)
+      : Promise.resolve();
 
-    if (updated.userId) {
-      const { title, body } = pushCopyForStatus(updated.status);
-      await notificationClient.sendPush(updated.userId, title, body);
-    }
+    Promise.all([emailPromise, pushPromise]).catch((err) => {
+      console.warn("[updateContentReport] Background email/push failed (non-fatal):", err);
+    });
   }
 
   const now = new Date();
