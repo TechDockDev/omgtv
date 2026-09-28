@@ -217,6 +217,21 @@ model SubscriptionGlobalConfig {
   @@unique([id])
 }
 
+// OTP-gate for editing subscription/trial pricing config. One row per admin —
+// a successful OTP verify unlocks editing for a short window (see service),
+// after which they must re-verify. Not tied to login; a valid admin session
+// can still be blocked from editing pricing without this.
+model AdminSecurityVerification {
+  id         String   @id @default(uuid())
+  adminId    String   @unique
+  verifiedAt DateTime
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([expiresAt])
+}
+
 
 model UserWallet {
   id        String   @id @default(uuid())

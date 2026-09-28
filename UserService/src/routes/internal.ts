@@ -381,4 +381,22 @@ export default async function internalRoutes(app: FastifyInstance) {
 
         return { authIds: result };
     });
+
+    /**
+     * GET /internal/admin-profile/:subjectId
+     * Resolves an admin's registered phone number (AdminProfile.phoneNumber) by
+     * their AuthSubject id — used by other services to send that admin an OTP
+     * (e.g. SubscriptionService's OTP-gate on editing plans/trial pricing).
+     */
+    app.get<{ Params: { subjectId: string } }>("/admin-profile/:subjectId", async (request, reply) => {
+        const { subjectId } = request.params;
+        const profile = await request.server.prisma.adminProfile.findUnique({
+            where: { subjectId },
+            select: { phoneNumber: true },
+        });
+        if (!profile) {
+            return reply.code(404).send({ message: "Admin profile not found" });
+        }
+        return { phoneNumber: profile.phoneNumber ?? null };
+    });
 }

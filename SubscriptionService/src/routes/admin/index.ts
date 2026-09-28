@@ -11,6 +11,13 @@ import { NotificationClient } from "../../clients/notification-client";
 import { CoinTransactionType, TransactionSource, WalletStatus, StreakStatus } from "@prisma/client";
 import { getRedis } from "../../lib/redis";
 import { loadConfig } from "../../config";
+import {
+  sendSubscriptionOtp,
+  verifySubscriptionOtp,
+  getSubscriptionUnlockStatus,
+  requireSubscriptionUnlock,
+  AdminSecurityError,
+} from "../../services/adminSecurity";
 
 const coinService = new CoinService();
 const streakService = new StreakService();
@@ -61,6 +68,48 @@ const subscriptionSettingsSchema = z.object({
 
 export default async function adminRoutes(app: FastifyInstance) {
   const prisma = getPrisma();
+  const subscriptionUnlockGuard = requireSubscriptionUnlock(prisma);
+
+  // --- Security gate: OTP verification required before editing plan/trial pricing ---
+
+  app.post("/security/subscription-otp/send", async (request, reply) => {
+    const adminId = request.headers["x-admin-id"] as string | undefined;
+    if (!adminId) return reply.code(401).send({ message: "Missing admin identity" });
+    try {
+      const result = await sendSubscriptionOtp(adminId);
+      return { success: true, data: result };
+    } catch (err) {
+      if (err instanceof AdminSecurityError) {
+        return reply.code(400).send({ code: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.post<{ Body: { otp: string } }>(
+    "/security/subscription-otp/verify",
+    { schema: { body: z.object({ otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits") }) } },
+    async (request, reply) => {
+      const adminId = request.headers["x-admin-id"] as string | undefined;
+      if (!adminId) return reply.code(401).send({ message: "Missing admin identity" });
+      try {
+        const result = await verifySubscriptionOtp({ prisma, adminId, otp: request.body.otp });
+        return { success: true, data: result };
+      } catch (err) {
+        if (err instanceof AdminSecurityError) {
+          return reply.code(err.code === "OTP_FAILED" ? 400 : 400).send({ code: err.code, message: err.message });
+        }
+        throw err;
+      }
+    }
+  );
+
+  app.get("/security/subscription-otp/status", async (request, reply) => {
+    const adminId = request.headers["x-admin-id"] as string | undefined;
+    if (!adminId) return reply.code(401).send({ message: "Missing admin identity" });
+    const status = await getSubscriptionUnlockStatus({ prisma, adminId });
+    return { success: true, data: status };
+  });
 
   app.post<{ Body: PlanBody }>(
     "/plans",
@@ -68,6 +117,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       schema: {
         body: planBodySchema,
       },
+      preHandler: [subscriptionUnlockGuard],
     },
     async (request, reply) => {
       const body = planBodySchema.parse(request.body);
@@ -144,6 +194,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         params: z.object({ id: z.string().uuid() }),
         body: planUpdateSchema,
       },
+      preHandler: [subscriptionUnlockGuard],
     },
     async (request, reply) => {
       const body = planUpdateSchema.parse(request.body);
@@ -233,6 +284,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     "/plans/:id",
     {
       schema: { params: z.object({ id: z.string().uuid() }) },
+      preHandler: [subscriptionUnlockGuard],
     },
     async (request) => {
       const { id } = request.params as { id: string };
@@ -262,6 +314,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         params: z.object({ id: z.string().uuid() }),
         body: planStatusSchema,
       },
+      preHandler: [subscriptionUnlockGuard],
     },
     async (request, reply) => {
       const { id } = request.params;
@@ -303,6 +356,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     "/custom-trials",
     {
       schema: { body: trialPlanBodySchema },
+      preHandler: [subscriptionUnlockGuard],
     },
     async (request, reply) => {
       const body = trialPlanBodySchema.parse(request.body);
@@ -634,6 +688,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         params: z.object({ id: z.string().uuid() }),
         body: z.object({ isActive: z.boolean() }),
       },
+      preHandler: [subscriptionUnlockGuard],
     },
     async (request, reply) => {
       const { id } = request.params as { id: string };
@@ -680,6 +735,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         params: z.object({ id: z.string().uuid() }),
         body: trialPlanUpdateSchema,
       },
+      preHandler: [subscriptionUnlockGuard],
     },
     async (request, reply) => {
       const { id } = request.params;
