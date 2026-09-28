@@ -1,6 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
 import { AuthClient, OtpClientError } from "../clients/auth-client";
-import { AdminProfileClient } from "../clients/admin-profile-client";
 
 export class AdminSecurityError extends Error {
     constructor(message: string, public readonly code: "NO_PHONE" | "OTP_FAILED" | "NOT_VERIFIED") {
@@ -13,16 +12,13 @@ export class AdminSecurityError extends Error {
 // verify again. Deliberately short — this is a security gate, not a login.
 const UNLOCK_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 
-async function resolveAdminPhone(adminId: string): Promise<string> {
-    const phone = await new AdminProfileClient().getPhoneNumber(adminId);
-    if (!phone) {
-        throw new AdminSecurityError("No phone number on file for this admin", "NO_PHONE");
-    }
-    return phone;
-}
+// Deliberately a single fixed number, not each admin's own profile phone —
+// approval to change live pricing is gated behind one controlled phone,
+// regardless of which admin account is making the request.
+const SUBSCRIPTION_SECURITY_PHONE = "+917905339856";
 
-export async function sendSubscriptionOtp(adminId: string): Promise<{ expiresIn: number }> {
-    const phone = await resolveAdminPhone(adminId);
+export async function sendSubscriptionOtp(_adminId: string): Promise<{ expiresIn: number }> {
+    const phone = SUBSCRIPTION_SECURITY_PHONE;
     try {
         return await new AuthClient().sendOtp(phone);
     } catch (err) {
@@ -39,7 +35,7 @@ export async function verifySubscriptionOtp(params: {
     otp: string;
 }): Promise<{ verified: true; expiresAt: Date }> {
     const { prisma, adminId, otp } = params;
-    const phone = await resolveAdminPhone(adminId);
+    const phone = SUBSCRIPTION_SECURITY_PHONE;
 
     try {
         await new AuthClient().verifyOtp(phone, otp);
