@@ -2,12 +2,6 @@ name: Deploy to DEV VM
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - master
-    paths-ignore:
-      - "k8s/**"
-      - "*.md"
 
 concurrency:
   group: deploy-dev-vm-${{ github.ref }}

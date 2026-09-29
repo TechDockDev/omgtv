@@ -73,7 +73,10 @@ export default async function adminRoutes(app: FastifyInstance) {
   // --- Security gate: OTP verification required before editing plan/trial pricing ---
 
   app.post("/security/subscription-otp/send", async (request, reply) => {
-    const adminId = request.headers["x-admin-id"] as string | undefined;
+    // SubscriptionService's /admin/* routes go through APIGW's generic wildcard
+    // proxy, which sets x-user-id (not x-admin-id — that's only set by the
+    // dedicated per-route proxies in ContentService/EngagementService).
+    const adminId = request.headers["x-user-id"] as string | undefined;
     if (!adminId) return reply.code(401).send({ message: "Missing admin identity" });
     try {
       const result = await sendSubscriptionOtp(adminId);
@@ -90,7 +93,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     "/security/subscription-otp/verify",
     { schema: { body: z.object({ otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits") }) } },
     async (request, reply) => {
-      const adminId = request.headers["x-admin-id"] as string | undefined;
+      const adminId = request.headers["x-user-id"] as string | undefined;
       if (!adminId) return reply.code(401).send({ message: "Missing admin identity" });
       try {
         const result = await verifySubscriptionOtp({ prisma, adminId, otp: request.body.otp });
@@ -105,7 +108,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   );
 
   app.get("/security/subscription-otp/status", async (request, reply) => {
-    const adminId = request.headers["x-admin-id"] as string | undefined;
+    const adminId = request.headers["x-user-id"] as string | undefined;
     if (!adminId) return reply.code(401).send({ message: "Missing admin identity" });
     const status = await getSubscriptionUnlockStatus({ prisma, adminId });
     return { success: true, data: status };

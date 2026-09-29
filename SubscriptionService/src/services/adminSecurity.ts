@@ -74,7 +74,10 @@ export async function getSubscriptionUnlockStatus(params: {
 // verification (see UNLOCK_WINDOW_MS) — a valid admin login alone is not enough.
 export function requireSubscriptionUnlock(prisma: PrismaClient) {
     return async (request: any, reply: any) => {
-        const adminId = request.headers["x-admin-id"] as string | undefined;
+        // See note in routes/admin/index.ts's OTP routes: APIGW's generic
+        // wildcard proxy (used for all of SubscriptionService's /admin/* routes)
+        // sets x-user-id, not x-admin-id.
+        const adminId = request.headers["x-user-id"] as string | undefined;
         if (!adminId) {
             return reply.code(401).send({ message: "Missing admin identity" });
         }
