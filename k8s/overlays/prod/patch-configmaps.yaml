@@ -34,6 +34,7 @@ metadata:
   name: engagement-service-config
 data:
   REDIS_URL: "redis://10.61.1.195:6379"
+  AUDIENCE_BUCKET: "audience-registrations-omgtv-prod"
 ---
 apiVersion: v1
 kind: ConfigMap
