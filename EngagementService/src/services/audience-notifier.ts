@@ -99,7 +99,8 @@ class EmailRegistrationNotifier implements RegistrationNotifier {
     }
 
     const config = await this.prisma.audienceConfig.findUnique({ where: { id: 1 } });
-    const bannerImageUrl = config?.bannerImageUrl;
+    // Dedicated email image wins; falls back to the app banner, then the env default.
+    const bannerImageUrl = config?.emailBannerImageUrl ?? config?.bannerImageUrl;
 
     const subject = registrationSubject(reg.referenceId);
     const submittedAt = toIstIso(reg.createdAt);
@@ -137,7 +138,7 @@ class EmailRegistrationNotifier implements RegistrationNotifier {
     }
 
     const config = await this.prisma.audienceConfig.findUnique({ where: { id: 1 } });
-    const bannerImageUrl = config?.bannerImageUrl;
+    const bannerImageUrl = config?.emailBannerImageUrl ?? config?.bannerImageUrl;
 
     const subject = statusChangeSubject(reg.referenceId, job.newStatus);
 

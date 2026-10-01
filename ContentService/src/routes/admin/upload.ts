@@ -9,7 +9,17 @@ const uploadBodySchema = z.object({
     title: z.string().min(1),
     type: z.nativeEnum(MediaAssetType).default(MediaAssetType.REEL),
     filename: z.string().optional(),
+    // GIF is just stored in GCS and served by direct URL — no HLS transcode.
+    // (Tested: feeding a GIF, which has no audio stream, through the existing
+    // ABR ffmpeg command fails outright — "Unable to map stream at a:0" — so
+    // it deliberately never goes near TranscodingWorker.)
+    format: z.enum(["mp4", "gif"]).default("mp4"),
 });
+
+const SOURCE_CONTENT_TYPE: Record<"mp4" | "gif", string> = {
+    mp4: "video/mp4",
+    gif: "image/gif",
+};
 
 export default async function adminUploadRoutes(fastify: FastifyInstance) {
     const config = loadConfig();
@@ -37,28 +47,37 @@ export default async function adminUploadRoutes(fastify: FastifyInstance) {
             // Admin auth is handled by parent scope in index.ts
         },
         async (request, reply) => {
-            const { title, type, filename } = uploadBodySchema.parse(request.body);
+            const { title, type, filename, format } = uploadBodySchema.parse(request.body);
+            const contentType = SOURCE_CONTENT_TYPE[format];
 
             // Extract admin ID from validated headers (set by hooks in index.ts)
             const adminId = request.headers["x-admin-id"] as string;
 
-            // 1. Create MediaAsset in DB (PENDING)
-            // We do NOT set uploadId because we are bypassing UploadService
+            // 1. Create MediaAsset in DB.
+            // A GIF has nothing left to process after the upload lands, so it
+            // goes straight to READY; mp4 stays PENDING until TranscodingWorker
+            // finishes HLS and flips it.
             const mediaAsset = await fastify.prisma.mediaAsset.create({
                 data: {
                     title,
                     type,
-                    status: MediaAssetStatus.PENDING,
-                    filename: filename || (title.toLowerCase().endsWith(".mp4") ? title : `${title}.mp4`),
+                    status: format === "gif" ? MediaAssetStatus.READY : MediaAssetStatus.PENDING,
+                    filename: filename || (title.toLowerCase().endsWith(`.${format}`) ? title : `${title}.${format}`),
                     createdByAdminId: adminId,
                     // Intentionally leaving uploadId null.
                 },
             });
 
-            // 2. Generate Signed URL
-            // Convention: videos/{id}/source.mp4
-            const objectName = `videos/${mediaAsset.id}/source.mp4`;
+            // 2. Generate Signed URL.
+            // mp4: "videos/{id}/source.mp4" — TranscodingWorker's GCS event
+            //   handler watches this prefix and runs the HLS transcode.
+            // gif: "gifs/{id}/source.gif" — deliberately OUTSIDE "videos/" and
+            //   "images/", so the worker's path filter ignores it entirely
+            //   (logs "Ignoring file (path filter)") and never touches it.
+            const objectPrefix = format === "gif" ? "gifs" : "videos";
+            const objectName = `${objectPrefix}/${mediaAsset.id}/source.${format}`;
             const file = storage.bucket(bucketName).file(objectName);
+            const publicUrl = `https://storage.googleapis.com/${bucketName}/${objectName}`;
 
             const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
@@ -66,12 +85,23 @@ export default async function adminUploadRoutes(fastify: FastifyInstance) {
                 version: "v4",
                 action: "write",
                 expires: expiresAt,
-                contentType: "video/mp4",
+                contentType,
             });
 
+            // For a GIF there is no separate "ready" signal from a worker, so
+            // the direct URL is set optimistically now (same pattern as the
+            // thumbnail route below) — it resolves as soon as the admin's
+            // upload to the signed URL completes.
+            if (format === "gif") {
+                await fastify.prisma.mediaAsset.update({
+                    where: { id: mediaAsset.id },
+                    data: { manifestUrl: publicUrl },
+                });
+            }
+
             fastify.log.info(
-                { mediaAssetId: mediaAsset.id, objectName, adminId },
-                "Generated signed URL for new video upload"
+                { mediaAssetId: mediaAsset.id, objectName, adminId, format },
+                "Generated signed URL for new media upload"
             );
 
             return {

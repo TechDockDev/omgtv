@@ -1,0 +1,624 @@
+openapi: 3.0.3
+info:
+  title: Audience Registration API
+  version: 1.0.0
+  description: |
+    Group registration for audience seats at the TV show. Served through the API
+    gateway under `/api/v1/audience`.
+
+    **Response format.** These endpoints return the bodies documented here
+    directly (no `success/data` envelope). Errors from this feature share one
+    shape: `{ "error": { "code", "message", "fields?", "reference_id?" } }`.
+    Errors raised by the gateway itself (bad/missing token, gateway rate limit)
+    use the platform-wide envelope instead.
+
+    **Time zone.** Every timestamp is returned in IST (`+05:30`).
+
+    **App flow.** `GET /banner` -> user taps -> `GET /registration/status`
+    (filled? show the status screen : open the form) -> `POST /registration`.
+servers:
+  - url: https://api.omgtv.in/api/v1/audience
+tags:
+  - name: App
+  - name: Admin
+paths:
+  /banner:
+    get:
+      tags: [App]
+      summary: Banner for the home screen
+      description: |
+        Public. `enabled` is true only when the admin toggle is on AND now is
+        between `starts_at` and `ends_at`. The server caches this for 60 seconds
+        (`Cache-Control: public, max-age=60`); admin changes can take up to a
+        minute to appear. `registration_open: false` means closed or full - show
+        the banner with the button disabled ("Registrations closed").
+        `image_url` can be any image format, including animated GIF.
+      responses:
+        "200":
+          description: Banner state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BannerResponse" }
+              examples:
+                shown:
+                  value:
+                    enabled: true
+                    banner:
+                      id: bnr_m1x2k3
+                      image_url: https://cdn.example.com/banners/audience.gif
+                      title: Be in the audience of India's Funniest Family
+                      subtitle: Groups of 5 or more. First come, first served.
+                      cta_label: Register now
+                      registration_open: true
+                      starts_at: "2026-10-01T00:00:00+05:30"
+                      ends_at: "2026-10-20T23:59:59+05:30"
+                hidden:
+                  value: { enabled: false, banner: null }
+  /registration/status:
+    get:
+      tags: [App]
+      summary: Has this user filled the form?
+      description: |
+        Needs a logged-in customer token. The user's registered mobile number is
+        matched against **every person in every group** (lead or member), so
+        anyone listed in a group sees their status. Guests have no mobile and get
+        401. `?mobile=` is accepted only when the server runs with
+        `AUDIENCE_ALLOW_MOBILE_LOOKUP=true` (off by default - it would let anyone
+        test whether a number is registered). The response never includes other
+        people's names, mobiles or emails; the lead's mobile is masked.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: mobile
+          in: query
+          required: false
+          schema: { type: string, pattern: "^[6-9]\\d{9}$" }
+      responses:
+        "200":
+          description: Registration state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusResponse" }
+              examples:
+                filled:
+                  value:
+                    has_filled: true
+                    registration:
+                      registration_id: 7c1f0d4e-3b7a-4c52-9a55-1d6f0e2a9b10
+                      reference_id: IFF-7K3M9P
+                      status: RECEIVED
+                      group_size: 5
+                      lead_name: Rahul Sharma
+                      lead_mobile_masked: +91 98765 XXXXX
+                      city: Lucknow
+                      submitted_at: "2026-10-01T14:32:10+05:30"
+                      your_role: LEAD
+                      message: You are registered. Your status is pending. Once our team approves your details, you will receive an update in your email.
+                not_filled:
+                  value: { has_filled: false, registration: null }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /registration:
+    post:
+      tags: [App]
+      summary: Submit a group registration
+      description: |
+        `multipart/form-data` with a JSON `payload` part and optional files.
+        Send an `Idempotency-Key` header (a UUID); a retry with the same key
+        returns the original response and creates nothing new. If the header is
+        missing, `payload.client_request_id` is used instead.
+
+        **Rules** (all enforced again on the server): group of 5-10 including the
+        lead (lead = position 1); mobiles unique inside the group and across all
+        registrations; every person needs a photo **or** the single group PDF;
+        `photos_provided` / `group_pdf_provided` must match the attached files;
+        consent must be accepted. Images are JPEG/PNG/WebP up to 5 MB, the PDF
+        up to 10 MB; file type is detected from the file contents, not the
+        name. Photos are re-encoded (EXIF/GPS removed) and stored privately.
+
+        Public: a token is optional. When a customer is logged in the
+        registration is also linked to their account.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]{8,128}$" }
+          example: b7e1c2a4-5d3f-4c1e-9a77-3f2d8e9c0a11
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload:
+                  type: string
+                  description: JSON string, see RegistrationPayload
+                photo_lead: { type: string, format: binary }
+                photo_member_2: { type: string, format: binary }
+                photo_member_3: { type: string, format: binary }
+                photo_member_4: { type: string, format: binary }
+                photo_member_5: { type: string, format: binary }
+                photo_member_6: { type: string, format: binary }
+                photo_member_7: { type: string, format: binary }
+                photo_member_8: { type: string, format: binary }
+                photo_member_9: { type: string, format: binary }
+                photo_member_10: { type: string, format: binary }
+                group_pdf: { type: string, format: binary }
+            encoding:
+              payload: { contentType: application/json }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubmitResponse" }
+              example:
+                registration_id: 7c1f0d4e-3b7a-4c52-9a55-1d6f0e2a9b10
+                reference_id: IFF-7K3M9P
+                status: RECEIVED
+                group_size: 5
+                submitted_at: "2026-10-01T14:32:10+05:30"
+        "403":
+          description: REGISTRATION_CLOSED - toggle off, or outside the configured window
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              example: { error: { code: REGISTRATION_CLOSED, message: Registrations are closed. } }
+        "409":
+          description: |
+            DUPLICATE_MOBILE (a mobile repeats inside the group, or is already
+            registered in another group - only the field position is returned,
+            never who owns it) or ALREADY_REGISTERED (this same account already
+            registered; includes the existing `reference_id`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              examples:
+                duplicate:
+                  value:
+                    error:
+                      code: DUPLICATE_MOBILE
+                      message: A mobile number in this group is already registered.
+                      fields: { "members[2].mobile": This mobile number is already registered }
+                already_registered:
+                  value:
+                    error:
+                      code: ALREADY_REGISTERED
+                      message: You have already registered.
+                      reference_id: IFF-7K3M9P
+        "413":
+          description: FILE_TOO_LARGE (image over 5 MB, PDF over 10 MB, or request over the cap)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              example: { error: { code: FILE_TOO_LARGE, message: Each photo must be 5 MB or smaller. } }
+        "415":
+          description: UNSUPPORTED_FILE - not a JPEG/PNG/WebP image or PDF (checked by content), or a corrupt image
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              example: { error: { code: UNSUPPORTED_FILE, message: Photos must be JPEG, PNG or WebP images. } }
+        "422":
+          description: |
+            VALIDATION_FAILED (`fields` uses indexed keys such as
+            `members[1].mobile`), GROUP_TOO_SMALL / GROUP_TOO_LARGE, or
+            PHOTO_OR_PDF_REQUIRED (`fields` lists everyone missing a photo as
+            `lead.photo` / `members[i].photo`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              examples:
+                validation:
+                  value:
+                    error:
+                      code: VALIDATION_FAILED
+                      message: Please fix the highlighted fields.
+                      fields:
+                        "members[1].mobile": Enter a 10-digit mobile number starting with 6, 7, 8 or 9
+                        "members[3].email": Enter a valid email, like name@example.com
+                too_small:
+                  value: { error: { code: GROUP_TOO_SMALL, message: A group needs at least 5 people including you. } }
+                photo_or_pdf:
+                  value:
+                    error:
+                      code: PHOTO_OR_PDF_REQUIRED
+                      message: Every person needs a photo, or attach one group PDF.
+                      fields: { "members[0].photo": Add a photo, or attach the group PDF }
+        "429":
+          description: RATE_LIMITED - too many attempts for this mobile, or the server is busy; retry later
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              example: { error: { code: RATE_LIMITED, message: Too many attempts. Please try again later. } }
+        "503":
+          description: SERVICE_UNAVAILABLE - uploads are not configured/available
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /admin/config:
+    get:
+      tags: [Admin]
+      summary: Read the banner / registration configuration
+      description: |
+        Admin token required. Returns the current admin-editable config. If it
+        was never set up, every field is `null`/`false` and `updated_at` is null.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AudienceConfig" }
+              example:
+                banner_enabled: true
+                registration_open: true
+                banner_image_url: https://cdn.example.com/banners/audience.gif
+                title: Be in the audience of India's Funniest Family
+                subtitle: Groups of 5 or more. First come, first served.
+                cta_label: Register now
+                starts_at: "2026-10-01T00:00:00+05:30"
+                ends_at: "2026-10-20T23:59:59+05:30"
+                updated_at: "2026-10-01T09:15:00+05:30"
+        "401": { $ref: "#/components/responses/GatewayAuth" }
+        "403": { $ref: "#/components/responses/GatewayAuth" }
+    patch:
+      tags: [Admin]
+      summary: Update the banner / registration configuration
+      description: |
+        Admin token required. Send only the fields you want to change (at least
+        one); `null` clears a text/date field. The banner shown to the app
+        refreshes within 60 seconds. A brand-new config always starts with
+        registration **closed** until `registration_open: true` is sent.
+        `banner_image_url` may point to any image type (JPG, PNG, WebP, GIF) but
+        must be an `http(s)` URL.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AudienceConfigUpdate" }
+            example:
+              banner_enabled: true
+              registration_open: true
+              banner_image_url: https://cdn.example.com/banners/audience.gif
+              title: Be in the audience of India's Funniest Family
+              subtitle: Groups of 5 or more. First come, first served.
+              cta_label: Register now
+              starts_at: "2026-10-01T00:00:00+05:30"
+              ends_at: "2026-10-20T23:59:59+05:30"
+      responses:
+        "200":
+          description: The full configuration after the update
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AudienceConfig" }
+        "401": { $ref: "#/components/responses/GatewayAuth" }
+        "403": { $ref: "#/components/responses/GatewayAuth" }
+        "422":
+          description: Validation failed (empty body, bad URL/scheme, starts_at not before ends_at, ...)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              example:
+                error:
+                  code: VALIDATION_FAILED
+                  message: Please fix the highlighted fields.
+                  fields: { banner_image_url: Image URL must start with http:// or https:// }
+  /admin/registrations:
+    get:
+      tags: [Admin]
+      summary: List registrations
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/Status" } }
+        - { name: city, in: query, description: Case-insensitive exact match, schema: { type: string } }
+        - { name: from, in: query, description: "IST date, inclusive (YYYY-MM-DD)", schema: { type: string, format: date } }
+        - { name: to, in: query, description: "IST date, inclusive (YYYY-MM-DD)", schema: { type: string, format: date } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: A page of registrations, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegistrationList" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /admin/registrations/export:
+    get:
+      tags: [Admin]
+      summary: Export registrations as CSV
+      description: |
+        Same filters as the list (without paging). One row per person (lead and
+        members). Cells that start with `=`, `+`, `-` or `@` are neutralised so
+        spreadsheets cannot execute them. Contains personal data - handle accordingly.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/Status" } }
+        - { name: city, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: CSV download
+          content:
+            text/csv:
+              schema: { type: string }
+              example: |
+                "reference_id","status","submitted_at","city","group_size","position","role","full_name","age","mobile","email","has_photo","group_pdf"
+                "IFF-7K3M9P","RECEIVED","2026-10-01T14:32:10+05:30","Lucknow","5","1","LEAD","Rahul Sharma","32","9876543210","rahul@example.com","no","yes"
+  /admin/registrations/{id}:
+    get:
+      tags: [Admin]
+      summary: Registration detail with file links
+      description: Every person plus the uploaded files. File `url`s are signed and expire after `url_expires_in` seconds; the storage bucket itself is private.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegistrationDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /admin/registrations/{id}/status:
+    patch:
+      tags: [Admin]
+      summary: Change a registration's status
+      description: Every person in the group is emailed about the change.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: "#/components/schemas/Status" }
+            example: { status: SHORTLISTED }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              example: { registration_id: 7c1f0d4e-3b7a-4c52-9a55-1d6f0e2a9b10, reference_id: IFF-7K3M9P, status: SHORTLISTED }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  responses:
+    Unauthorized:
+      description: Not logged in (or a guest token)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+          example: { error: { code: UNAUTHORIZED, message: Please log in to check your registration. } }
+    GatewayAuth:
+      description: Missing/invalid token (401) or not an admin (403). Returned by the gateway in the platform envelope, not the error shape above.
+    ValidationFailed:
+      description: VALIDATION_FAILED
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    NotFound:
+      description: NOT_FOUND
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+          example: { error: { code: NOT_FOUND, message: Registration not found. } }
+  schemas:
+    Status:
+      type: string
+      enum: [RECEIVED, WAITLISTED, SHORTLISTED, NOT_SELECTED]
+      description: RECEIVED means pending team review.
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION_FAILED, GROUP_TOO_SMALL, GROUP_TOO_LARGE, PHOTO_OR_PDF_REQUIRED, DUPLICATE_MOBILE, ALREADY_REGISTERED, REGISTRATION_CLOSED, FILE_TOO_LARGE, UNSUPPORTED_FILE, RATE_LIMITED, UNAUTHORIZED, NOT_FOUND, SERVICE_UNAVAILABLE, INTERNAL_ERROR]
+            message: { type: string }
+            fields:
+              type: object
+              additionalProperties: { type: string }
+              description: Keyed by field path, e.g. `lead.email`, `members[1].mobile`
+            reference_id: { type: string, description: Only on ALREADY_REGISTERED }
+    BannerResponse:
+      type: object
+      required: [enabled, banner]
+      properties:
+        enabled: { type: boolean }
+        banner:
+          nullable: true
+          type: object
+          properties:
+            id: { type: string }
+            image_url: { type: string, nullable: true, description: Any image type incl. GIF }
+            title: { type: string, nullable: true }
+            subtitle: { type: string, nullable: true }
+            cta_label: { type: string, nullable: true }
+            registration_open: { type: boolean }
+            starts_at: { type: string, nullable: true }
+            ends_at: { type: string, nullable: true }
+    StatusResponse:
+      type: object
+      required: [has_filled, registration]
+      properties:
+        has_filled: { type: boolean }
+        registration:
+          nullable: true
+          type: object
+          properties:
+            registration_id: { type: string }
+            reference_id: { type: string }
+            status: { $ref: "#/components/schemas/Status" }
+            group_size: { type: integer }
+            lead_name: { type: string, nullable: true }
+            lead_mobile_masked: { type: string, example: "+91 98765 XXXXX" }
+            city: { type: string }
+            submitted_at: { type: string }
+            your_role: { type: string, enum: [LEAD, MEMBER] }
+            message: { type: string, description: Ready-to-show text for the current status }
+    SubmitResponse:
+      type: object
+      properties:
+        registration_id: { type: string }
+        reference_id: { type: string, example: IFF-7K3M9P }
+        status: { type: string, enum: [RECEIVED] }
+        group_size: { type: integer }
+        submitted_at: { type: string }
+    Person:
+      type: object
+      required: [full_name, age, mobile, email]
+      properties:
+        full_name: { type: string, minLength: 2, maxLength: 80 }
+        age: { type: integer, minimum: 1, maximum: 99 }
+        mobile: { type: string, pattern: "^[6-9]\\d{9}$" }
+        email: { type: string, format: email, description: Lower-cased by the server }
+    RegistrationPayload:
+      description: The JSON placed in the `payload` multipart part.
+      type: object
+      required: [lead, members, consent]
+      properties:
+        client_request_id: { type: string, format: uuid }
+        lead:
+          allOf:
+            - $ref: "#/components/schemas/Person"
+            - type: object
+              required: [city]
+              properties:
+                city: { type: string, minLength: 2, maxLength: 60 }
+        members:
+          type: array
+          minItems: 4
+          maxItems: 9
+          items:
+            allOf:
+              - $ref: "#/components/schemas/Person"
+              - type: object
+                required: [position]
+                properties:
+                  position: { type: integer, minimum: 2, maximum: 10 }
+        photos_provided:
+          type: array
+          items: { type: string, example: member_2 }
+          description: "`lead`, `member_2` ... `member_10`; must match the attached files"
+        group_pdf_provided: { type: boolean }
+        consent:
+          type: object
+          required: [accepted, text_version, accepted_at]
+          properties:
+            accepted: { type: boolean, enum: [true] }
+            text_version: { type: string, example: v1 }
+            accepted_at: { type: string, format: date-time }
+        device:
+          type: object
+          properties:
+            platform: { type: string, example: android }
+            app_version: { type: string, example: 1.4.0 }
+      example:
+        client_request_id: b7e1c2a4-5d3f-4c1e-9a77-3f2d8e9c0a11
+        lead: { full_name: Rahul Sharma, age: 32, mobile: "9876543210", email: rahul@example.com, city: Lucknow }
+        members:
+          - { position: 2, full_name: Priya Sharma, age: 29, mobile: "9876500001", email: priya@example.com }
+          - { position: 3, full_name: Aman Verma, age: 34, mobile: "9876500002", email: aman@example.com }
+          - { position: 4, full_name: Neha Singh, age: 27, mobile: "9876500003", email: neha@example.com }
+          - { position: 5, full_name: Karan Gupta, age: 31, mobile: "9876500004", email: karan@example.com }
+        photos_provided: [lead, member_2, member_3]
+        group_pdf_provided: true
+        consent: { accepted: true, text_version: v1, accepted_at: "2026-10-01T14:31:55+05:30" }
+        device: { platform: android, app_version: 1.4.0 }
+    AudienceConfig:
+      type: object
+      properties:
+        banner_enabled: { type: boolean }
+        registration_open: { type: boolean }
+        banner_image_url: { type: string, nullable: true }
+        title: { type: string, nullable: true }
+        subtitle: { type: string, nullable: true }
+        cta_label: { type: string, nullable: true }
+        starts_at: { type: string, nullable: true }
+        ends_at: { type: string, nullable: true }
+        updated_at: { type: string, nullable: true }
+    AudienceConfigUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        banner_enabled: { type: boolean }
+        registration_open: { type: boolean }
+        banner_image_url: { type: string, nullable: true, maxLength: 2000, description: "http(s) URL; any image type incl. GIF" }
+        title: { type: string, nullable: true, maxLength: 200 }
+        subtitle: { type: string, nullable: true, maxLength: 400 }
+        cta_label: { type: string, nullable: true, maxLength: 60 }
+        starts_at: { type: string, format: date-time, nullable: true, description: ISO-8601 with offset }
+        ends_at: { type: string, format: date-time, nullable: true, description: Must be after starts_at }
+    RegistrationList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              registration_id: { type: string }
+              reference_id: { type: string }
+              status: { $ref: "#/components/schemas/Status" }
+              group_size: { type: integer }
+              city: { type: string }
+              lead_name: { type: string, nullable: true }
+              lead_mobile: { type: string }
+              lead_email: { type: string, nullable: true }
+              submitted_at: { type: string }
+        pagination:
+          type: object
+          properties:
+            total: { type: integer }
+            page: { type: integer }
+            limit: { type: integer }
+            totalPages: { type: integer }
+    RegistrationDetail:
+      type: object
+      properties:
+        registration_id: { type: string }
+        reference_id: { type: string }
+        status: { $ref: "#/components/schemas/Status" }
+        group_size: { type: integer }
+        city: { type: string }
+        user_id: { type: string, nullable: true }
+        consent: { type: object, properties: { text_version: { type: string }, accepted_at: { type: string } } }
+        device: { type: object, nullable: true }
+        submitted_at: { type: string }
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              position: { type: integer }
+              full_name: { type: string }
+              age: { type: integer }
+              mobile: { type: string }
+              email: { type: string }
+              photo_file_id: { type: string, nullable: true }
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              file_id: { type: string }
+              kind: { type: string, enum: [PHOTO, GROUP_PDF] }
+              owner_position: { type: integer, nullable: true }
+              mime: { type: string }
+              size: { type: integer }
+              url: { type: string, nullable: true, description: Short-lived signed URL }
+              url_expires_in: { type: integer, nullable: true }

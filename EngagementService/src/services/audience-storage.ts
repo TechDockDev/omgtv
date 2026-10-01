@@ -1,7 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { Storage } from "@google-cloud/storage";
+import { Storage, type StorageOptions } from "@google-cloud/storage";
 import { loadConfig } from "../config";
 import { AudienceError } from "./audience-errors";
+
+function storageOptions(): StorageOptions {
+  const keyJson = loadConfig().AUDIENCE_GCS_KEY_JSON;
+  if (!keyJson) return {}; // falls back to Application Default Credentials
+  try {
+    const credentials = JSON.parse(keyJson);
+    // Passing credentials explicitly lets the client sign v4 URLs locally
+    // with this key's private key, instead of calling the IAM signBlob API
+    // (which would need roles/iam.serviceAccountTokenCreator on itself).
+    return { credentials, projectId: credentials.project_id };
+  } catch {
+    throw new Error("AUDIENCE_GCS_KEY_JSON is not valid JSON");
+  }
+}
 
 export interface AudienceFileStorage {
   put(key: string, body: Buffer, contentType: string): Promise<void>;
@@ -20,7 +34,7 @@ class GcsAudienceStorage implements AudienceFileStorage {
   private readonly bucket;
 
   constructor(bucketName: string) {
-    this.bucket = new Storage().bucket(bucketName);
+    this.bucket = new Storage(storageOptions()).bucket(bucketName);
   }
 
   async put(key: string, body: Buffer, contentType: string): Promise<void> {

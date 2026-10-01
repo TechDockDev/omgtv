@@ -268,17 +268,25 @@ export const adminStatusBodySchema = z.object({
   status: z.enum(["RECEIVED", "WAITLISTED", "SHORTLISTED", "NOT_SELECTED"]),
 });
 
+// Any image format works (JPG/PNG/WebP/animated GIF) since this is only a URL
+// the app/email client loads. Restricted to http(s) so javascript:/data: URLs
+// can't be stored and later rendered by an admin or client.
+const imageUrlSchema = z
+  .string()
+  .url()
+  .max(2000)
+  .refine((value) => /^https?:\/\//i.test(value), { message: "Image URL must start with http:// or https://" });
+
 export const adminConfigBodySchema = z
   .object({
     banner_enabled: z.boolean(),
     registration_open: z.boolean(),
-    banner_image_url: z.string().url().max(2000).nullable(),
+    banner_image_url: imageUrlSchema.nullable(),
     title: z.string().trim().max(200).nullable(),
     subtitle: z.string().trim().max(400).nullable(),
     cta_label: z.string().trim().max(60).nullable(),
     starts_at: z.string().datetime({ offset: true }).nullable(),
     ends_at: z.string().datetime({ offset: true }).nullable(),
-    max_groups: z.number().int().min(1).nullable(),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: "At least one field must be provided" })
@@ -286,6 +294,10 @@ export const adminConfigBodySchema = z
     (v) => !(v.starts_at && v.ends_at) || new Date(v.starts_at) < new Date(v.ends_at),
     { message: "starts_at must be before ends_at", path: ["ends_at"] }
   );
+
+export const emailTemplateImageBodySchema = z.object({
+  email_banner_image_url: imageUrlSchema.nullable(),
+});
 
 export const statusQuerySchema = z.object({
   mobile: z.string().regex(MOBILE_RE).optional(),

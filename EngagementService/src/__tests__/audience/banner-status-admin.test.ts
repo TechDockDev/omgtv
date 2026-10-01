@@ -99,27 +99,11 @@ describe("GET /banner", () => {
     expect((await getBanner(prisma(), new Date("2026-10-21T00:00:01+05:30"))).enabled).toBe(false);
   });
 
-  it("keeps showing the banner with registration_open=false when capacity is full or closed", async () => {
-    await setConfig({ bannerEnabled: true, startsAt: STARTS, endsAt: ENDS, maxGroups: 1 });
-    // fill the single slot, then compare the banner against the registration flag
-    await prisma().audienceRegistration.create({
-      data: {
-        referenceId: "IFF-AAAAAA",
-        leadMobile: "9000000001",
-        groupSize: 5,
-        city: "X",
-        consentVersion: "v1",
-        consentAt: new Date(),
-        idempotencyKey: "full-slot-key-1",
-      },
-    });
-    invalidateAudienceConfigCache();
-    const full = await getBanner(prisma(), T0);
-    expect(full.enabled).toBe(true);
-    expect(full.banner?.registration_open).toBe(false);
-
-    await setConfig({ maxGroups: null, registrationOpen: false });
-    expect((await getBanner(prisma(), T0)).banner?.registration_open).toBe(false);
+  it("keeps showing the banner with registration_open=false once closed", async () => {
+    await setConfig({ bannerEnabled: true, startsAt: STARTS, endsAt: ENDS, registrationOpen: false });
+    const closed = await getBanner(prisma(), T0);
+    expect(closed.enabled).toBe(true);
+    expect(closed.banner?.registration_open).toBe(false);
   });
 
   it("is cached for 60 seconds and refreshed after an admin update", async () => {
@@ -294,13 +278,11 @@ describe("admin API", () => {
         cta_label: "Go",
         starts_at: "2026-10-01T00:00:00+05:30",
         ends_at: "2026-10-20T23:59:59+05:30",
-        max_groups: 50,
       },
     });
     expect(patch.statusCode).toBe(200);
     expect(patch.json()).toMatchObject({
       banner_enabled: true,
-      max_groups: 50,
       starts_at: "2026-10-01T00:00:00+05:30",
     });
     expect((await app.inject({ method: "GET", url: "/admin/audience/config" })).json().title).toBe("T");
@@ -322,6 +304,99 @@ describe("admin API", () => {
       payload: { banner_image_url: "not a url" },
     });
     expect(badUrl.statusCode).toBe(422);
+
+    // only http(s) image URLs are storable
+    for (const unsafe of ["javascript:alert(1)", "data:image/gif;base64,R0lGODlhAQABAAAAACw=", "file:///etc/passwd"]) {
+      const res = await app.inject({
+        method: "PATCH",
+        url: "/admin/audience/config",
+        payload: { banner_image_url: unsafe },
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.fields).toHaveProperty("banner_image_url");
+    }
+  });
+
+  it("a first-ever PATCH creates the config with registration CLOSED unless stated", async () => {
+    const first = await app.inject({
+      method: "PATCH",
+      url: "/admin/audience/config",
+      payload: { banner_enabled: true, title: "Hello" },
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().registration_open).toBe(false);
+
+    const open = await app.inject({
+      method: "PATCH",
+      url: "/admin/audience/config",
+      payload: { registration_open: true },
+    });
+    expect(open.json()).toMatchObject({ registration_open: true, title: "Hello", banner_enabled: true });
+  });
+
+  it("accepts a GIF (or any image) URL for the banner and serves it unchanged", async () => {
+    for (const url of [
+      "https://cdn.example.com/banners/audience.gif",
+      "https://cdn.example.com/banners/animated.GIF?v=3&w=800",
+      "https://cdn.example.com/banners/audience.webp",
+    ]) {
+      const patch = await app.inject({
+        method: "PATCH",
+        url: "/admin/audience/config",
+        payload: { banner_enabled: true, banner_image_url: url },
+      });
+      expect(patch.statusCode).toBe(200);
+      expect(patch.json().banner_image_url).toBe(url);
+      const banner = await app.inject({ method: "GET", url: "/client/audience/banner" });
+      expect(banner.json().banner.image_url).toBe(url);
+    }
+    // clearing it is allowed too
+    const cleared = await app.inject({
+      method: "PATCH",
+      url: "/admin/audience/config",
+      payload: { banner_image_url: null },
+    });
+    expect(cleared.json().banner_image_url).toBeNull();
+  });
+
+  it("GET/PATCH /email-template/image stores a pasted link, separate from the app banner", async () => {
+    const empty = await app.inject({ method: "GET", url: "/admin/audience/email-template/image" });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({ email_banner_image_url: null });
+
+    const url = "https://cdn.example.com/media-library/email-header.jpg";
+    const patch = await app.inject({
+      method: "PATCH",
+      url: "/admin/audience/email-template/image",
+      payload: { email_banner_image_url: url },
+    });
+    expect(patch.statusCode).toBe(200);
+    expect(patch.json()).toEqual({ email_banner_image_url: url });
+
+    const read = await app.inject({ method: "GET", url: "/admin/audience/email-template/image" });
+    expect(read.json()).toEqual({ email_banner_image_url: url });
+
+    // Does not touch the app banner's own image field.
+    expect((await app.inject({ method: "GET", url: "/admin/audience/config" })).json().banner_image_url).not.toBe(
+      url
+    );
+
+    // Same http(s)-only rule as the banner URL.
+    const unsafe = await app.inject({
+      method: "PATCH",
+      url: "/admin/audience/email-template/image",
+      payload: { email_banner_image_url: "javascript:alert(1)" },
+    });
+    expect(unsafe.statusCode).toBe(422);
+    expect(unsafe.json().error.fields).toHaveProperty("email_banner_image_url");
+
+    // Clearing it is allowed.
+    const cleared = await app.inject({
+      method: "PATCH",
+      url: "/admin/audience/email-template/image",
+      payload: { email_banner_image_url: null },
+    });
+    expect(cleared.json()).toEqual({ email_banner_image_url: null });
   });
 
   it("lists with status, city and date filters plus pagination", async () => {

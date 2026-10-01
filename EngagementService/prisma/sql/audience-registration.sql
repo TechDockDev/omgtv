@@ -9,13 +9,13 @@ CREATE TABLE "AudienceConfig" (
     "id" INTEGER NOT NULL DEFAULT 1,
     "bannerEnabled" BOOLEAN NOT NULL DEFAULT false,
     "bannerImageUrl" TEXT,
+    "emailBannerImageUrl" TEXT,
     "title" TEXT,
     "subtitle" TEXT,
     "ctaLabel" TEXT,
     "startsAt" TIMESTAMP(3),
     "endsAt" TIMESTAMP(3),
     "registrationOpen" BOOLEAN NOT NULL DEFAULT true,
-    "maxGroups" INTEGER,
     "updatedByAdminId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -108,3 +108,4 @@ ALTER TABLE "AudienceRegistrationMember" ADD CONSTRAINT "AudienceRegistrationMem
 
 -- AddForeignKey
 ALTER TABLE "AudienceRegistrationFile" ADD CONSTRAINT "AudienceRegistrationFile_registrationId_fkey" FOREIGN KEY ("registrationId") REFERENCES "AudienceRegistration"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
