@@ -114,6 +114,22 @@ export default async function audienceRoutes(fastify: FastifyInstance) {
 
   fastify.route({
     method: "GET",
+    url: "/admin/email-template/image",
+    config: adminConfig,
+    preHandler: adminOnly,
+    handler: (request, reply) => forward(request, reply, "/admin/audience/email-template/image"),
+  });
+
+  fastify.route({
+    method: "PATCH",
+    url: "/admin/email-template/image",
+    config: { ...adminConfig, security: { bodyLimit: 32 * 1024 } },
+    preHandler: adminOnly,
+    handler: (request, reply) => forward(request, reply, "/admin/audience/email-template/image"),
+  });
+
+  fastify.route({
+    method: "GET",
     url: "/admin/registrations",
     config: adminConfig,
     preHandler: adminOnly,
