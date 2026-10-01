@@ -22,3 +22,9 @@ export function formatHoursMinutes(totalSeconds: number): string {
   const m = totalMinutes % 60;
   return `${h}h ${m}m`;
 }
+
+/** Formats an instant as ISO-8601 in IST, e.g. 2026-10-01T14:32:10+05:30. */
+export function toIstIso(date: Date): string {
+  const shifted = new Date(date.getTime() + IST_OFFSET_MS);
+  return `${shifted.toISOString().slice(0, 19)}+05:30`;
+}

@@ -26,6 +26,8 @@ import authRoutes from "./routes/auth.routes";
 import uploadRoutes from "./routes/upload.routes";
 import contentRoutes from "./routes/content.routes";
 import engagementRoutes from "./routes/engagement.routes";
+import audienceRoutes from "./routes/audience.routes";
+import { registerMultipartPassthrough } from "./plugins/multipart-passthrough";
 import searchRoutes from "./routes/search.routes";
 import streamingRoutes from "./routes/streaming.routes";
 import proxyRoutes from "./routes/proxy.route";
@@ -89,6 +91,8 @@ export async function createApp(): Promise<FastifyInstance> {
       done(err, undefined);
     }
   });
+  registerMultipartPassthrough(app);
+
   // Register global envelope + error handling early so it applies to all routes.
   app.addHook("preSerialization", async (request, reply, payload) => {
     const contextConfig = request.context.config as
@@ -295,6 +299,7 @@ export async function createApp(): Promise<FastifyInstance> {
       "Content-Type",
       "X-Request-ID",
       "X-Correlation-ID",
+      "Idempotency-Key",
     ],
   });
 
@@ -327,6 +332,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(contentRoutes, { prefix: "/api/v1/content" });
   // Engagement routes registered via plugin
   await app.register(engagementRoutes, { prefix: "/api/v1/engagement" });
+  await app.register(audienceRoutes, { prefix: "/api/v1/audience" });
 
   await app.register(searchRoutes, { prefix: "/api/v1" });
   if (config.STREAMING_SERVICE_URL) {

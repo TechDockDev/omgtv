@@ -36,6 +36,31 @@ const envSchema = z.object({
   AD_REWARD_COINS: z.coerce.number().int().positive().default(10),
   CONTENT_SERVICE_URL: z.string().default("http://content-service:4600"),
   NOTIFICATION_SERVICE_URL: z.string().default("http://notification-service:5200"),
+
+  // --- Audience registration ---
+  // Private GCS bucket for registration photos/PDFs. Unset = uploads disabled
+  // (submit returns 503 rather than silently dropping files).
+  AUDIENCE_BUCKET: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value && value.trim().length > 0 ? value.trim() : undefined
+    ),
+  AUDIENCE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+  // Per-mobile submit attempts allowed per window (needs Redis; skipped without it).
+  AUDIENCE_SUBMIT_MAX_PER_MOBILE: z.coerce.number().int().positive().default(5),
+  AUDIENCE_SUBMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),
+  // GET /registration/status?mobile= lets anyone probe whether a number is
+  // registered. Off by default; the logged-in token path is the normal route.
+  AUDIENCE_ALLOW_MOBILE_LOOKUP: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  // Banner image URL embedded in audience registration emails (hosted on CDN).
+  AUDIENCE_EMAIL_BANNER_URL: z
+    .string()
+    .url()
+    .default("https://cdn.sonyliv.com/audience/indian-game-show-banner.jpg"),
 });
 
 type Env = z.infer<typeof envSchema>;

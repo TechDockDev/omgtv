@@ -7,6 +7,11 @@ const GlobalResponsePlugin: FastifyPluginAsync = async (fastify) => {
     fastify.addHook("onSend", async (request, reply, payload) => {
         const { statusCode } = reply;
 
+        // Routes with a published raw contract (e.g. audience registration) opt out.
+        if (request.routeOptions?.config?.rawResponse) {
+            return payload;
+        }
+
         // Skip wrapping if it's already wrapped or not a JSON response we want to touch
         const contentType = reply.getHeader("content-type");
         if (typeof contentType === 'string' && !contentType.includes("application/json")) {
@@ -56,5 +61,11 @@ const GlobalResponsePlugin: FastifyPluginAsync = async (fastify) => {
         reply.status(statusCode).send(wrapped);
     });
 };
+
+declare module "fastify" {
+    interface FastifyContextConfig {
+        rawResponse?: boolean;
+    }
+}
 
 export default fp(GlobalResponsePlugin);

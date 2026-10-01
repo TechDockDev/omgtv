@@ -115,6 +115,91 @@ model ContentReport {
   @@index([userId])
 }
 
+// --- Audience registration (TV show) ---
+
+enum AudienceRegistrationStatus {
+  RECEIVED
+  WAITLISTED
+  SHORTLISTED
+  NOT_SELECTED
+}
+
+enum AudienceFileKind {
+  PHOTO
+  GROUP_PDF
+}
+
+// Single-row config (id = 1). Row-locked during submit so max_groups is
+// enforced first-come-first-served even under concurrent requests.
+model AudienceConfig {
+  id               Int       @id @default(1)
+  bannerEnabled    Boolean   @default(false)
+  bannerImageUrl   String?
+  title            String?
+  subtitle         String?
+  ctaLabel         String?
+  startsAt         DateTime?
+  endsAt           DateTime?
+  registrationOpen Boolean   @default(true)
+  maxGroups        Int?
+  updatedByAdminId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model AudienceRegistration {
+  id             String                     @id @default(uuid())
+  referenceId    String                     @unique
+  userId         String?                    @unique
+  leadMobile     String                     @unique
+  status         AudienceRegistrationStatus @default(RECEIVED)
+  groupSize      Int
+  city           String
+  consentVersion String
+  consentAt      DateTime
+  deviceInfo     Json?
+  idempotencyKey String                     @unique
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  members AudienceRegistrationMember[]
+  files   AudienceRegistrationFile[]
+
+  @@index([status])
+  @@index([city])
+  @@index([createdAt])
+}
+
+model AudienceRegistrationMember {
+  id             String  @id @default(uuid())
+  registrationId String
+  position       Int // 1 = lead
+  fullName       String
+  age            Int
+  mobile         String  @unique
+  email          String
+  photoFileId    String?
+
+  registration AudienceRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([registrationId, position])
+}
+
+model AudienceRegistrationFile {
+  id             String           @id @default(uuid())
+  registrationId String
+  kind           AudienceFileKind
+  ownerPosition  Int? // set for PHOTO, null for GROUP_PDF
+  storageKey     String           @unique
+  mime           String
+  size           Int
+  createdAt      DateTime         @default(now())
+
+  registration AudienceRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@index([registrationId])
+}
+
 model SearchHistory {
   id        String   @id @default(uuid())
   userId    String
