@@ -41,7 +41,7 @@ const photo = (field: string, data: Buffer, contentType = "image/jpeg"): Multipa
 async function openConfig(overrides: Record<string, unknown> = {}) {
   await prisma().audienceConfig.upsert({
     where: { id: 1 },
-    update: { registrationOpen: true, startsAt: null, endsAt: null, maxGroups: null, ...overrides },
+    update: { registrationOpen: true, startsAt: null, endsAt: null, ...overrides },
     create: { id: 1, registrationOpen: true, ...overrides },
   });
   invalidateAudienceConfigCache();
@@ -526,25 +526,16 @@ describe("POST /registration - closed / capacity", () => {
     expect(res.status).toBe(403);
   });
 
-  it("403 once max_groups is reached", async () => {
-    await openConfig({ maxGroups: 1 });
-    expect((await submit(app, buildPayload(5, 0), [await groupPdfFile()])).status).toBe(201);
-    const res = await submit(app, buildPayload(5, 100), [await groupPdfFile()]);
-    expect([res.status, res.body.error.code]).toEqual([403, "REGISTRATION_CLOSED"]);
-  });
-
-  it("never exceeds max_groups under concurrent submissions", async () => {
-    await openConfig({ maxGroups: 3 });
+  it("admits all concurrent submissions when registrations are open", async () => {
+    await openConfig();
     const results = await Promise.all(
       Array.from({ length: 6 }, async (_v, i) =>
         submit(app, buildPayload(5, (i + 1) * 100), [await groupPdfFile()])
       )
     );
     const statuses = results.map((r) => r.status);
-    expect(statuses.filter((s) => s === 201)).toHaveLength(3);
-    expect(statuses.filter((s) => s === 403)).toHaveLength(3);
-    expect(await prisma().audienceRegistration.count()).toBe(3);
-    // the 3 rejected groups must not leave files behind
-    expect(storage.objects.size).toBe(3);
+    expect(statuses.filter((s) => s === 201)).toHaveLength(6);
+    expect(await prisma().audienceRegistration.count()).toBe(6);
+    expect(storage.objects.size).toBe(6);
   });
 });

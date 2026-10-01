@@ -7,11 +7,12 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc --noEmit false --outDir dist",
     "start": "node dist/server.js",
-    "test": "tsx src/__tests__/admin-analytics-schema.test.ts && vitest run",
+    "test": "tsx src/__tests__/admin-analytics-schema.test.ts && vitest run src/__tests__/audience/validation.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write .",
-    "test:audience": "vitest run"
+    "test:audience": "vitest run",
+    "seed:audience": "tsx prisma/seed-audience.ts"
   },
   "engines": {
     "node": ">=18.18"

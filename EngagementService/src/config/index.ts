@@ -47,6 +47,17 @@ const envSchema = z.object({
       value && value.trim().length > 0 ? value.trim() : undefined
     ),
   AUDIENCE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+  // Service-account key JSON for the audience bucket, used verbatim as GCS
+  // client credentials. Lets the client sign v4 URLs locally (JWT, using the
+  // key's own private key) instead of calling the IAM signBlob API, so the
+  // workload identity does NOT need roles/iam.serviceAccountTokenCreator on
+  // itself. Unset = falls back to Application Default Credentials.
+  AUDIENCE_GCS_KEY_JSON: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value && value.trim().length > 0 ? value.trim() : undefined
+    ),
   // Per-mobile submit attempts allowed per window (needs Redis; skipped without it).
   AUDIENCE_SUBMIT_MAX_PER_MOBILE: z.coerce.number().int().positive().default(5),
   AUDIENCE_SUBMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),

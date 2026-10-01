@@ -44,19 +44,17 @@ export function maskMobile(mobile: string): string {
 
 // ---------------------------------------------------------------- config/banner
 
-type ConfigSnapshot = { row: AudienceConfig; groupCount: number };
 const CONFIG_CACHE_TTL_MS = 60_000;
-let configCache: { value: ConfigSnapshot | null; expiresAt: number } | null = null;
+let configCache: { value: AudienceConfig | null; expiresAt: number } | null = null;
 
 export function invalidateAudienceConfigCache() {
   configCache = null;
 }
 
-async function loadConfigSnapshot(prisma: PrismaClient): Promise<ConfigSnapshot | null> {
+async function loadConfigSnapshot(prisma: PrismaClient): Promise<AudienceConfig | null> {
   const now = Date.now();
   if (configCache && configCache.expiresAt > now) return configCache.value;
-  const row = await prisma.audienceConfig.findUnique({ where: { id: 1 } });
-  const value = row ? { row, groupCount: await prisma.audienceRegistration.count() } : null;
+  const value = await prisma.audienceConfig.findUnique({ where: { id: 1 } });
   configCache = { value, expiresAt: now + CONFIG_CACHE_TTL_MS };
   return value;
 }
@@ -72,12 +70,10 @@ export function isRegistrationOpen(cfg: AudienceConfig, now: Date): boolean {
 }
 
 export async function getBanner(prisma: PrismaClient, now = new Date()) {
-  const snapshot = await loadConfigSnapshot(prisma);
-  const cfg = snapshot?.row;
-  if (!snapshot || !cfg || !cfg.bannerEnabled || !isWithinWindow(cfg, now)) {
+  const cfg = await loadConfigSnapshot(prisma);
+  if (!cfg || !cfg.bannerEnabled || !isWithinWindow(cfg, now)) {
     return { enabled: false, banner: null };
   }
-  const full = cfg.maxGroups != null && snapshot.groupCount >= cfg.maxGroups;
   return {
     enabled: true,
     banner: {
@@ -86,7 +82,7 @@ export async function getBanner(prisma: PrismaClient, now = new Date()) {
       title: cfg.title,
       subtitle: cfg.subtitle,
       cta_label: cfg.ctaLabel,
-      registration_open: isRegistrationOpen(cfg, now) && !full,
+      registration_open: isRegistrationOpen(cfg, now),
       starts_at: cfg.startsAt ? toIstIso(cfg.startsAt) : null,
       ends_at: cfg.endsAt ? toIstIso(cfg.endsAt) : null,
     },
@@ -311,9 +307,9 @@ async function runSubmission(input: SubmitInput): Promise<SubmitResult> {
   // 2. Cheap validation + business pre-checks before any expensive work.
   const files = validateFiles(norm, input);
 
-  const snapshot = await loadConfigSnapshot(prisma);
+  const cfg = await loadConfigSnapshot(prisma);
   const now = new Date();
-  if (!snapshot || !isRegistrationOpen(snapshot.row, now)) {
+  if (!cfg || !isRegistrationOpen(cfg, now)) {
     throw new AudienceError("REGISTRATION_CLOSED", "Registrations are closed.");
   }
 
@@ -351,27 +347,16 @@ async function runSubmission(input: SubmitInput): Promise<SubmitResult> {
       if (file.kind === "PHOTO" && file.ownerPosition != null) photoFileId.set(file.ownerPosition, file.id);
     }
 
-    // 4. Commit. The config row lock serializes submitters, so the max_groups
-    //    count below is exact even under concurrent requests.
+    // 4. Commit. Re-check open/closed inside the transaction (an admin may have
+    //    closed registrations between step 2 and here) before creating the row.
     for (let attempt = 0; attempt < 5; attempt++) {
       const referenceId = generateReferenceId();
       try {
         const created = await prisma.$transaction(
           async (tx) => {
-            const locked = await tx.$queryRaw<{ id: number }[]>`
-              SELECT id FROM "AudienceConfig" WHERE id = 1 FOR UPDATE`;
-            if (locked.length === 0) {
+            const cfg = await tx.audienceConfig.findUnique({ where: { id: 1 } });
+            if (!cfg || !isRegistrationOpen(cfg, new Date())) {
               throw new AudienceError("REGISTRATION_CLOSED", "Registrations are closed.");
-            }
-            const cfg = await tx.audienceConfig.findUniqueOrThrow({ where: { id: 1 } });
-            if (!isRegistrationOpen(cfg, new Date())) {
-              throw new AudienceError("REGISTRATION_CLOSED", "Registrations are closed.");
-            }
-            if (cfg.maxGroups != null) {
-              const count = await tx.audienceRegistration.count();
-              if (count >= cfg.maxGroups) {
-                throw new AudienceError("REGISTRATION_CLOSED", "All registration slots have been filled.");
-              }
             }
             return tx.audienceRegistration.create({
               data: {
@@ -475,9 +460,9 @@ export async function getRegistrationStatus(input: StatusInput) {
   // Anyone listed in a group (lead or member) counts as registered.
   const member = mobile
     ? await prisma.audienceRegistrationMember.findUnique({
-        where: { mobile },
-        select: { position: true, registrationId: true },
-      })
+      where: { mobile },
+      select: { position: true, registrationId: true },
+    })
     : null;
   let registrationId = member?.registrationId ?? null;
   let role: "LEAD" | "MEMBER" = member?.position === 1 ? "LEAD" : "MEMBER";

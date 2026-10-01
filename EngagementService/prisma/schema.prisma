@@ -129,19 +129,21 @@ enum AudienceFileKind {
   GROUP_PDF
 }
 
-// Single-row config (id = 1). Row-locked during submit so max_groups is
-// enforced first-come-first-served even under concurrent requests.
+// Single-row config (id = 1). Row-locked during submit so the open/closed
+// check is exact even under concurrent requests.
 model AudienceConfig {
   id               Int       @id @default(1)
   bannerEnabled    Boolean   @default(false)
   bannerImageUrl   String?
+  // Separate image used only inside confirmation/status-change emails.
+  // Falls back to bannerImageUrl, then AUDIENCE_EMAIL_BANNER_URL, when unset.
+  emailBannerImageUrl String?
   title            String?
   subtitle         String?
   ctaLabel         String?
   startsAt         DateTime?
   endsAt           DateTime?
   registrationOpen Boolean   @default(true)
-  maxGroups        Int?
   updatedByAdminId String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt

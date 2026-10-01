@@ -16,7 +16,6 @@ export type ConfigBody = {
   cta_label?: string | null;
   starts_at?: string | null;
   ends_at?: string | null;
-  max_groups?: number | null;
 };
 
 export function configToApi(row: AudienceConfig | null) {
@@ -29,7 +28,6 @@ export function configToApi(row: AudienceConfig | null) {
     cta_label: row?.ctaLabel ?? null,
     starts_at: row?.startsAt ? toIstIso(row.startsAt) : null,
     ends_at: row?.endsAt ? toIstIso(row.endsAt) : null,
-    max_groups: row?.maxGroups ?? null,
     updated_at: row ? toIstIso(row.updatedAt) : null,
   };
 }
@@ -52,7 +50,6 @@ export async function updateAdminConfig(
   if (body.cta_label !== undefined) data.ctaLabel = body.cta_label;
   if (body.starts_at !== undefined) data.startsAt = body.starts_at ? new Date(body.starts_at) : null;
   if (body.ends_at !== undefined) data.endsAt = body.ends_at ? new Date(body.ends_at) : null;
-  if (body.max_groups !== undefined) data.maxGroups = body.max_groups;
 
   // The window can be changed one side at a time; validate the merged result.
   const current = await prisma.audienceConfig.findUnique({ where: { id: 1 } });
@@ -69,7 +66,9 @@ export async function updateAdminConfig(
   const row = await prisma.audienceConfig.upsert({
     where: { id: 1 },
     update: data,
-    create: { id: 1, ...(data as Prisma.AudienceConfigUncheckedCreateInput) },
+    // A brand-new row must never open registration by accident: it stays closed
+    // until an admin explicitly sets registration_open: true.
+    create: { id: 1, registrationOpen: false, ...(data as Prisma.AudienceConfigUncheckedCreateInput) },
   });
   invalidateAudienceConfigCache();
   return configToApi(row);
@@ -266,4 +265,27 @@ export async function exportRegistrationsCsv(
     cursor = batch[batch.length - 1].id;
   }
   return lines.join("\r\n") + "\r\n";
+}
+
+// ---------------------------------------------------------------- email template image
+
+export async function getEmailTemplateImage(prisma: PrismaClient) {
+  const row = await prisma.audienceConfig.findUnique({ where: { id: 1 } });
+  return { email_banner_image_url: row?.emailBannerImageUrl ?? null };
+}
+
+// The admin pastes a link from the existing media library — same pattern as
+// banner_image_url. No upload/storage path here.
+export async function updateEmailTemplateImage(
+  prisma: PrismaClient,
+  adminId: string | undefined,
+  emailBannerImageUrl: string | null
+) {
+  const row = await prisma.audienceConfig.upsert({
+    where: { id: 1 },
+    update: { emailBannerImageUrl, updatedByAdminId: adminId ?? null },
+    create: { id: 1, registrationOpen: false, emailBannerImageUrl, updatedByAdminId: adminId ?? null },
+  });
+  invalidateAudienceConfigCache();
+  return { email_banner_image_url: row.emailBannerImageUrl };
 }

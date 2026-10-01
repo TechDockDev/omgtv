@@ -5,15 +5,18 @@ import {
   adminConfigBodySchema,
   adminListQuerySchema,
   adminStatusBodySchema,
+  emailTemplateImageBodySchema,
   zodIssuesToFields,
 } from "../schemas/audience";
 import { AudienceError } from "../services/audience-errors";
 import {
   exportRegistrationsCsv,
   getAdminConfig,
+  getEmailTemplateImage,
   getRegistrationDetail,
   listRegistrations,
   updateAdminConfig,
+  updateEmailTemplateImage,
   updateRegistrationStatus,
 } from "../services/audience-admin-service";
 import { getAudienceStorage } from "../services/audience-storage";
@@ -81,5 +84,15 @@ export default async function audienceAdminRoutes(app: FastifyInstance) {
     const { id } = parseOrThrow(idParamsSchema.safeParse(request.params));
     const { status } = parseOrThrow(adminStatusBodySchema.safeParse(request.body));
     return updateRegistrationStatus(requirePrisma(), id, status);
+  });
+
+  // GET/PATCH /email-template/image — the image used inside confirmation and
+  // status-change emails. Admin pastes an already-hosted URL (media library),
+  // same pattern as banner_image_url — no upload here.
+  app.get("/email-template/image", raw, async () => getEmailTemplateImage(requirePrisma()));
+
+  app.patch("/email-template/image", raw, async (request) => {
+    const { email_banner_image_url } = parseOrThrow(emailTemplateImageBodySchema.safeParse(request.body));
+    return updateEmailTemplateImage(requirePrisma(), adminId(request.headers), email_banner_image_url);
   });
 }
