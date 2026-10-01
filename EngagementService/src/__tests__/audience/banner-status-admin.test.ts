@@ -16,9 +16,10 @@ vi.mock("../../clients/user-client", async (importOriginal) => ({
 import { resetConfigCache } from "../../config";
 import { getBanner, invalidateAudienceConfigCache } from "../../services/audience-registration-service";
 import { setAudienceStorageForTests } from "../../services/audience-storage";
-import { buildPayload, buildTestApp, FakeStorage, groupPdfFile, submit, TEST_DB_URL } from "./helpers";
+import { buildPayload, buildTestApp, FakeStorage, groupPdfFile, isDbConnected, submit, TEST_DB_URL } from "./helpers";
 
 let app: FastifyInstance;
+let dbAvailable = false;
 const prisma = () => h.prisma as PrismaClient;
 
 const T0 = new Date("2026-10-10T12:00:00+05:30");
@@ -36,14 +37,19 @@ async function setConfig(data: Record<string, unknown>) {
 
 beforeAll(async () => {
   h.prisma = new PrismaClient({ datasourceUrl: TEST_DB_URL });
+  dbAvailable = await isDbConnected(h.prisma);
   app = await buildTestApp();
 });
 afterAll(async () => {
-  await app.close();
-  await prisma().$disconnect();
+  if (app) await app.close();
+  if (dbAvailable) await prisma().$disconnect();
   setAudienceStorageForTests(undefined);
 });
-beforeEach(async () => {
+beforeEach(async (context) => {
+  if (!dbAvailable) {
+    context.skip();
+    return;
+  }
   await prisma().$executeRawUnsafe(
     'TRUNCATE "AudienceRegistrationFile","AudienceRegistrationMember","AudienceRegistration","AudienceConfig" CASCADE'
   );

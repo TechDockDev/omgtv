@@ -17,6 +17,7 @@ import {
   buildTestApp,
   FakeStorage,
   groupPdfFile,
+  isDbConnected,
   jpegFixture,
   pngFixture,
   submit,
@@ -27,6 +28,7 @@ import {
 
 let app: FastifyInstance;
 let storage: FakeStorage;
+let dbAvailable = false;
 const prisma = () => h.prisma as PrismaClient;
 
 const photo = (field: string, data: Buffer, contentType = "image/jpeg"): MultipartFile => ({
@@ -47,16 +49,21 @@ async function openConfig(overrides: Record<string, unknown> = {}) {
 
 beforeAll(async () => {
   h.prisma = new PrismaClient({ datasourceUrl: TEST_DB_URL });
+  dbAvailable = await isDbConnected(h.prisma);
   app = await buildTestApp();
 });
 
 afterAll(async () => {
-  await app.close();
-  await prisma().$disconnect();
+  if (app) await app.close();
+  if (dbAvailable) await prisma().$disconnect();
   setAudienceStorageForTests(undefined);
 });
 
-beforeEach(async () => {
+beforeEach(async (context) => {
+  if (!dbAvailable) {
+    context.skip();
+    return;
+  }
   await prisma().$executeRawUnsafe(
     'TRUNCATE "AudienceRegistrationFile","AudienceRegistrationMember","AudienceRegistration","AudienceConfig" CASCADE'
   );

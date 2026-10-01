@@ -10,6 +10,16 @@ export const TEST_DB_URL =
   process.env.AUDIENCE_TEST_DATABASE_URL ??
   "postgresql://postgres:postgres@localhost:5432/pocketlol_engagement_audience_test?schema=public";
 
+export async function isDbConnected(prisma: any): Promise<boolean> {
+  if (!prisma) return false;
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class FakeStorage implements AudienceFileStorage {
   objects = new Map<string, { body: Buffer; contentType: string }>();
   failPutOnCall: number | null = null;

@@ -14,7 +14,7 @@ vi.mock("../../lib/redis", () => ({ getRedisOptional: () => h.redis }));
 
 import { invalidateAudienceConfigCache } from "../../services/audience-registration-service";
 import { setAudienceStorageForTests } from "../../services/audience-storage";
-import { buildPayload, buildTestApp, FakeStorage, groupPdfFile, submit, TEST_DB_URL } from "./helpers";
+import { buildPayload, buildTestApp, FakeStorage, groupPdfFile, isDbConnected, submit, TEST_DB_URL } from "./helpers";
 
 class FakeRedis {
   counters = new Map<string, number>();
@@ -33,18 +33,24 @@ class FakeRedis {
 }
 
 let app: FastifyInstance;
+let dbAvailable = false;
 const prisma = () => h.prisma as PrismaClient;
 
 beforeAll(async () => {
   h.prisma = new PrismaClient({ datasourceUrl: TEST_DB_URL });
+  dbAvailable = await isDbConnected(h.prisma);
   app = await buildTestApp();
 });
 afterAll(async () => {
-  await app.close();
-  await prisma().$disconnect();
+  if (app) await app.close();
+  if (dbAvailable) await prisma().$disconnect();
   setAudienceStorageForTests(undefined);
 });
-beforeEach(async () => {
+beforeEach(async (context) => {
+  if (!dbAvailable) {
+    context.skip();
+    return;
+  }
   await prisma().$executeRawUnsafe(
     'TRUNCATE "AudienceRegistrationFile","AudienceRegistrationMember","AudienceRegistration","AudienceConfig" CASCADE'
   );
