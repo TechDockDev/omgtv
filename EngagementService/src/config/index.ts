@@ -58,6 +58,22 @@ const envSchema = z.object({
     .transform((value) =>
       value && value.trim().length > 0 ? value.trim() : undefined
     ),
+  // Optional: mirror every submitted registration as one row in a Google Sheet,
+  // via a Google Apps Script web app attached to that Sheet (admin convenience
+  // copy; the DB stays the source of truth). Unset = feature off.
+  AUDIENCE_SHEETS_WEBHOOK_URL: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value && value.trim().length > 0 ? value.trim() : undefined
+    ),
+  // Shared secret the Apps Script checks, so only this service can write rows.
+  AUDIENCE_SHEETS_WEBHOOK_SECRET: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value && value.trim().length > 0 ? value.trim() : undefined
+    ),
   // Per-mobile submit attempts allowed per window (needs Redis; skipped without it).
   AUDIENCE_SUBMIT_MAX_PER_MOBILE: z.coerce.number().int().positive().default(5),
   AUDIENCE_SUBMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),

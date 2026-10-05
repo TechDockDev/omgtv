@@ -18,6 +18,7 @@ import {
   type AudienceFileStorage,
 } from "./audience-storage";
 import { getRegistrationNotifier } from "./audience-notifier";
+import { getSheetsExporter } from "./audience-sheets";
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
@@ -395,6 +396,36 @@ async function runSubmission(input: SubmitInput): Promise<SubmitResult> {
             groupSize: created.groupSize,
           })
           .catch(() => console.warn("[audience] confirmation job could not be queued"));
+
+        // Best-effort admin convenience copy. Never blocks or fails the
+        // registration — the DB row above is already committed either way.
+        // Links are permanent public URLs — see audience-storage.ts for why
+        // the bucket is public-read rather than signed-URL-only.
+        const photoLinkByPosition = new Map<number, string>();
+        let groupPdfLink: string | null = null;
+        for (const f of stored) {
+          if (f.kind === "PHOTO" && f.ownerPosition != null) {
+            photoLinkByPosition.set(f.ownerPosition, storage.publicUrl(f.storageKey));
+          } else if (f.kind === "GROUP_PDF") {
+            groupPdfLink = storage.publicUrl(f.storageKey);
+          }
+        }
+        void getSheetsExporter()
+          .appendRow({
+            referenceId: created.referenceId,
+            registrationId: created.id,
+            userId: created.userId,
+            status: created.status,
+            createdAt: created.createdAt,
+            groupSize: created.groupSize,
+            city: created.city,
+            people: norm.people,
+            consent: norm.consent,
+            photoLinkByPosition,
+            groupPdfLink,
+          })
+          .catch(() => console.warn("[audience] sheet row append failed"));
+
         return result;
       } catch (err) {
         if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") throw err;

@@ -1,5 +1,4 @@
 import { Prisma, type AudienceConfig, type AudienceRegistrationStatus, type PrismaClient } from "@prisma/client";
-import { loadConfig } from "../config";
 import { csvRow } from "../utils/csv";
 import { toIstIso } from "../utils/date-range";
 import { AudienceError } from "./audience-errors";
@@ -148,19 +147,17 @@ export async function getRegistrationDetail(
   });
   if (!reg) throw new AudienceError("NOT_FOUND", "Registration not found.");
 
-  const ttl = loadConfig().AUDIENCE_SIGNED_URL_TTL_SECONDS;
-  const files = await Promise.all(
-    reg.files.map(async (f) => ({
-      file_id: f.id,
-      kind: f.kind,
-      owner_position: f.ownerPosition,
-      mime: f.mime,
-      size: f.size,
-      // Short-lived signed URL; the bucket itself is private.
-      url: storage ? await storage.signedReadUrl(f.storageKey, ttl) : null,
-      url_expires_in: storage ? ttl : null,
-    }))
-  );
+  // Bucket is public-read (deliberately — permanent links for the admin
+  // Sheet export), so this is a plain, non-expiring URL, not a signed one.
+  const files = reg.files.map((f) => ({
+    file_id: f.id,
+    kind: f.kind,
+    owner_position: f.ownerPosition,
+    mime: f.mime,
+    size: f.size,
+    url: storage ? storage.publicUrl(f.storageKey) : null,
+    url_expires_in: null,
+  }));
 
   return {
     registration_id: reg.id,

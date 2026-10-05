@@ -36,6 +36,9 @@ export class FakeStorage implements AudienceFileStorage {
   async signedReadUrl(key: string, ttl: number) {
     return `https://signed.example/${key}?ttl=${ttl}`;
   }
+  publicUrl(key: string) {
+    return `https://public.example/${key}`;
+  }
 }
 
 export async function buildTestApp(): Promise<FastifyInstance> {

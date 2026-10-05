@@ -21,6 +21,13 @@ export interface AudienceFileStorage {
   put(key: string, body: Buffer, contentType: string): Promise<void>;
   remove(key: string): Promise<void>;
   signedReadUrl(key: string, ttlSeconds: number): Promise<string>;
+  /**
+   * Permanent public URL for a stored file. Valid only because the bucket is
+   * public-read (deliberately — see AUDIENCE_BUCKET history: switched from
+   * private+signed-URLs so links can live permanently in the admin Sheet
+   * export). Anyone with this URL can view the file, no auth, forever.
+   */
+  publicUrl(key: string): string;
 }
 
 // Keys are random and carry no user data (no names, no mobiles).
@@ -32,8 +39,10 @@ export function newStorageKey(ext: string): string {
 
 class GcsAudienceStorage implements AudienceFileStorage {
   private readonly bucket;
+  private readonly bucketName: string;
 
   constructor(bucketName: string) {
+    this.bucketName = bucketName;
     this.bucket = new Storage(storageOptions()).bucket(bucketName);
   }
 
@@ -41,8 +50,9 @@ class GcsAudienceStorage implements AudienceFileStorage {
     await this.bucket.file(key).save(body, {
       contentType,
       resumable: false,
-      // Private object; never served by public URL or CDN.
-      metadata: { cacheControl: "private, max-age=0, no-store" },
+      // Bucket is public-read; long cache is fine since keys are random and
+      // never reused (a replaced file gets a brand-new key, not overwritten).
+      metadata: { cacheControl: "public, max-age=31536000, immutable" },
     });
   }
 
@@ -57,6 +67,10 @@ class GcsAudienceStorage implements AudienceFileStorage {
       expires: Date.now() + ttlSeconds * 1000,
     });
     return url;
+  }
+
+  publicUrl(key: string): string {
+    return `https://storage.googleapis.com/${this.bucketName}/${key}`;
   }
 }
 

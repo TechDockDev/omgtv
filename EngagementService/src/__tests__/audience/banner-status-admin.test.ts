@@ -436,7 +436,7 @@ describe("admin API", () => {
     expect((await app.inject({ method: "GET", url: "/admin/audience/registrations?limit=1000" })).statusCode).toBe(422);
   });
 
-  it("returns full detail with short-lived signed URLs for files", async () => {
+  it("returns full detail with permanent public URLs for files", async () => {
     const [reg] = await seed(1);
     const res = await app.inject({ method: "GET", url: `/admin/audience/registrations/${reg.registration_id}` });
     expect(res.statusCode).toBe(200);
@@ -445,8 +445,8 @@ describe("admin API", () => {
     expect(body.members[0]).toMatchObject({ position: 1, email: "person1@example.com" });
     expect(body.consent).toMatchObject({ text_version: "v1" });
     expect(body.files).toHaveLength(1);
-    expect(body.files[0].url).toMatch(/^https:\/\/signed\.example\/audience\//);
-    expect(body.files[0].url_expires_in).toBe(300);
+    expect(body.files[0].url).toMatch(/^https:\/\/public\.example\/audience\//);
+    expect(body.files[0].url_expires_in).toBeNull();
 
     expect((await app.inject({ method: "GET", url: "/admin/audience/registrations/not-a-uuid" })).statusCode).toBe(422);
     expect(
