@@ -6,23 +6,20 @@ import type { NormalizedPerson, NormalizedRegistration } from "../schemas/audien
 // admin panel). The database stays the source of truth — this is a one-way,
 // best-effort copy, never read back by the app.
 //
-// Columns are fixed-width for the max group size (10) so every row has the
-// same shape regardless of actual group size; unused member slots are blank.
+// One row per registration. One name column per person (groups go up to 10,
+// enforced by the registration rules), so unused name columns are blank.
+// Contacts, emails and photos are stacked one per line in a single cell.
+// 'Remarks' is for the team to fill in by hand.
+const MAX_GROUP_SIZE = 10;
+
 export const SHEET_HEADER_ROW: string[] = [
-  "Submitted At (IST)",
-  "Reference ID",
-  "Registration ID",
-  "Status",
-  "Group Size",
-  "City",
-  "User ID",
-  ...Array.from({ length: 10 }, (_, i) => {
-    const label = i === 0 ? "Lead" : `Member ${i + 1}`;
-    return [`${label} Name`, `${label} Age`, `${label} Mobile`, `${label} Email`, `${label} Photo Link`];
-  }).flat(),
-  "Group PDF Link",
-  "Consent Version",
-  "Consent At (IST)",
+  "Timestamp",
+  ...Array.from({ length: MAX_GROUP_SIZE }, (_, i) => `FULL NAME ${i + 1} & AGE`),
+  "CONTACT NUMBERS OF ALL",
+  "EMAIL ID OF ALL",
+  "UPLOAD EVERYONE OF YOUR PHOTOS",
+  "WHERE ARE YOU FROM",
+  "Remarks",
 ];
 
 export interface SheetRowInput {
@@ -60,25 +57,26 @@ export function formatSheetTime(date: Date): string {
 }
 
 export function buildDataRow(input: SheetRowInput): string[] {
-  const byPosition = new Map(input.people.map((p) => [p.position, p]));
-  const personCells = (position: number): string[] => {
-    const p = byPosition.get(position);
-    if (!p) return ["", "", "", "", ""];
-    return [p.fullName, String(p.age), p.mobile, p.email, input.photoLinkByPosition.get(position) ?? ""];
-  };
+  // people is already sorted by position (lead first).
+  const nameCells = Array.from({ length: MAX_GROUP_SIZE }, (_, i) => {
+    const p = input.people[i];
+    return p ? `${p.fullName} – ${p.age}` : "";
+  });
+
+  // Photos first; if nobody uploaded one, the group PDF goes in the same cell.
+  const photos = input.people
+    .map((p) => input.photoLinkByPosition.get(p.position))
+    .filter((url): url is string => Boolean(url));
+  const photoCell = photos.length > 0 ? photos.join("\n") : (input.groupPdfLink ?? "");
 
   return [
     formatSheetTime(input.createdAt),
-    input.referenceId,
-    input.registrationId,
-    input.status,
-    String(input.groupSize),
+    ...nameCells,
+    input.people.map((p) => p.mobile).join("\n"),
+    input.people.map((p) => p.email).join("\n"),
+    photoCell,
     input.city,
-    input.userId ?? "",
-    ...Array.from({ length: 10 }, (_, i) => personCells(i + 1)).flat(),
-    input.groupPdfLink ?? "",
-    input.consent.version,
-    formatSheetTime(input.consent.acceptedAt),
+    "", // Remarks: filled in by the team
   ];
 }
 
