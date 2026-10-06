@@ -29,6 +29,18 @@ const purchaseIntentSchema = z.object({
 export default async function customerRoutes(app: FastifyInstance) {
   const prisma = getPrisma();
 
+  // Public: the app reads this to show or hide the iOS payment screen.
+  app.get("/payments/status", async () => {
+    const config = await (prisma as any).subscriptionGlobalConfig.findFirst({ where: { id: 1 } });
+    return {
+      success: true,
+      statusCode: 200,
+      userMessage: "Payment status retrieved",
+      developerMessage: "Payment switches",
+      data: { phone_pay_ios_payment: config?.phonePayIosPayment ?? true },
+    };
+  });
+
   app.get("/plans", {
     schema: { querystring: z.object({ userId: z.string().optional() }) },
   }, async (request) => {

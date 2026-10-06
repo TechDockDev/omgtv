@@ -64,6 +64,7 @@ type FreePlanBody = z.infer<typeof freePlanSchema>;
 const subscriptionSettingsSchema = z.object({
   promoVideoUrl: z.string().url().nullable().optional(),
   restrictRepeatTrials: z.boolean().optional(),
+  phone_pay_ios_payment: z.boolean().optional(),
 });
 
 export default async function adminRoutes(app: FastifyInstance) {
@@ -1047,11 +1048,20 @@ export default async function adminRoutes(app: FastifyInstance) {
       schema: { body: subscriptionSettingsSchema }
     },
     async (request) => {
-      const { promoVideoUrl, restrictRepeatTrials } = request.body;
+      const { promoVideoUrl, restrictRepeatTrials, phone_pay_ios_payment } = request.body;
       const config = await (prisma as any).subscriptionGlobalConfig.upsert({
         where: { id: 1 },
-        update: { promoVideoUrl, ...(restrictRepeatTrials !== undefined && { restrictRepeatTrials }) },
-        create: { id: 1, promoVideoUrl, restrictRepeatTrials: restrictRepeatTrials ?? false }
+        update: {
+          promoVideoUrl,
+          ...(restrictRepeatTrials !== undefined && { restrictRepeatTrials }),
+          ...(phone_pay_ios_payment !== undefined && { phonePayIosPayment: phone_pay_ios_payment }),
+        },
+        create: {
+          id: 1,
+          promoVideoUrl,
+          restrictRepeatTrials: restrictRepeatTrials ?? false,
+          phonePayIosPayment: phone_pay_ios_payment ?? true,
+        }
       });
       return {
         success: true,
