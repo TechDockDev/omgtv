@@ -82,7 +82,11 @@ export default async function audienceRoutes(fastify: FastifyInstance) {
     url: "/registration",
     config: {
       ...publicConfig,
-      gatewayRateLimit: { max: 30 },
+      // Many legitimate submitters can share one carrier/WiFi IP (events,
+      // colleges, offices), so this is well above what one abusive client
+      // would need — per-mobile and duplicate-mobile checks are the real
+      // defense against abuse, not this cap.
+      gatewayRateLimit: { max: 300 },
       security: { bodyLimit: MAX_UPLOAD_BYTES },
     },
     handler: (request, reply) => forward(request, reply, "/client/audience/registration"),

@@ -75,7 +75,7 @@ const envSchema = z.object({
       value && value.trim().length > 0 ? value.trim() : undefined
     ),
   // Per-mobile submit attempts allowed per window (needs Redis; skipped without it).
-  AUDIENCE_SUBMIT_MAX_PER_MOBILE: z.coerce.number().int().positive().default(5),
+  AUDIENCE_SUBMIT_MAX_PER_MOBILE: z.coerce.number().int().positive().default(10),
   AUDIENCE_SUBMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),
   // GET /registration/status?mobile= lets anyone probe whether a number is
   // registered. Off by default; the logged-in token path is the normal route.
