@@ -19,7 +19,12 @@ const envSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
   REDIS_URL: z.string().url(),
-  RATE_LIMIT_ANON: z.coerce.number().int().positive().default(20),
+  // Shared per-IP bucket for every public route (login, OTP send/verify,
+  // search, ...). Many genuine users can share one IP (carrier NAT, office/
+  // college WiFi), so this needs headroom above what one abusive client
+  // would use — AuthService's own OTP-specific limits are the real defense
+  // against OTP abuse, not this gateway-wide cap.
+  RATE_LIMIT_ANON: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_AUTH: z.coerce.number().int().positive().default(100),
   RATE_LIMIT_ADMIN: z.coerce.number().int().positive().default(500),
   AUTH_JWKS_URL: z.string().url(),
