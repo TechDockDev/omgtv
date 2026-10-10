@@ -11,6 +11,7 @@ import { TransactionSource, CoinTransactionType } from "@prisma/client";
 import { loadConfig } from "../../config";
 import { getRazorpay } from "../../lib/razorpay";
 import { getPhonePe } from "../../lib/phonepe";
+import { getAppleIap, AppleIapNotConfiguredError } from "../../lib/apple-iap";
 import { trackSubscriptionEvent } from "../../lib/analytics";
 import { evaluatePhonePeIntentGuard } from "../../services/phonePeIntentGuard";
 const coinService = new CoinService();
@@ -629,12 +630,15 @@ export default async function customerRoutes(app: FastifyInstance) {
     paymentId: z.string().optional(),
     subscriptionId: z.string().optional(),
     signature: z.string().optional(),
-    // PhonePe fields
+    // PhonePe fields (transactionId is also reused by apple_iap below)
     merchantOrderId: z.string().optional(),
     merchantSubscriptionId: z.string().optional(),
     transactionId: z.string().optional(),
+    // Apple IAP (StoreKit2) fields
+    productId: z.string().optional(),
+    receiptData: z.string().optional(), // StoreKit2 signed JWS transaction, not a base64 verifyReceipt blob
     // Router — defaults to razorpay so existing mobile callers need no change
-    provider: z.enum(["razorpay", "phonepe"]).default("razorpay").optional(),
+    provider: z.enum(["razorpay", "phonepe", "apple_iap"]).default("razorpay").optional(),
   });
 
   app.post("/purchase/verify", {
@@ -859,6 +863,133 @@ export default async function customerRoutes(app: FastifyInstance) {
         if (priorPaidSubs === 0) void trackSubscriptionEvent(transaction.userId, "first_subscription_purchased", { plan_id: transaction.planId ?? "", provider: "phonepe" });
         await notificationClient.sendPush(transaction.userId, "Subscription Activated", "Your subscription is now active. Enjoy unlimited content!", { type: "SUBSCRIPTION_ACTIVATED" });
       }
+
+      return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+    }
+
+    // ─── Apple IAP (StoreKit2) verify branch ───────────────────────────────────
+    if (provider === "apple_iap") {
+      const { productId, transactionId, receiptData } = body;
+      if (!productId || !transactionId || !receiptData) {
+        return reply.badRequest("productId, transactionId and receiptData are required for Apple IAP verify");
+      }
+
+      // Idempotency (also covers "restore purchases", which just replays this
+      // same call): a transactionId already turned into an active subscription
+      // returns success without creating anything new or double-crediting.
+      const existingTx = await prisma.transaction.findFirst({
+        where: { provider: "apple_iap", appleTransactionId: transactionId, userId },
+      });
+      if (existingTx?.status === "SUCCESS") {
+        const existingSub = await prisma.userSubscription.findFirst({
+          where: { transactionId: existingTx.id, provider: "apple_iap" },
+        });
+        if (existingSub) {
+          return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+        }
+        // SUCCESS transaction but no subscription row yet (a prior attempt died
+        // mid-way) — fall through and finish creating it.
+      }
+
+      // receiptData (the client's StoreKit2 JWS) is only a hint for logs here —
+      // verification itself re-fetches the transaction from Apple's own App
+      // Store Server API below, which is the authoritative source and can't be
+      // spoofed by a tampered client payload. The deprecated verifyReceipt
+      // endpoint is never used.
+      let decoded;
+      try {
+        decoded = await getAppleIap().verifyTransactionId(transactionId);
+      } catch (err: any) {
+        if (err instanceof AppleIapNotConfiguredError) {
+          request.log.error({ err }, "apple_iap verify called but Apple IAP is not configured");
+          return reply.code(503).send({
+            success: false, statusCode: 503, code: "APPLE_IAP_NOT_CONFIGURED",
+            userMessage: "Apple In-App Purchase is temporarily unavailable", developerMessage: err.message,
+          });
+        }
+        request.log.error({ err, transactionId }, "apple_iap: Apple transaction verification failed");
+        return reply.code(400).send({
+          success: false, statusCode: 400, code: "APPLE_VERIFICATION_FAILED",
+          userMessage: "We couldn't verify this purchase with Apple", developerMessage: err?.message ?? String(err),
+        });
+      }
+
+      if (decoded.transactionId !== transactionId || decoded.revocationDate) {
+        return reply.code(400).send({
+          success: false, statusCode: 400, code: "APPLE_VERIFICATION_FAILED",
+          userMessage: "We couldn't verify this purchase with Apple",
+          developerMessage: decoded.revocationDate ? "Transaction has a revocationDate" : "transactionId mismatch",
+        });
+      }
+      if (!decoded.expiresDate) {
+        return reply.code(400).send({
+          success: false, statusCode: 400, code: "APPLE_VERIFICATION_FAILED",
+          userMessage: "We couldn't verify this purchase with Apple", developerMessage: "Apple transaction has no expiresDate",
+        });
+      }
+
+      const plan = await prisma.subscriptionPlan.findFirst({
+        where: { appleProductId: decoded.productId ?? productId, isActive: true, deletedAt: null },
+      });
+      if (!plan) {
+        request.log.error({ productId: decoded.productId, transactionId }, "apple_iap: no SubscriptionPlan configured for this Apple productId");
+        return reply.code(400).send({
+          success: false, statusCode: 400, code: "PLAN_NOT_FOUND",
+          userMessage: "This plan is not available", developerMessage: `No plan configured for Apple product ${decoded.productId}`,
+        });
+      }
+
+      const startsAt = decoded.purchaseDate ? new Date(decoded.purchaseDate) : new Date();
+      const endsAt = new Date(decoded.expiresDate);
+      const originalTransactionId = decoded.originalTransactionId ?? transactionId;
+
+      let transaction = existingTx;
+      if (!transaction) {
+        transaction = await prisma.transaction.create({
+          data: {
+            userId,
+            planId: plan.id,
+            amountPaise: plan.pricePaise,
+            currency: plan.currency,
+            status: "SUCCESS",
+            provider: "apple_iap",
+            appleTransactionId: transactionId,
+            metadata: { productId: decoded.productId ?? null, originalTransactionId },
+          },
+        });
+      } else if (transaction.status !== "SUCCESS") {
+        transaction = await prisma.transaction.update({ where: { id: transaction.id }, data: { status: "SUCCESS" } });
+      }
+
+      let newSub;
+      try {
+        newSub = await prisma.userSubscription.create({
+          data: {
+            userId,
+            planId: plan.id,
+            trialPlanId: null,
+            status: "ACTIVE",
+            provider: "apple_iap",
+            transactionId: transaction.id,
+            appleOriginalTransactionId: originalTransactionId,
+            startsAt,
+            endsAt,
+          },
+        });
+      } catch (err: any) {
+        if (err?.code === "P2002") {
+          // Concurrent verify call (e.g. a retried "restore purchases") won the race.
+          await invalidateEntitlementCache(userId);
+          return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
+        }
+        throw err;
+      }
+
+      await invalidateEntitlementCache(userId);
+      void trackSubscriptionEvent(userId, "subscription_activated", { plan_id: plan.id, provider: "apple_iap" });
+      const priorPaidSubs = await prisma.userSubscription.count({ where: { userId, trialPlanId: null, id: { not: newSub.id } } });
+      if (priorPaidSubs === 0) void trackSubscriptionEvent(userId, "first_subscription_purchased", { plan_id: plan.id, provider: "apple_iap" });
+      await notificationClient.sendPush(userId, "Subscription Activated", "Your subscription is now active. Enjoy unlimited content!", { type: "SUBSCRIPTION_ACTIVATED" });
 
       return reply.send({ success: true, statusCode: 200, userMessage: "Payment verified successfully", data: { status: "active" } });
     }

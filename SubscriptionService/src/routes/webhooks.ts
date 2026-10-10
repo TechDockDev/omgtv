@@ -9,6 +9,7 @@ import { invalidateEntitlementCache } from "../lib/redis";
 import { CoinService } from "../services/coinService";
 import { NotificationClient } from "../clients/notification-client";
 import { trackSubscriptionEvent } from "../lib/analytics";
+import { getAppleIap, AppleIapNotConfiguredError } from "../lib/apple-iap";
 
 const coinService = new CoinService();
 const notificationClient = new NotificationClient();
@@ -954,6 +955,128 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
 
         } catch (err) {
             request.log.error({ msg: "PhonePe webhook processing error", event, err });
+            return reply.code(500).send({ error: "Webhook processing failed" });
+        }
+    });
+
+    // App Store Server Notifications V2 — the only way the backend learns about
+    // a renewal/cancellation/refund that happens entirely on Apple's side (e.g.
+    // the user cancels from iOS Settings without ever reopening the app).
+    // Registered as the endpoint URL in App Store Connect → App Information →
+    // App Store Server Notifications.
+    app.post("/apple", async (request, reply) => {
+        const body = request.body as { signedPayload?: string };
+        const signedPayload = body?.signedPayload;
+        if (!signedPayload) {
+            return reply.code(400).send({ error: "Missing signedPayload" });
+        }
+
+        let notification;
+        try {
+            notification = await getAppleIap().verifyNotificationPayload(signedPayload);
+        } catch (err) {
+            if (err instanceof AppleIapNotConfiguredError) {
+                request.log.error({ err }, "Apple webhook received but Apple IAP is not configured");
+                return reply.code(503).send({ error: "Apple IAP not configured" });
+            }
+            request.log.error({ err }, "Apple webhook: signature/payload verification failed");
+            // A payload that doesn't verify is never retried productively — ack
+            // with 200 rather than making Apple hammer retries on a bad signature.
+            return reply.send({ success: true });
+        }
+
+        const notificationType = notification.notificationType;
+        const subtype = notification.subtype;
+        const signedTransactionInfo = notification.data?.signedTransactionInfo;
+
+        request.log.info({ notificationType, subtype }, "Apple webhook received");
+
+        // TEST notifications and types with no transaction payload (consumption
+        // requests, external-purchase-token, etc.) — nothing for us to update.
+        if (!signedTransactionInfo) {
+            return reply.send({ success: true });
+        }
+
+        let tx;
+        try {
+            tx = await getAppleIap().decodeSignedTransaction(signedTransactionInfo);
+        } catch (err) {
+            request.log.error({ err, notificationType }, "Apple webhook: embedded transaction failed to verify");
+            return reply.send({ success: true });
+        }
+
+        const originalTransactionId = tx.originalTransactionId;
+        if (!originalTransactionId) {
+            request.log.warn({ notificationType }, "Apple webhook: transaction has no originalTransactionId, skipping");
+            return reply.send({ success: true });
+        }
+
+        try {
+            const prisma = getPrisma();
+            const sub = await prisma.userSubscription.findFirst({
+                where: { provider: "apple_iap", appleOriginalTransactionId: originalTransactionId },
+                orderBy: { createdAt: "desc" },
+            });
+
+            switch (notificationType) {
+                case "DID_RENEW": {
+                    if (sub && tx.expiresDate) {
+                        await prisma.userSubscription.update({
+                            where: { id: sub.id },
+                            data: { status: SubscriptionStatus.ACTIVE, endsAt: new Date(tx.expiresDate) },
+                        });
+                        await invalidateEntitlementCache(sub.userId);
+                        void trackSubscriptionEvent(sub.userId, "subscription_renewed", { plan_id: sub.planId ?? "", provider: "apple_iap" });
+                        await notificationClient.sendPush(sub.userId, "Subscription Renewed", "Your subscription has been renewed.", { type: "SUBSCRIPTION_RENEWED" });
+                    }
+                    // Record the renewal charge itself, idempotently, for history/analytics.
+                    if (tx.transactionId) {
+                        const already = await prisma.transaction.findFirst({ where: { provider: "apple_iap", appleTransactionId: tx.transactionId } });
+                        if (!already && sub) {
+                            await prisma.transaction.create({
+                                data: {
+                                    userId: sub.userId,
+                                    planId: sub.planId,
+                                    amountPaise: 0, // Apple doesn't include price in the notification payload
+                                    status: "SUCCESS",
+                                    provider: "apple_iap",
+                                    appleTransactionId: tx.transactionId,
+                                    metadata: { notificationType, originalTransactionId },
+                                },
+                            }).catch(() => { /* P2002 race on appleTransactionId — already recorded */ });
+                        }
+                    }
+                    break;
+                }
+                case "EXPIRED":
+                case "GRACE_PERIOD_EXPIRED": {
+                    if (sub && sub.status !== SubscriptionStatus.CANCELED) {
+                        await prisma.userSubscription.update({ where: { id: sub.id }, data: { status: SubscriptionStatus.EXPIRED } });
+                        await invalidateEntitlementCache(sub.userId);
+                        void trackSubscriptionEvent(sub.userId, "subscription_expired", { plan_id: sub.planId ?? "", provider: "apple_iap" });
+                    }
+                    break;
+                }
+                case "REFUND":
+                case "REVOKE": {
+                    if (sub) {
+                        await prisma.userSubscription.update({ where: { id: sub.id }, data: { status: SubscriptionStatus.CANCELED } });
+                        await invalidateEntitlementCache(sub.userId);
+                        void trackSubscriptionEvent(sub.userId, "subscription_refunded", { plan_id: sub.planId ?? "", provider: "apple_iap" });
+                    }
+                    break;
+                }
+                default:
+                    // DID_CHANGE_RENEWAL_STATUS, DID_CHANGE_RENEWAL_PREF, DID_FAIL_TO_RENEW,
+                    // PRICE_INCREASE, SUBSCRIBED, OFFER_REDEEMED, etc. — informational only;
+                    // the subscription's existing status/endsAt already reflects reality
+                    // until Apple sends one of the types handled above.
+                    break;
+            }
+
+            return reply.send({ success: true });
+        } catch (err) {
+            request.log.error({ msg: "Apple webhook processing error", notificationType, err });
             return reply.code(500).send({ error: "Webhook processing failed" });
         }
     });

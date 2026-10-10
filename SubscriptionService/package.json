@@ -19,6 +19,7 @@
         "node": ">=18.18"
     },
     "dependencies": {
+        "@apple/app-store-server-library": "^3.1.0",
         "@fastify/cors": "^9.0.1",
         "@fastify/helmet": "^11.1.1",
         "@fastify/sensible": "^5.1.1",

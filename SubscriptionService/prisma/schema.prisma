@@ -57,6 +57,7 @@ model SubscriptionPlan {
   cancelledPricePaise Int?  // Optional strike-through price
   subscriptionViaTrial Boolean @default(false)
   razorpayPlanId   String?
+  appleProductId   String?  // Apple App Store Connect product identifier, e.g. com.pocket.pocketLol.premium.quarterly
   promoVideoUrl    String?  // Optional m3u8 link for this specific plan
   
   deletedAt        DateTime?
@@ -109,6 +110,12 @@ model UserSubscription {
   provider              String              @default("razorpay")
   phonePeSubscriptionId String?
   mandateMaxAmount      Int?
+  // Apple's stable ID across every renewal of one subscription (different
+  // from each individual renewal's own transactionId). Not unique at the DB
+  // level — matching for notifications is done via findFirst — because a
+  // resubscribe can in rare cases carry the same originalTransactionId into
+  // a new row.
+  appleOriginalTransactionId String?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
@@ -122,6 +129,7 @@ model UserSubscription {
   @@index([planId])
   @@index([provider])
   @@index([phonePeSubscriptionId])
+  @@index([appleOriginalTransactionId])
 }
 
 model Transaction {
@@ -139,6 +147,7 @@ model Transaction {
   failureReason      String?
   metadata           Json?
   provider           String             @default("razorpay")
+  appleTransactionId String?           // Apple's per-event transaction id (StoreKit2) — idempotency key for apple_iap
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -147,6 +156,7 @@ model Transaction {
   subscriptions UserSubscription[]  @relation("TransactionUserSubscriptions")
 
   @@index([userId, status])
+  @@index([appleTransactionId])
   @@index([razorpayPlanId])
   @@index([subscriptionId])
   @@index([razorpayPaymentId])

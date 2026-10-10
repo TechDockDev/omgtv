@@ -35,6 +35,17 @@ const envSchema = z.object({
   PHONEPE_ENV: z.enum(["UAT", "PROD"]).default("UAT"),
   PHONEPE_CALLBACK_USERNAME: z.string().optional(),
   PHONEPE_CALLBACK_PASSWORD: z.string().optional(),
+  // Apple In-App Purchase (StoreKit2 / App Store Server API). All optional —
+  // unset simply means apple_iap verify/webhook calls return a clear 503
+  // instead of crashing the service; nothing else depends on these.
+  APPLE_IAP_KEY_ID: z.string().optional(),
+  APPLE_IAP_ISSUER_ID: z.string().optional(),
+  // Contents of the .p8 private key file (PEM), e.g. from a k8s secret.
+  APPLE_IAP_PRIVATE_KEY: z.string().optional(),
+  APPLE_IAP_BUNDLE_ID: z.string().optional(),
+  APPLE_IAP_ENVIRONMENT: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
+  // Required by Apple's SDK for Production environment checks only.
+  APPLE_IAP_APP_APPLE_ID: z.coerce.number().int().positive().optional(),
   OTEL_SERVICE_NAME: z.string().default("subscription-service"),
   OTEL_TRACES_ENDPOINT: z
     .string()
