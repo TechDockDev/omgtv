@@ -945,18 +945,31 @@ export default async function customerRoutes(app: FastifyInstance) {
 
       let transaction = existingTx;
       if (!transaction) {
-        transaction = await prisma.transaction.create({
-          data: {
-            userId,
-            planId: plan.id,
-            amountPaise: plan.pricePaise,
-            currency: plan.currency,
-            status: "SUCCESS",
-            provider: "apple_iap",
-            appleTransactionId: transactionId,
-            metadata: { productId: decoded.productId ?? null, originalTransactionId },
-          },
-        });
+        try {
+          transaction = await prisma.transaction.create({
+            data: {
+              userId,
+              planId: plan.id,
+              amountPaise: plan.pricePaise,
+              currency: plan.currency,
+              status: "SUCCESS",
+              provider: "apple_iap",
+              appleTransactionId: transactionId,
+              metadata: { productId: decoded.productId ?? null, originalTransactionId },
+            },
+          });
+        } catch (err: any) {
+          if (err?.code === "P2002") {
+            // Concurrent verify call for the SAME Apple transactionId (e.g. the
+            // app firing verify from two places at once) won the race. The
+            // unique constraint on appleTransactionId is the actual guard here —
+            // the findFirst check above alone is racy without it.
+            transaction = await prisma.transaction.findFirst({ where: { provider: "apple_iap", appleTransactionId: transactionId, userId } });
+            if (!transaction) throw err; // different userId got there first — surface the real error
+          } else {
+            throw err;
+          }
+        }
       } else if (transaction.status !== "SUCCESS") {
         transaction = await prisma.transaction.update({ where: { id: transaction.id }, data: { status: "SUCCESS" } });
       }
