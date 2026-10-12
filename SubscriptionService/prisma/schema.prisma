@@ -156,7 +156,7 @@ model Transaction {
   subscriptions UserSubscription[]  @relation("TransactionUserSubscriptions")
 
   @@index([userId, status])
-  @@index([appleTransactionId])
+  @@unique([appleTransactionId])
   @@index([razorpayPlanId])
   @@index([subscriptionId])
   @@index([razorpayPaymentId])
